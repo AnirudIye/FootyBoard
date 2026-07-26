@@ -1,0 +1,25 @@
+{
+  "name": "soccerboard-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "db": "node scripts/pg.js start",
+    "db:stop": "node scripts/pg.js stop",
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "cluster": "node scripts/cluster.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "pg": "^8.22.0",
+    "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "embedded-postgres": "^18.4.0-beta.17"
+  }
+}

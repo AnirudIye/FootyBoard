@@ -1,0 +1,106 @@
+/*
+  Soccerboard visual language: "floodlit".
+  Near-black ground, one signal green, and the turf as the only other colour.
+  The green is the pitch's own colour pushed to a floodlit intensity, so the
+  accent belongs to football rather than to generic AI-product neon.
+
+  Palette colours are stored as space-separated RGB channels so Tailwind's
+  opacity modifiers (bg-surface/95, border-accent/40) resolve to valid
+  rgb(... / <alpha>) values. Consume them in raw CSS with rgb(var(--x)).
+*/
+:root {
+  /* Tells the browser to render native UI — select popups, scrollbars, inputs
+     — in its dark palette. Without this the formation dropdown opens as an
+     unreadable white list under off-white text. */
+  color-scheme: dark;
+
+  /* Ground + surfaces, lifting out of black rather than layering greys */
+  --paper: 8 10 9;
+  --surface: 17 20 18;
+  --surface-sunken: 12 14 13;
+  --rule: 38 44 40;
+  --rule-strong: 64 74 67;
+
+  /* Ink: the spec's warm off-white (hsl 40 6% 95%) and hero sub (40 6% 82%) */
+  --ink: 244 242 239;
+  --ink-2: 160 170 163;
+  --ink-3: 112 122 115;
+  --hero-sub: 214 210 204;
+
+  /* Single accent: floodlit pitch green */
+  --accent: 42 224 122;
+  --accent-hover: 84 236 150;
+  --accent-wash: rgba(42, 224, 122, 0.1);
+  --accent-glow: rgba(42, 224, 122, 0.32);
+
+  /* Teams: still separable on a dark ground, still colour-blind safe */
+  --turf: 26 46 34;
+  --home: 232 92 66;
+  --away: 82 154 224;
+
+  /* Canvas-only colours consumed directly by Konva as concrete values */
+  --pitch: #070b08;
+  --pitch-line: #dfe9e2;
+  --turf-line: rgba(223, 233, 226, 0.85);
+
+  /* Varied radii, not one uniform value */
+  --r-sm: 3px;
+  --r-md: 6px;
+  --r-lg: 12px;
+
+  /* Elevation: depth from black, with one restrained green lift for the CTA */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-2: 0 18px 40px -18px rgba(0, 0, 0, 0.9);
+  --shadow-accent: 0 10px 30px -10px var(--accent-glow);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 130ms;
+  --dur: 240ms;
+  --dur-slow: 460ms;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: rgb(var(--paper));
+  color: rgb(var(--ink));
+  font-family: 'Geist Sans', ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--rule-strong)) transparent;
+}
+
+::selection {
+  background: rgb(var(--accent));
+  color: rgb(var(--paper));
+}
+
+/* Native dropdown rows need an explicit ground; several browsers ignore the
+   select's own background for the popup list. */
+option {
+  background: rgb(var(--surface));
+  color: rgb(var(--ink));
+}
+
+/* Every interactive element gets a real press response. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Soccerboard">
+  <defs>
+    <!-- Sphere shading: light from the upper left, falling to a shadowed rim. -->
+    <radialGradient id="sphere" cx="34%" cy="28%" r="78%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="52%" stop-color="#e9ede9" />
+      <stop offset="86%" stop-color="#aab3ac" />
+      <stop offset="100%" stop-color="#79837c" />
+    </radialGradient>
+    <!-- Specular highlight. -->
+    <radialGradient id="gloss" cx="31%" cy="24%" r="26%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
+    </radialGradient>
+    <!-- Floodlit green bounce along the lower rim, tying the mark to the brand. -->
+    <radialGradient id="bounce" cx="68%" cy="82%" r="42%">
+      <stop offset="0%" stop-color="#2ae07a" stop-opacity="0.5" />
+      <stop offset="100%" stop-color="#2ae07a" stop-opacity="0" />
+    </radialGradient>
+    <clipPath id="ball">
+      <circle cx="32" cy="30" r="29" />
+    </clipPath>
+  </defs>
+
+  <circle cx="32" cy="30" r="29" fill="url(#sphere)" />
+
+  <g clip-path="url(#ball)">
+    <!-- Seams running from the centre panel out to the rim panels. -->
+    <g stroke="#121814" stroke-width="2.2" stroke-linecap="round" opacity="0.9">
+      <line x1="32" y1="19" x2="32" y2="2" />
+      <line x1="42.46" y1="26.6" x2="60.54" y2="20.73" />
+      <line x1="38.47" y1="38.9" x2="49.63" y2="54.27" />
+      <line x1="25.53" y1="38.9" x2="14.37" y2="54.27" />
+      <line x1="21.54" y1="26.6" x2="3.46" y2="20.73" />
+    </g>
+
+    <g fill="#121814">
+      <!-- Centre panel -->
+      <polygon points="32,19 42.46,26.6 38.47,38.9 25.53,38.9 21.54,26.6" />
+      <!-- Rim panels, mostly clipped away by the sphere edge -->
+      <polygon points="49.63,-4.27 59.14,2.64 55.51,13.82 43.75,13.82 40.12,2.64" />
+      <polygon points="60.53,29.27 70.04,36.18 66.41,47.36 54.65,47.36 51.02,36.18" />
+      <polygon points="32,50 41.51,56.91 37.88,68.09 26.12,68.09 22.49,56.91" />
+      <polygon points="3.47,29.27 12.98,36.18 9.35,47.36 -2.41,47.36 -6.04,36.18" />
+      <polygon points="14.37,-4.27 23.88,2.64 20.25,13.82 8.49,13.82 4.86,2.64" />
+    </g>
+
+    <circle cx="32" cy="30" r="29" fill="url(#bounce)" />
+    <ellipse cx="22" cy="18" rx="15" ry="12" fill="url(#gloss)" />
+  </g>
+
+  <!-- Contact edge keeps the ball from dissolving into a dark page. -->
+  <circle cx="32" cy="30" r="29" fill="none" stroke="#121814" stroke-width="1.6" opacity="0.55" />
+</svg>

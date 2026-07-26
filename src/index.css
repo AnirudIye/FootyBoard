@@ -1,0 +1,126 @@
+@import './theme/tokens.css';
+
+/* Floodlight breathing. Scale/opacity only, so positioning stays on the wrapper. */
+@keyframes flood {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.14);
+    opacity: 1;
+  }
+}
+
+/* Logo marquee: one copy-width of travel, so the duplicated set loops seamlessly. */
+@keyframes marquee {
+  from {
+    transform: translateX(0%);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* Background play: a passing move that draws itself, then resets. One 13s
+   master loop — each pass line rides the same keyframes on its own delay. */
+@keyframes passDraw {
+  0% {
+    stroke-dashoffset: var(--len);
+    opacity: 0;
+  }
+  3% {
+    opacity: 0.9;
+  }
+  14% {
+    stroke-dashoffset: 0;
+    opacity: 0.9;
+  }
+  84% {
+    stroke-dashoffset: 0;
+    opacity: 0.9;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+
+@keyframes ballRun {
+  0% {
+    transform: translate(180px, 430px);
+    opacity: 0;
+  }
+  4% {
+    opacity: 1;
+  }
+  18% {
+    transform: translate(430px, 300px);
+  }
+  40% {
+    transform: translate(720px, 170px);
+  }
+  62% {
+    transform: translate(910px, 380px);
+  }
+  80%,
+  88% {
+    transform: translate(1060px, 268px);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(1060px, 268px);
+    opacity: 0;
+  }
+}
+
+@keyframes nodePulse {
+  0%,
+  100% {
+    opacity: 0.28;
+    r: 7;
+  }
+  50% {
+    opacity: 0.6;
+    r: 9;
+  }
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Thin bright rim along the top and bottom edges, as if catching the floodlight. */
+.liquid-glass {
+  background: rgba(255, 255, 255, 0.01);
+  background-blend-mode: luminosity;
+  backdrop-filter: blur(4px);
+  border: none;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.liquid-glass::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.4px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.45) 0%,
+    rgba(255, 255, 255, 0.15) 20%,
+    rgba(255, 255, 255, 0) 40%,
+    rgba(255, 255, 255, 0) 60%,
+    rgba(255, 255, 255, 0.15) 80%,
+    rgba(255, 255, 255, 0.45) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
