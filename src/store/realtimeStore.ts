@@ -24,7 +24,17 @@ interface RealtimeState {
   /** This client's id in the room, assigned by the server. */
   peerId: string | null
   role: 'owner' | 'member' | null
-  /** True when the owner has locked editing and this client is not the owner. */
+  /**
+   * Whether editing is locked **on the board**, regardless of who is asking.
+   *
+   * Kept apart from `locked` because the two are different questions and the
+   * owner needs the first one. Collapsing them is what broke the share dialog:
+   * with only `locked` — which is always false for the owner — the owner had
+   * nowhere to read the board's real state, so the dialog read a stale copy out
+   * of the board list and showed the opposite of the truth.
+   */
+  boardLocked: boolean
+  /** Whether *this client* is prevented from editing. Never true for the owner. */
   locked: boolean
   peers: Record<string, RemotePeer>
 
@@ -50,6 +60,7 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
   detail: null,
   peerId: null,
   role: null,
+  boardLocked: false,
   locked: false,
   peers: {},
 
@@ -59,6 +70,7 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
     set({
       peerId,
       role,
+      boardLocked: locked,
       // The owner is never locked out by their own lock, so this is only ever
       // true for someone else's board.
       locked: role !== 'owner' && locked,
@@ -90,9 +102,19 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
       return { peers: { ...s.peers, [peerId]: { ...peer, selection: ids } } }
     }),
 
-  setLocked: (locked) => set((s) => ({ locked: s.role !== 'owner' && locked })),
+  setLocked: (locked) =>
+    set((s) => ({ boardLocked: locked, locked: s.role !== 'owner' && locked })),
 
-  reset: () => set({ status: 'offline', detail: null, peerId: null, role: null, locked: false, peers: {} }),
+  reset: () =>
+    set({
+      status: 'offline',
+      detail: null,
+      peerId: null,
+      role: null,
+      boardLocked: false,
+      locked: false,
+      peers: {},
+    }),
 }))
 
 /**

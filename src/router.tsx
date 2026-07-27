@@ -10,6 +10,7 @@ import TermsOfService from './components/legal/TermsOfService'
 
 // The board pulls in Konva and the encoders; keep it out of the landing bundle.
 const BoardPage = lazy(() => import('./components/board/BoardPage'))
+const JoinPage = lazy(() => import('./components/board/JoinPage'))
 
 function BoardFallback() {
   return (
@@ -27,6 +28,18 @@ export const router = createBrowserRouter([
   { path: '/reset', element: <ResetPasswordPage /> },
   { path: '/privacy', element: <PrivacyPolicy /> },
   { path: '/terms', element: <TermsOfService /> },
+  {
+    // Where someone lands when they have been read a code rather than sent a
+    // link. Lazy like the board, since it redirects there on success anyway.
+    path: '/join',
+    element: (
+      <ErrorBoundary>
+        <Suspense fallback={<BoardFallback />}>
+          <JoinPage />
+        </Suspense>
+      </ErrorBoundary>
+    ),
+  },
   {
     path: '/board',
     // A boundary here keeps a board crash (or a failed chunk load) from

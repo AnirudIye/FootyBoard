@@ -4,6 +4,7 @@ import { get, all, run, transaction } from '../db.js'
 import { accessFor } from '../access.js'
 import { publish } from '../realtime.js'
 import { consume } from '../rateLimit.js'
+import { generateCode, normalizeCode } from '../joinCode.js'
 import { BadRequest } from '../validate.js'
 
 /**
@@ -54,36 +55,58 @@ sharesRouter.post('/:id/share', async (req, res, next) => {
     const token = randomBytes(32).toString('base64url')
     const id = randomUUID()
 
-    await transaction(async (client) => {
-      await client.query(
-        'UPDATE board_shares SET revoked_at = $1 WHERE board_id = $2 AND revoked_at IS NULL',
-        [Date.now(), req.params.id],
-      )
-      await client.query(
-        `INSERT INTO board_shares (id, board_id, token_hash, created_by, created_at)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [id, req.params.id, digest(token), req.user.id, new Date().toISOString()],
-      )
-    })
+    // The code has to be unique among live shares, and six readable characters
+    // is a small enough space that a collision is worth planning for rather
+    // than assuming away. The unique index is the arbiter; this just retries.
+    let code = null
+    for (let attempt = 0; attempt < 5 && code === null; attempt++) {
+      const candidate = generateCode()
+      try {
+        await transaction(async (client) => {
+          await client.query(
+            'UPDATE board_shares SET revoked_at = $1 WHERE board_id = $2 AND revoked_at IS NULL',
+            [Date.now(), req.params.id],
+          )
+          await client.query(
+            `INSERT INTO board_shares (id, board_id, token_hash, code, created_by, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [id, req.params.id, digest(token), candidate, req.user.id, new Date().toISOString()],
+          )
+        })
+        code = candidate
+      } catch (err) {
+        // 23505 is unique_violation: that code is already in use by a live
+        // share. Anything else is a real failure and should surface.
+        if (err.code !== '23505') throw err
+      }
+    }
+    if (code === null) throw new Error('could not allocate a unique join code')
 
-    // The only time the plaintext exists outside the owner's browser.
-    res.status(201).json({ share: { id, token, createdAt: new Date().toISOString() } })
+    // The only time the plaintext token exists outside the owner's browser. The
+    // code, unlike the token, can be read again — being readable is its job.
+    res.status(201).json({ share: { id, token, code, createdAt: new Date().toISOString() } })
   } catch (err) {
     next(err)
   }
 })
 
-/** Whether a link is live. Never the token — it is not recoverable, by design. */
+/**
+ * Whether a link is live, and what the join code is.
+ *
+ * The token is never returned — it is not recoverable, by design. The code is,
+ * because the owner has to be able to put it back on screen at the start of
+ * every session without invalidating everyone's existing access.
+ */
 sharesRouter.get('/:id/share', async (req, res, next) => {
   try {
     if (!(await requireOwner(req, res))) return
     const row = await get(
-      `SELECT id, created_at FROM board_shares
+      `SELECT id, code, created_at FROM board_shares
         WHERE board_id = $1 AND revoked_at IS NULL
         ORDER BY created_at DESC LIMIT 1`,
       req.params.id,
     )
-    res.json({ share: row ? { id: row.id, createdAt: row.created_at } : null })
+    res.json({ share: row ? { id: row.id, code: row.code, createdAt: row.created_at } : null })
   } catch (err) {
     next(err)
   }
@@ -170,6 +193,25 @@ sharesRouter.patch('/:id/lock', async (req, res, next) => {
  * returns one message, so the endpoint cannot be used to tell an unknown token
  * from a revoked one.
  */
+/** Shared by both ways in: whoever is asking becomes a member of `share`. */
+async function admit(share, user) {
+  // Owners and existing members redeem harmlessly: joining twice is the same
+  // as joining once, and the owner needs no membership row at all.
+  const { role } = await accessFor(share.board_id, user.id)
+  if (!role) {
+    await run(
+      `INSERT INTO board_members (board_id, user_id, share_id, joined_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (board_id, user_id) DO NOTHING`,
+      share.board_id,
+      user.id,
+      share.id,
+      new Date().toISOString(),
+    )
+  }
+  return { id: share.board_id, name: share.name }
+}
+
 redeemRouter.post('/:token/redeem', async (req, res, next) => {
   try {
     if (!req.user) return res.status(401).json({ error: 'Sign in to open a shared board.' })
@@ -189,22 +231,51 @@ redeemRouter.post('/:token/redeem', async (req, res, next) => {
     )
     if (!share) return res.status(404).json({ error: 'That link is not valid any more.' })
 
-    // Owners and existing members redeem harmlessly: joining twice is the same
-    // as joining once, and the owner needs no membership row at all.
-    const { role } = await accessFor(share.board_id, req.user.id)
-    if (!role) {
-      await run(
-        `INSERT INTO board_members (board_id, user_id, share_id, joined_at)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (board_id, user_id) DO NOTHING`,
-        share.board_id,
-        req.user.id,
-        share.id,
-        new Date().toISOString(),
-      )
-    }
+    res.json({ board: await admit(share, req.user) })
+  } catch (err) {
+    next(err)
+  }
+})
 
-    res.json({ board: { id: share.board_id, name: share.name } })
+/**
+ * Join by typing the short code.
+ *
+ * Rate limited harder than the link, and deliberately so: six readable
+ * characters is a space you could search, given enough attempts, in a way a
+ * 32-byte token is not. The limit — not the length — is what makes the code
+ * safe, so it is the part worth being strict about. It is keyed per IP and
+ * counted in Postgres, so it holds across API instances rather than being
+ * resettable by landing on a different one.
+ *
+ * A malformed code is rejected before the database is touched, but *after* the
+ * limiter has counted it, so mashing the keyboard is not a free way to probe.
+ */
+redeemRouter.post('/join', async (req, res, next) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Sign in to join a board.' })
+
+    await consume(`join:${req.clientIp}`, {
+      max: 10,
+      windowMs: 10 * 60 * 1000,
+      message: 'Too many attempts from this network. Try again shortly.',
+    })
+
+    const code = normalizeCode(req.body?.code)
+    // One message for every failure, so this cannot be used to tell a wrong
+    // code from a well-formed code for a board that does not exist.
+    const wrong = () => res.status(404).json({ error: 'That code is not valid. Check it and try again.' })
+    if (!code) return wrong()
+
+    const share = await get(
+      `SELECT s.id, s.board_id, b.name
+         FROM board_shares s
+         JOIN boards b ON b.id = s.board_id
+        WHERE s.code = $1 AND s.revoked_at IS NULL`,
+      code,
+    )
+    if (!share) return wrong()
+
+    res.json({ board: await admit(share, req.user) })
   } catch (err) {
     next(err)
   }

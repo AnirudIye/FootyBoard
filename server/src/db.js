@@ -1,4 +1,5 @@
 import pg from 'pg'
+import { generateCode } from './joinCode.js'
 
 /**
  * Postgres, reached through a connection pool.
@@ -128,6 +129,20 @@ async function applySchema(client) {
     ALTER TABLE boards ADD COLUMN IF NOT EXISTS members_can_edit BOOLEAN NOT NULL DEFAULT true;
   `)
 
+  // The short join code, alongside the long link token on the same share row.
+  //
+  // Stored in plain text, which is deliberate and is the one place this file
+  // departs from "credentials are only ever stored hashed". The code exists to
+  // be read aloud and put on a screen, so it has to be recoverable — and at six
+  // characters it carries little enough entropy that hashing would protect
+  // almost nothing against anyone holding the table. What actually defends it
+  // is the rate limit on redemption, not the storage.
+  await client.query(`
+    ALTER TABLE board_shares ADD COLUMN IF NOT EXISTS code TEXT;
+  `)
+
+  await backfillJoinCodes(client)
+
   // Indexes cover every column we filter, join, or sort on.
   await client.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email    ON users(email);
@@ -151,10 +166,48 @@ async function applySchema(client) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_token ON board_shares(token_hash);
     CREATE INDEX        IF NOT EXISTS idx_shares_board ON board_shares(board_id);
 
+    -- Partial, so a code is unique only among links that still work. Once a
+    -- share is revoked its code is free to be handed out again, which matters
+    -- because the space of six readable characters is not large.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_code
+      ON board_shares(code) WHERE revoked_at IS NULL;
+
     -- (user_id, board_id) serves both callers: the board list filters by user,
     -- and the access check looks up the pair.
     CREATE INDEX IF NOT EXISTS idx_members_user ON board_members(user_id, board_id);
   `)
+}
+
+/**
+ * Give a code to every live share issued before codes existed.
+ *
+ * The alternative — leaving them null — means a share whose link still works
+ * reads as "not shared" in the dialog, and the owner turns sharing back on and
+ * silently revokes a link people are already using. Backfilling is the
+ * non-destructive option: the old link keeps working and gains a code.
+ *
+ * Runs inside the migration advisory lock, so concurrent boots do not both
+ * try to fill the same rows.
+ */
+async function backfillJoinCodes(client) {
+  const { rows } = await client.query(
+    'SELECT id FROM board_shares WHERE code IS NULL AND revoked_at IS NULL',
+  )
+
+  for (const row of rows) {
+    // Retry on the unique index rather than checking first, which would race.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await client.query('UPDATE board_shares SET code = $1 WHERE id = $2', [
+          generateCode(),
+          row.id,
+        ])
+        break
+      } catch (err) {
+        if (err.code !== '23505') throw err
+      }
+    }
+  }
 }
 
 /**

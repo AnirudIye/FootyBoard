@@ -2,8 +2,16 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 
-/** Shared frame for the sign-in, sign-up, and password pages. */
-export function AuthShell({ title, children }: { title: string; children: ReactNode }) {
+/** Shared frame for the sign-in, sign-up, password, and join pages. */
+export function AuthShell({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string
+  subtitle?: string
+  children: ReactNode
+}) {
   return (
     <div className="grid min-h-screen place-items-center bg-paper px-5 py-12 text-ink">
       <motion.div
@@ -22,6 +30,8 @@ export function AuthShell({ title, children }: { title: string; children: ReactN
         <h1 className="font-display text-[28px] font-medium leading-tight tracking-[-0.025em]">
           {title}
         </h1>
+
+        {subtitle && <p className="mt-2 text-[13px] leading-relaxed text-ink-3">{subtitle}</p>}
 
         {children}
       </motion.div>

@@ -111,6 +111,27 @@ test('missing arguments are refused rather than matching everything', async () =
   assert.equal(await roleFor(undefined, undefined), null)
 })
 
+test('a share issued before join codes existed gets one on migrate', async () => {
+  // Otherwise a share whose link still works reads as "not shared", and the
+  // owner turns sharing back on and silently revokes a link people are using.
+  const shareId = randomUUID()
+  await run(
+    `INSERT INTO board_shares (id, board_id, token_hash, created_by, created_at)
+     VALUES ($1, $2, $3, $4, $5)`,
+    shareId,
+    boardId,
+    `legacy-${shareId}`,
+    owner,
+    new Date().toISOString(),
+  )
+  assert.equal((await get('SELECT code FROM board_shares WHERE id = $1', shareId)).code, null)
+
+  await migrate()
+
+  const filled = await get('SELECT code FROM board_shares WHERE id = $1', shareId)
+  assert.match(filled.code, /^[A-HJ-NP-Z]{6}$/)
+})
+
 test('deleting a board takes its shares and members with it', async () => {
   const shareId = randomUUID()
   await run(

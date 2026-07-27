@@ -136,8 +136,18 @@ function waitForMessage(socket, match, timeoutMs = 3000) {
 
 const seen = (socket, match) => socket.received.some(match)
 
+/**
+ * The redeem and join limits are database rows, so they outlive a test run and
+ * a second run starts partway through the allowance. Clearing them is the same
+ * reason the tests create their own users: a test should not depend on how
+ * recently the last one happened to run.
+ */
+const clearRateLimits = () =>
+  run("DELETE FROM login_attempts WHERE key LIKE 'join:%' OR key LIKE 'share:%'")
+
 before(async () => {
   await migrate()
+  await clearRateLimits()
   startInstance(A)
   startInstance(B)
   await Promise.all([waitForHealth(A), waitForHealth(B)])
@@ -204,6 +214,110 @@ test('redeeming a link grants membership and read access on any instance', async
     collaborator.id,
   )
   assert.equal(count.n, 1)
+})
+
+test('joining by code admits you exactly as the link does', async () => {
+  const created = await json(await call(A, `/boards/${boardId}/share`, owner.cookie, { method: 'POST' }))
+  const code = created.body.share.code
+  assert.match(code, /^[A-Z]{6}$/)
+
+  // Typed the way a person would, against the instance that did not issue it.
+  const joined = await json(
+    await call(B, '/shares/join', stranger.cookie, {
+      method: 'POST',
+      body: JSON.stringify({ code: code.toLowerCase().slice(0, 3) + '-' + code.slice(3) }),
+    }),
+  )
+  assert.equal(joined.status, 200)
+  assert.equal(joined.body.board.id, boardId)
+
+  const read = await json(await call(B, `/boards/${boardId}`, stranger.cookie))
+  assert.equal(read.status, 200)
+  assert.equal(read.body.board.role, 'member')
+
+  await run('DELETE FROM board_members WHERE board_id = $1 AND user_id = $2', boardId, stranger.id)
+})
+
+test('the code can be read again, unlike the link', async () => {
+  const created = await json(await call(A, `/boards/${boardId}/share`, owner.cookie, { method: 'POST' }))
+  const meta = await json(await call(A, `/boards/${boardId}/share`, owner.cookie))
+
+  // The owner has to be able to put it back on screen without invalidating
+  // everyone's existing access.
+  assert.equal(meta.body.share.code, created.body.share.code)
+  assert.equal(meta.body.share.token, undefined, 'the token still never comes back')
+})
+
+test('a wrong code and a malformed one are indistinguishable', async () => {
+  const bad = await json(
+    await call(B, '/shares/join', stranger.cookie, { method: 'POST', body: JSON.stringify({ code: 'ZZZZZZ' }) }),
+  )
+  const malformed = await json(
+    await call(B, '/shares/join', stranger.cookie, { method: 'POST', body: JSON.stringify({ code: '!!' }) }),
+  )
+  assert.equal(bad.status, 404)
+  assert.deepEqual(bad.body, malformed.body)
+})
+
+test('revoking the link kills the code with it', async () => {
+  const created = await json(await call(A, `/boards/${boardId}/share`, owner.cookie, { method: 'POST' }))
+  await call(A, `/boards/${boardId}/share`, owner.cookie, { method: 'DELETE' })
+
+  const attempt = await json(
+    await call(B, '/shares/join', stranger.cookie, {
+      method: 'POST',
+      body: JSON.stringify({ code: created.body.share.code }),
+    }),
+  )
+  assert.equal(attempt.status, 404)
+})
+
+test('rotating issues a different code and retires the old one', async () => {
+  const first = await json(await call(A, `/boards/${boardId}/share`, owner.cookie, { method: 'POST' }))
+  const second = await json(await call(A, `/boards/${boardId}/share`, owner.cookie, { method: 'POST' }))
+  assert.notEqual(first.body.share.code, second.body.share.code)
+
+  const old = await call(B, '/shares/join', stranger.cookie, {
+    method: 'POST',
+    body: JSON.stringify({ code: first.body.share.code }),
+  })
+  assert.equal(old.status, 404)
+})
+
+test('guessing codes is cut off long before the space could be searched', async () => {
+  // Six readable letters is ~191 million combinations — searchable given
+  // unlimited attempts in a way a 32-byte token is not. The limit, not the
+  // length, is what makes the code safe, so it is the part worth asserting.
+  await clearRateLimits()
+
+  const guess = (code) =>
+    call(B, '/shares/join', stranger.cookie, { method: 'POST', body: JSON.stringify({ code }) })
+
+  let blockedAt = null
+  for (let i = 0; i < 15 && blockedAt === null; i++) {
+    const res = await guess('ZZZZZ' + 'ABCDEFGHJKLMNPQ'[i])
+    if (res.status === 429) blockedAt = i
+  }
+
+  assert.notEqual(blockedAt, null, 'guessing was never rate limited')
+  assert.ok(blockedAt <= 10, `took ${blockedAt} guesses to be cut off`)
+
+  // A correct code is refused too while the limit holds — being right does not
+  // buy an attacker a way past it.
+  const created = await json(await call(A, `/boards/${boardId}/share`, owner.cookie, { method: 'POST' }))
+  const blocked = await guess(created.body.share.code)
+  assert.equal(blocked.status, 429)
+
+  await clearRateLimits()
+})
+
+test('joining by code needs an account', async () => {
+  const res = await fetch(`http://127.0.0.1:${B}/api/shares/join`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: 'ABCDEF' }),
+  })
+  assert.equal(res.status, 401)
 })
 
 test('the share link never comes back after it is issued', async () => {
@@ -389,6 +503,35 @@ test('locking the board stops a member editing, on the instance they are not on'
     }),
   )
   assert.equal(ownerSave.status, 200)
+
+  a.close()
+  b.close()
+})
+
+test('a member joining an already-locked board is told so, and cannot edit', async () => {
+  // Not the same path as being locked mid-session: this one arrives in the
+  // welcome message rather than as a broadcast, so it has to be right too.
+  await call(A, `/boards/${boardId}/lock`, owner.cookie, {
+    method: 'PATCH',
+    body: JSON.stringify({ locked: true }),
+  })
+
+  const a = await openSocket(A, boardId, owner.cookie)
+  const b = await openSocket(B, boardId, collaborator.cookie)
+
+  const welcome = b.received.find((m) => m.type === 'welcome')
+  assert.equal(welcome.locked, true, 'the lock is reported on arrival')
+  assert.equal(welcome.role, 'member')
+
+  b.send(JSON.stringify({ type: 'patch', entity: 'token', id: 'late', patch: { x: 3, y: 3 } }))
+  b.send(JSON.stringify({ type: 'cursor', x: 5, y: 5 }))
+  await waitForMessage(a, (m) => m.type === 'cursor' && m.x === 5)
+  assert.equal(seen(a, (m) => m.type === 'patch' && m.id === 'late'), false)
+
+  // The owner arriving into their own locked board is not locked out.
+  const ownerWelcome = a.received.find((m) => m.type === 'welcome')
+  assert.equal(ownerWelcome.role, 'owner')
+  assert.equal(ownerWelcome.locked, true, 'the board is locked, which the owner still needs to know')
 
   a.close()
   b.close()

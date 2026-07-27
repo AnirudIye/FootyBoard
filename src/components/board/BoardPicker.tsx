@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useBoardsStore } from '../../store/boardsStore'
 import { useBoardStore } from '../../store/boardStore'
 import { useAuthStore } from '../../store/authStore'
@@ -176,6 +177,17 @@ export default function BoardPicker() {
         {boards.length === 0 && (
           <span className="px-1 py-2 text-[12px] text-ink-3">No boards yet.</span>
         )}
+
+        {/* Someone who has been read a code rather than sent a link has to be
+            able to find their way in from inside the app, not only from a URL
+            they were told to type. */}
+        <Link
+          to="/join"
+          className="border-t border-rule pt-2.5 font-mono text-[10px] uppercase tracking-[0.1em]
+            text-ink-3 transition-colors hover:text-accent"
+        >
+          Join with a code
+        </Link>
       </div>
     </Popover>
   )

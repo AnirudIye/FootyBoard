@@ -2,6 +2,11 @@ node_modules/
 dist/
 dist-ssr/
 *.local
+
+# A separate git repository (github.com/AnirudIye/FootyBoard) that happens to
+# live here. Committing it into this one would embed a repo inside a repo, and
+# a clone would get an empty directory it could not populate.
+FootyBoard/
 .env
 .env.*
 !.env.example

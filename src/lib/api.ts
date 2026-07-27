@@ -61,6 +61,8 @@ export interface BoardSummary {
 
 export interface ShareMeta {
   id: string
+  /** The short join code. Readable again, unlike the link token. */
+  code: string
   createdAt: string
 }
 
@@ -155,4 +157,11 @@ export const api = {
       `/shares/${encodeURIComponent(token)}/redeem`,
       { method: 'POST' },
     ),
+
+  /** Join by typing the short code rather than following a link. */
+  joinWithCode: (code: string) =>
+    request<{ board: { id: string; name: string } }>('/shares/join', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
 }

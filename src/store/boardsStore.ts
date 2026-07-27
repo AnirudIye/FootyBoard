@@ -23,6 +23,13 @@ interface BoardsState {
   remove: (id: string) => Promise<void>
   /** Keeps the strip's timestamps honest after an autosave. */
   touch: (id: string) => void
+  /**
+   * Keeps the list honest after the owner changes the editing lock.
+   *
+   * Without this the list keeps whatever it was told when it was fetched, and
+   * anything reading the lock from here shows the state as of page load.
+   */
+  setMembersCanEdit: (id: string, membersCanEdit: boolean) => void
   reset: () => void
 }
 
@@ -106,6 +113,11 @@ export const useBoardsStore = create<BoardsState>((set, get) => ({
   touch: (id) =>
     set((s) => ({
       boards: s.boards.map((b) => (b.id === id ? { ...b, updatedAt: new Date().toISOString() } : b)),
+    })),
+
+  setMembersCanEdit: (id, membersCanEdit) =>
+    set((s) => ({
+      boards: s.boards.map((b) => (b.id === id ? { ...b, membersCanEdit } : b)),
     })),
 
   reset: () => {
