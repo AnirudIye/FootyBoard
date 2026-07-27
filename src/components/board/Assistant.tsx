@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useAssistantStore } from '../../store/assistantStore'
 import { useBoardStore } from '../../store/boardStore'
+import { api } from '../../lib/api'
 import { runAssistant } from './runAssistant'
 
 const PROMPTS = [
@@ -19,6 +20,10 @@ export default function Assistant() {
   const messages = useAssistantStore((s) => s.messages)
   const noticeDismissed = useAssistantStore((s) => s.noticeDismissed)
   const dismissNotice = useAssistantStore((s) => s.dismissNotice)
+  const aiAvailable = useAssistantStore((s) => s.aiAvailable)
+  const aiConsented = useAssistantStore((s) => s.aiConsented)
+  const setAiConsented = useAssistantStore((s) => s.setAiConsented)
+  const thinking = useAssistantStore((s) => s.thinking)
   const undoAction = useBoardStore((s) => s.undoAction)
 
   const [value, setValue] = useState('')
@@ -26,7 +31,25 @@ export default function Assistant() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages, open])
+  }, [messages, open, thinking])
+
+  // Asked once, the first time the panel is opened. A server with no key never
+  // offers the AI at all, so nobody is shown a switch that does nothing.
+  useEffect(() => {
+    if (!open || aiAvailable) return
+    let cancelled = false
+    void api
+      .assistantStatus()
+      .then(({ enabled }) => {
+        if (!cancelled && enabled) useAssistantStore.getState().setAiAvailable(true)
+      })
+      .catch(() => {
+        // Offline, signed out, or an older server: stay rule-based in silence.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, aiAvailable])
 
   const submit = (text: string) => {
     runAssistant(text)
@@ -110,13 +133,59 @@ export default function Assistant() {
                   </div>
                 </motion.div>
               ))}
+
+              {thinking && (
+                <motion.div
+                  layout
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="font-mono text-[11px] tracking-[0.08em] text-ink-3"
+                >
+                  <span className="animate-pulse">thinking…</span>
+                </motion.div>
+              )}
             </div>
 
-            {!noticeDismissed && (
+            {/* The offer, not the switch. An earlier build promised in this very
+                panel that an online assistant would ask first; a configured key
+                makes the AI available, and this is where it gets turned on. */}
+            {aiAvailable && !aiConsented && (
               <div className="flex items-center gap-2 border-t border-rule bg-sunken/60 px-3 py-1.5 text-[11px] text-ink-3">
                 <span className="flex-1">
-                  This one is offline. If an online assistant ever ships, your messages and the
-                  board would be sent to an outside AI provider — and you'd be asked first.
+                  For anything it doesn't recognise, this can ask Google Gemini. That sends your
+                  message and a summary of the board off the device. Everything it already
+                  understands stays offline either way.
+                </span>
+                <button
+                  onClick={() => setAiConsented(true)}
+                  className="shrink-0 font-medium text-accent hover:text-accent-hover"
+                >
+                  Turn on
+                </button>
+              </div>
+            )}
+
+            {aiAvailable && aiConsented && !noticeDismissed && (
+              <div className="flex items-center gap-2 border-t border-rule bg-sunken/60 px-3 py-1.5 text-[11px] text-ink-3">
+                <span className="flex-1">
+                  Anything the built-in commands don't cover goes to Google Gemini.{' '}
+                  <button
+                    onClick={() => setAiConsented(false)}
+                    className="font-medium text-ink-2 underline hover:text-ink"
+                  >
+                    Keep it offline
+                  </button>
+                </span>
+                <button onClick={dismissNotice} className="shrink-0 font-medium text-ink-2 hover:text-ink">
+                  Got it
+                </button>
+              </div>
+            )}
+
+            {!aiAvailable && !noticeDismissed && (
+              <div className="flex items-center gap-2 border-t border-rule bg-sunken/60 px-3 py-1.5 text-[11px] text-ink-3">
+                <span className="flex-1">
+                  This one is offline. Nothing you type here leaves the device.
                 </span>
                 <button onClick={dismissNotice} className="font-medium text-ink-2 hover:text-ink">
                   Got it

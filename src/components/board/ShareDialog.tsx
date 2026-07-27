@@ -21,6 +21,23 @@ import { Toggle } from '../ui/Toggle'
  * a hash, so there is no "show me the link again" to build; regenerating is the
  * honest alternative, and it revokes the previous one.
  */
+/**
+ * How long the code has left, in the terms someone about to read it out cares
+ * about. Rounded down, so "1h" never means "in fifty seconds".
+ */
+function expiryLabel(expiresAt: number | null): string {
+  if (expiresAt === null) return ''
+  const left = expiresAt - Date.now()
+  if (left <= 0) return 'Expired'
+
+  const minutes = Math.floor(left / 60_000)
+  if (minutes < 60) return `Expires in ${Math.max(1, minutes)}m`
+
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest === 0 ? `Expires in ${hours}h` : `Expires in ${hours}h ${rest}m`
+}
+
 export default function ShareDialog() {
   const email = useAuthStore((s) => s.email)
   const currentId = useBoardsStore((s) => s.currentId)
@@ -30,8 +47,18 @@ export default function ShareDialog() {
   const [open, setOpen] = useState(false)
   const [link, setLink] = useState<string | null>(null)
   const [code, setCode] = useState<string | null>(null)
+  const [codeExpiresAt, setCodeExpiresAt] = useState<number | null>(null)
   const [members, setMembers] = useState<BoardMember[]>([])
   const [busy, setBusy] = useState(false)
+
+  // Re-renders on a minute's tick so "expires in 3h 20m" does not sit there
+  // going stale while the panel is open.
+  const [, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (!open) return
+    const t = window.setInterval(() => setNow(Date.now()), 30_000)
+    return () => window.clearInterval(t)
+  }, [open])
 
   /**
    * Read, never copied.
@@ -44,6 +71,8 @@ export default function ShareDialog() {
    * every change, so the honest thing is to render that directly.
    */
   const locked = useRealtimeStore((s) => s.boardLocked)
+
+  const expired = codeExpiresAt !== null && codeExpiresAt <= Date.now()
 
   const board = boards.find((b) => b.id === currentId)
   // Fall back to the board list when the socket has not landed yet, so the
@@ -61,6 +90,7 @@ export default function ShareDialog() {
         ])
         // The code comes back every time; the link does not exist to be read.
         setCode(share.share?.code ?? null)
+        setCodeExpiresAt(share.share?.codeExpiresAt ?? null)
         setMembers(list.members)
       } catch (err) {
         toast(toUserMessage(err, 'Could not load the sharing settings.'))
@@ -83,9 +113,24 @@ export default function ShareDialog() {
       setLink(shareUrl(share.token))
       const replaced = code !== null
       setCode(share.code)
+      setCodeExpiresAt(share.codeExpiresAt)
       toast(replaced ? 'New code and link ready. The old ones no longer work.' : 'Sharing is on.')
     } catch (err) {
       toast(toUserMessage(err, 'Could not turn on sharing.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const refreshCode = async () => {
+    setBusy(true)
+    try {
+      const { share } = await api.refreshCode(currentId)
+      setCode(share.code)
+      setCodeExpiresAt(share.codeExpiresAt)
+      toast('New code ready. The link still works.')
+    } catch (err) {
+      toast(toUserMessage(err, 'Could not get a new code.'))
     } finally {
       setBusy(false)
     }
@@ -97,7 +142,7 @@ export default function ShareDialog() {
       toast(`${what} copied.`)
     } catch {
       // Clipboard access can be refused; the field is selectable either way.
-      toast(`Could not copy automatically — select the ${what.toLowerCase()} and copy it.`)
+      toast(`Could not copy automatically. Select the ${what.toLowerCase()} and copy it.`)
     }
   }
 
@@ -106,6 +151,7 @@ export default function ShareDialog() {
     try {
       await api.revokeShare(currentId)
       setCode(null)
+      setCodeExpiresAt(null)
       setLink(null)
       toast('Sharing off. People already on the board still have access.')
     } catch (err) {
@@ -161,16 +207,29 @@ export default function ShareDialog() {
             {/* The code is the headline: it exists to be read off a screen from
                 the back of a room, so it gets the size to match. */}
             <div className="flex flex-col items-center gap-2 rounded border border-rule bg-sunken py-3">
-              <span className="font-mono text-[30px] leading-none tracking-[0.22em] text-ink">
+              <span
+                className={`font-mono text-[30px] leading-none tracking-[0.22em] ${
+                  expired ? 'text-ink-3 line-through' : 'text-ink'
+                }`}
+              >
                 {code}
               </span>
-              <button
-                onClick={() => copy(code, 'Code')}
-                className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3
-                  transition-colors hover:text-accent"
+              <span
+                className={`font-mono text-[10px] uppercase tracking-[0.1em] ${
+                  expired ? 'text-accent' : 'text-ink-3'
+                }`}
               >
-                Copy code
-              </button>
+                {expiryLabel(codeExpiresAt)}
+              </span>
+              {!expired && (
+                <button
+                  onClick={() => copy(code, 'Code')}
+                  className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3
+                    transition-colors hover:text-accent"
+                >
+                  Copy code
+                </button>
+              )}
             </div>
 
             {link ? (
@@ -184,14 +243,14 @@ export default function ShareDialog() {
                 />
                 <Button onClick={() => copy(link, 'Link')}>Copy link</Button>
                 <p className="text-[11px] leading-relaxed text-ink-3">
-                  Copy the link now — it is stored hashed, so it cannot be shown again. The
+                  Copy the link now. It is stored hashed, so it cannot be shown again. The
                   code above can.
                 </p>
               </div>
             ) : (
               <p className="text-[11px] leading-relaxed text-ink-3">
                 The link was only shown when it was created. Generate a new pair below if you
-                need it — the current code will stop working.
+                need it. The current code will stop working.
               </p>
             )}
           </>
@@ -202,23 +261,32 @@ export default function ShareDialog() {
         )}
 
         {code && (
-          <div className="flex gap-4">
-            <button
-              onClick={createShare}
-              disabled={busy}
-              className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3
-                transition-colors hover:text-accent disabled:opacity-50"
-            >
+          <div className="flex flex-col gap-2.5">
+            {/* Refreshing the code is the routine action — start of a session,
+                or the last one aged out — so it is the button, and it is safe:
+                it does not touch the link anyone already has. */}
+            <Button onClick={refreshCode} disabled={busy} variant={expired ? 'primary' : 'secondary'}>
               New code
-            </button>
-            <button
-              onClick={revoke}
-              disabled={busy}
-              className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3
-                transition-colors hover:text-accent disabled:opacity-50"
-            >
-              Stop sharing
-            </button>
+            </Button>
+            <div className="flex gap-4">
+              <button
+                onClick={createShare}
+                disabled={busy}
+                className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3
+                  transition-colors hover:text-accent disabled:opacity-50"
+                title="Issues a new code and a new link. Any link already sent out stops working."
+              >
+                New link too
+              </button>
+              <button
+                onClick={revoke}
+                disabled={busy}
+                className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3
+                  transition-colors hover:text-accent disabled:opacity-50"
+              >
+                Stop sharing
+              </button>
+            </div>
           </div>
         )}
 

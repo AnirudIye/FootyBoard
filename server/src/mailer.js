@@ -55,7 +55,7 @@ export function passwordResetEmail({ to, link, minutes }) {
       '',
       `The link works once and expires in ${minutes} minutes.`,
       '',
-      "If this wasn't you, ignore this message — your password has not changed.",
+      "If this wasn't you, ignore this message. Your password has not changed.",
     ].join('\n'),
   }
 }

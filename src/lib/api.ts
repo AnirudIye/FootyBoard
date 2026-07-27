@@ -63,6 +63,8 @@ export interface ShareMeta {
   id: string
   /** The short join code. Readable again, unlike the link token. */
   code: string
+  /** Epoch ms. Codes are session-scoped; the link does not expire. */
+  codeExpiresAt: number
   createdAt: string
 }
 
@@ -137,6 +139,13 @@ export const api = {
   getShare: (boardId: string) =>
     request<{ share: ShareMeta | null }>(`/boards/${boardId}/share`),
 
+  /** A fresh code on the existing share. Leaves the link, and members, alone. */
+  refreshCode: (boardId: string) =>
+    request<{ share: Pick<ShareMeta, 'id' | 'code' | 'codeExpiresAt'> }>(
+      `/boards/${boardId}/share/code`,
+      { method: 'POST' },
+    ),
+
   revokeShare: (boardId: string) =>
     request<void>(`/boards/${boardId}/share`, { method: 'DELETE' }),
 
@@ -156,6 +165,25 @@ export const api = {
     request<{ board: { id: string; name: string } }>(
       `/shares/${encodeURIComponent(token)}/redeem`,
       { method: 'POST' },
+    ),
+
+  /** Whether the AI fallback is configured on the server. */
+  assistantStatus: () => request<{ enabled: boolean }>('/assistant/status'),
+
+  /**
+   * Ask the AI fallback. Only called when the offline parser did not recognise
+   * the message — see `runAssistant`.
+   */
+  askAssistant: (body: {
+    message: string
+    board: string
+    formationNames: string[]
+    kind: string
+    activeTeam: string
+  }) =>
+    request<{ reply: string | null; command: { type: string } & Record<string, unknown> | null }>(
+      '/assistant',
+      { method: 'POST', body: JSON.stringify(body) },
     ),
 
   /** Join by typing the short code rather than following a link. */

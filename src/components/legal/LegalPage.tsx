@@ -18,7 +18,7 @@ export default function LegalPage({
           <Link to="/" className="flex items-center gap-2.5">
             <img src="/favicon.svg" alt="" width={24} height={24} />
             <span className="font-display text-[17px] font-semibold tracking-[-0.02em]">
-              Soccerboard
+              FootyBoard
             </span>
           </Link>
           <Link

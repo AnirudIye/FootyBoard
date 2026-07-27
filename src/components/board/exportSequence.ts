@@ -39,7 +39,7 @@ function watermark(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.fillStyle = 'rgba(23,25,29,0.4)'
   ctx.textAlign = 'right'
   ctx.textBaseline = 'bottom'
-  ctx.fillText('soccerboard', w - size, h - size * 0.6)
+  ctx.fillText('footyboard', w - size, h - size * 0.6)
 }
 
 /**
@@ -88,7 +88,7 @@ export async function exportSequenceGif(
   stage: Konva.Stage,
   crop: Crop,
   { frameCount, speed, fps = 20 }: SequenceOpts,
-  filename = 'soccerboard.gif',
+  filename = 'footyboard.gif',
 ): Promise<void> {
   if (frameCount < 2)
     throw new AppError('A GIF needs at least two frames. Capture another position with + Frame, then export.')
@@ -139,7 +139,7 @@ export async function exportSequenceWebm(
   stage: Konva.Stage,
   crop: Crop,
   { frameCount, speed, fps = 30 }: SequenceOpts,
-  filename = 'soccerboard.webm',
+  filename = 'footyboard.webm',
 ): Promise<void> {
   if (frameCount < 2)
     throw new AppError('A video needs at least two frames. Capture another position with + Frame, then export.')

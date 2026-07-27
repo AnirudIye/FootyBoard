@@ -4,7 +4,7 @@ import { get, all, run, transaction } from '../db.js'
 import { accessFor } from '../access.js'
 import { publish } from '../realtime.js'
 import { consume } from '../rateLimit.js'
-import { generateCode, normalizeCode } from '../joinCode.js'
+import { generateCode, normalizeCode, codeExpiryFrom } from '../joinCode.js'
 import { BadRequest } from '../validate.js'
 
 /**
@@ -58,6 +58,7 @@ sharesRouter.post('/:id/share', async (req, res, next) => {
     // The code has to be unique among live shares, and six readable characters
     // is a small enough space that a collision is worth planning for rather
     // than assuming away. The unique index is the arbiter; this just retries.
+    const expiresAt = codeExpiryFrom()
     let code = null
     for (let attempt = 0; attempt < 5 && code === null; attempt++) {
       const candidate = generateCode()
@@ -68,9 +69,18 @@ sharesRouter.post('/:id/share', async (req, res, next) => {
             [Date.now(), req.params.id],
           )
           await client.query(
-            `INSERT INTO board_shares (id, board_id, token_hash, code, created_by, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [id, req.params.id, digest(token), candidate, req.user.id, new Date().toISOString()],
+            `INSERT INTO board_shares
+               (id, board_id, token_hash, code, code_expires_at, created_by, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [
+              id,
+              req.params.id,
+              digest(token),
+              candidate,
+              expiresAt,
+              req.user.id,
+              new Date().toISOString(),
+            ],
           )
         })
         code = candidate
@@ -84,7 +94,9 @@ sharesRouter.post('/:id/share', async (req, res, next) => {
 
     // The only time the plaintext token exists outside the owner's browser. The
     // code, unlike the token, can be read again — being readable is its job.
-    res.status(201).json({ share: { id, token, code, createdAt: new Date().toISOString() } })
+    res.status(201).json({
+      share: { id, token, code, codeExpiresAt: expiresAt, createdAt: new Date().toISOString() },
+    })
   } catch (err) {
     next(err)
   }
@@ -101,12 +113,66 @@ sharesRouter.get('/:id/share', async (req, res, next) => {
   try {
     if (!(await requireOwner(req, res))) return
     const row = await get(
-      `SELECT id, code, created_at FROM board_shares
+      `SELECT id, code, code_expires_at, created_at FROM board_shares
         WHERE board_id = $1 AND revoked_at IS NULL
         ORDER BY created_at DESC LIMIT 1`,
       req.params.id,
     )
-    res.json({ share: row ? { id: row.id, code: row.code, createdAt: row.created_at } : null })
+    res.json({
+      share: row
+        ? {
+            id: row.id,
+            code: row.code,
+            // Returned even when it has passed, so the owner is shown an
+            // expired code and a way to refresh it rather than an empty panel
+            // that looks like sharing was never turned on.
+            codeExpiresAt: Number(row.code_expires_at),
+            createdAt: row.created_at,
+          }
+        : null,
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * A fresh code on the existing share, leaving the link alone.
+ *
+ * Separate from rotating the whole share because the two have different
+ * blast radii. The code is session-scoped and expected to be refreshed at the
+ * start of every session; the link is a credential people may have saved.
+ * Making "new code" also break every saved link would mean nobody dares press
+ * it, which defeats having an expiry at all.
+ */
+sharesRouter.post('/:id/share/code', async (req, res, next) => {
+  try {
+    if (!(await requireOwner(req, res))) return
+
+    const share = await get(
+      `SELECT id FROM board_shares
+        WHERE board_id = $1 AND revoked_at IS NULL
+        ORDER BY created_at DESC LIMIT 1`,
+      req.params.id,
+    )
+    if (!share) return res.status(404).json({ error: 'Sharing is not on for this board.' })
+
+    const expiresAt = codeExpiryFrom()
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidate = generateCode()
+      try {
+        await run(
+          'UPDATE board_shares SET code = $1, code_expires_at = $2 WHERE id = $3',
+          candidate,
+          expiresAt,
+          share.id,
+        )
+        return res.json({ share: { id: share.id, code: candidate, codeExpiresAt: expiresAt } })
+      } catch (err) {
+        if (err.code !== '23505') throw err
+      }
+    }
+    throw new Error('could not allocate a unique join code')
   } catch (err) {
     next(err)
   }
@@ -267,13 +333,28 @@ redeemRouter.post('/join', async (req, res, next) => {
     if (!code) return wrong()
 
     const share = await get(
-      `SELECT s.id, s.board_id, b.name
+      `SELECT s.id, s.board_id, s.code_expires_at, b.name
          FROM board_shares s
          JOIN boards b ON b.id = s.board_id
         WHERE s.code = $1 AND s.revoked_at IS NULL`,
       code,
     )
     if (!share) return wrong()
+
+    /**
+     * An expired code is called expired, unlike a wrong one.
+     *
+     * This does leak one bit — that a given string was a real code once — but
+     * the string is useless by then, and a live code is still never
+     * distinguishable from a wrong one. Weighed against telling someone whose
+     * session ran over "that code is not valid" when it plainly was, and
+     * sending them to check for a typo that is not there, the bit is worth it.
+     */
+    if (Number(share.code_expires_at) <= Date.now()) {
+      return res
+        .status(410)
+        .json({ error: 'That code has expired. Ask for the new one and try again.' })
+    }
 
     res.json({ board: await admit(share, req.user) })
   } catch (err) {

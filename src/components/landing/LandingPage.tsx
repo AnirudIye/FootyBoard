@@ -58,7 +58,7 @@ const FEATURES: { glyph: GlyphName; tag: string; title: string; body: string }[]
     glyph: 'canvas',
     tag: 'CANVAS',
     title: 'Room to think',
-    body: 'The pitch has edges. The canvas around it does not — park a set piece off to one side and come back to it later.',
+    body: 'The pitch has edges. The canvas around it does not, so you can park a set piece off to one side and come back to it later.',
   },
   {
     glyph: 'share',
@@ -94,7 +94,7 @@ function Navbar() {
         <Link to="/" className="flex items-center gap-2.5">
           <img src="/favicon.svg" alt="" width={26} height={26} className="shrink-0" />
           <span className="font-display text-[19px] font-semibold tracking-[-0.02em] text-foreground">
-            Soccerboard
+            FootyBoard
           </span>
           <span className="hidden font-mono text-[10px] tracking-[0.14em] text-accent sm:inline">
             TACTICS
@@ -363,7 +363,7 @@ export default function LandingPage() {
           <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-8 py-9 sm:flex-row">
             <div className="flex items-baseline gap-2">
               <span className="font-display text-[16px] font-semibold tracking-[-0.02em]">
-                Soccerboard
+                FootyBoard
               </span>
               <span className="font-mono text-[10px] tracking-[0.14em] text-accent">TACTICS</span>
             </div>

@@ -7,6 +7,7 @@ import { attachRealtime } from './realtime.js'
 import { authRouter } from './routes/auth.js'
 import { boardsRouter } from './routes/boards.js'
 import { sharesRouter, redeemRouter } from './routes/shares.js'
+import { assistantRouter } from './routes/assistant.js'
 import { BadRequest } from './validate.js'
 import { TooManyRequests } from './rateLimit.js'
 
@@ -69,6 +70,7 @@ app.use('/api/auth', authRouter)
 app.use('/api/boards', sharesRouter)
 app.use('/api/boards', boardsRouter)
 app.use('/api/shares', redeemRouter)
+app.use('/api/assistant', assistantRouter)
 
 app.use((_req, res) => res.status(404).json({ error: 'No such endpoint.' }))
 

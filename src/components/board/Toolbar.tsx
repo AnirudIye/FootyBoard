@@ -1,4 +1,5 @@
 import { useId, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useBoardStore, HOME_COLOR, AWAY_COLOR } from '../../store/boardStore'
 import { FORMATION_NAMES } from '../../lib/formations'
@@ -141,7 +142,7 @@ export default function Toolbar() {
     <header className="absolute inset-x-0 top-0 z-20 border-b border-rule bg-surface/95 backdrop-blur-[2px]">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5">
         <span className="pr-3 mr-1 border-r border-rule font-display text-[15px] font-semibold tracking-[-0.02em]">
-          Soccerboard
+          FootyBoard
         </span>
 
         <BoardPicker />
@@ -213,6 +214,17 @@ export default function Toolbar() {
 
         <div className="ml-auto flex items-center gap-2">
           <PresenceStack />
+          {/* Sits next to Share because the two are the same job from opposite
+              ends: one hands out a code, the other takes one. */}
+          <Link
+            to="/join"
+            className="rounded border border-rule bg-surface px-3 py-1.5 text-[13px] leading-none
+              text-ink-2 transition-colors duration-150 hover:border-rule-strong hover:text-ink
+              focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
+              focus-visible:outline-accent"
+          >
+            Join by code
+          </Link>
           <ShareDialog />
           <AccountMenu />
           <TokenPalette />

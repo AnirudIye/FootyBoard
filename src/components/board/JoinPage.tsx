@@ -11,7 +11,7 @@ import { Button } from '../ui/Button'
  * Joining a board by typing the code someone read out.
  *
  * Deliberately a page of its own rather than a field tucked into the board:
- * the person arriving has usually been told "go to Soccerboard and put in
+ * the person arriving has usually been told "go to FootyBoard and put in
  * ABCDEF", and the thing they land on should be that box and almost nothing
  * else.
  */

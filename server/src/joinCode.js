@@ -24,6 +24,22 @@ import { randomInt } from 'node:crypto'
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
 export const CODE_LENGTH = 6
 
+/**
+ * How long a code stays usable.
+ *
+ * Twelve hours covers a training session, a team meeting, or a school day
+ * without anyone having to think about it, and is short enough that a code
+ * written on a whiteboard on Monday is not still letting people in on Friday.
+ *
+ * Expiry is not only tidiness: it is the main thing keeping the guessable space
+ * small. A blind guess has to hit one of the codes that are live *right now*,
+ * so codes ageing out continuously shrinks what an attacker is aiming at. The
+ * link, being a full-length token, has no expiry and does not need one.
+ */
+export const CODE_TTL_MS = 12 * 60 * 60 * 1000
+
+export const codeExpiryFrom = (now = Date.now()) => now + CODE_TTL_MS
+
 /** `randomInt`, not `Math.random`: this is a credential, however short. */
 export function generateCode() {
   let code = ''

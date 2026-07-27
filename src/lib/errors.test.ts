@@ -36,7 +36,7 @@ describe('toUserMessage', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const bug = new TypeError('boom')
     toUserMessage(bug)
-    expect(spy).toHaveBeenCalledWith('Soccerboard:', bug)
+    expect(spy).toHaveBeenCalledWith('FootyBoard:', bug)
   })
 
   it('falls back for a non-error value', () => {

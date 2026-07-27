@@ -8,6 +8,9 @@ import type {
 } from './types'
 
 export const SCHEMA_VERSION = 2
+// Storage keys keep the old name on purpose. Renaming one silently discards
+// every board a guest has saved, which is a steep price for a string nobody
+// sees. The same goes for `soccerboard.lastBoard` and the Postgres database.
 const KEY = 'soccerboard.board'
 
 export interface PersistedBoard {
@@ -68,7 +71,7 @@ export function loadBoard(
     const parsed = JSON.parse(raw)
     if (!isPersistedBoard(parsed)) {
       onProblem?.(
-        'Your saved board came from an older version of Soccerboard and could not be opened, so a fresh one is ready.',
+        'Your saved board came from an older version of FootyBoard and could not be opened, so a fresh one is ready.',
       )
       return null
     }

@@ -238,6 +238,83 @@ test('joining by code admits you exactly as the link does', async () => {
   await run('DELETE FROM board_members WHERE board_id = $1 AND user_id = $2', boardId, stranger.id)
 })
 
+test('an expired code stops working, and says so', async () => {
+  await clearRateLimits()
+  const created = await json(await call(A, `/boards/${boardId}/share`, owner.cookie, { method: 'POST' }))
+  const code = created.body.share.code
+  assert.ok(created.body.share.codeExpiresAt > Date.now(), 'a fresh code has a future expiry')
+
+  // Reach in and age it rather than waiting twelve hours.
+  await run('UPDATE board_shares SET code_expires_at = $1 WHERE code = $2', Date.now() - 1000, code)
+
+  const attempt = await json(
+    await call(B, '/shares/join', stranger.cookie, { method: 'POST', body: JSON.stringify({ code }) }),
+  )
+  assert.equal(attempt.status, 410)
+  assert.match(attempt.body.error, /expired/)
+
+  // The link is a full-length token and does not expire with the code.
+  const viaLink = await json(
+    await call(B, `/shares/${created.body.share.token}/redeem`, stranger.cookie, { method: 'POST' }),
+  )
+  assert.equal(viaLink.status, 200, 'the link still works after the code has aged out')
+
+  await run('DELETE FROM board_members WHERE board_id = $1 AND user_id = $2', boardId, stranger.id)
+})
+
+test('refreshing the code leaves the link and the members alone', async () => {
+  await clearRateLimits()
+  const created = await json(await call(A, `/boards/${boardId}/share`, owner.cookie, { method: 'POST' }))
+  const oldCode = created.body.share.code
+  const token = created.body.share.token
+
+  const refreshed = await json(
+    await call(A, `/boards/${boardId}/share/code`, owner.cookie, { method: 'POST' }),
+  )
+  assert.equal(refreshed.status, 200)
+  assert.notEqual(refreshed.body.share.code, oldCode)
+  assert.ok(refreshed.body.share.codeExpiresAt > Date.now())
+
+  // The old code is gone...
+  const old = await call(B, '/shares/join', stranger.cookie, {
+    method: 'POST',
+    body: JSON.stringify({ code: oldCode }),
+  })
+  assert.equal(old.status, 404)
+
+  // ...the new one works...
+  const fresh = await json(
+    await call(B, '/shares/join', stranger.cookie, {
+      method: 'POST',
+      body: JSON.stringify({ code: refreshed.body.share.code }),
+    }),
+  )
+  assert.equal(fresh.status, 200)
+
+  // ...and the link people already have is untouched. This is the whole point
+  // of refreshing being separate from rotating.
+  const viaLink = await json(
+    await call(B, `/shares/${token}/redeem`, collaborator.cookie, { method: 'POST' }),
+  )
+  assert.equal(viaLink.status, 200)
+
+  await run('DELETE FROM board_members WHERE board_id = $1 AND user_id = $2', boardId, stranger.id)
+})
+
+test('a code cannot be refreshed for a board that is not shared', async () => {
+  await call(A, `/boards/${boardId}/share`, owner.cookie, { method: 'DELETE' })
+  const res = await json(await call(A, `/boards/${boardId}/share/code`, owner.cookie, { method: 'POST' }))
+  assert.equal(res.status, 404)
+})
+
+test('only the owner can refresh the code', async () => {
+  await call(A, `/boards/${boardId}/share`, owner.cookie, { method: 'POST' })
+  const res = await json(
+    await call(B, `/boards/${boardId}/share/code`, collaborator.cookie, { method: 'POST' }),
+  )
+  assert.equal(res.status, 403, 'a member is on the board, so it exists — they just may not do this')
+})
+
 test('the code can be read again, unlike the link', async () => {
   const created = await json(await call(A, `/boards/${boardId}/share`, owner.cookie, { method: 'POST' }))
   const meta = await json(await call(A, `/boards/${boardId}/share`, owner.cookie))

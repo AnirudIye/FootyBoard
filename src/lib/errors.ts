@@ -38,6 +38,6 @@ export function toUserMessage(
   if (name && BROWSER_CAUSES[name]) return BROWSER_CAUSES[name]
 
   // Not a failure we have wording for: keep the technical detail off screen.
-  if (err !== undefined && err !== null) console.error('Soccerboard:', err)
+  if (err !== undefined && err !== null) console.error('FootyBoard:', err)
   return fallback
 }

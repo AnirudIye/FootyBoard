@@ -1,5 +1,5 @@
 import pg from 'pg'
-import { generateCode } from './joinCode.js'
+import { generateCode, codeExpiryFrom } from './joinCode.js'
 
 /**
  * Postgres, reached through a connection pool.
@@ -139,6 +139,7 @@ async function applySchema(client) {
   // is the rate limit on redemption, not the storage.
   await client.query(`
     ALTER TABLE board_shares ADD COLUMN IF NOT EXISTS code TEXT;
+    ALTER TABLE board_shares ADD COLUMN IF NOT EXISTS code_expires_at BIGINT;
   `)
 
   await backfillJoinCodes(client)
@@ -191,17 +192,18 @@ async function applySchema(client) {
  */
 async function backfillJoinCodes(client) {
   const { rows } = await client.query(
-    'SELECT id FROM board_shares WHERE code IS NULL AND revoked_at IS NULL',
+    `SELECT id FROM board_shares
+      WHERE revoked_at IS NULL AND (code IS NULL OR code_expires_at IS NULL)`,
   )
 
   for (const row of rows) {
     // Retry on the unique index rather than checking first, which would race.
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
-        await client.query('UPDATE board_shares SET code = $1 WHERE id = $2', [
-          generateCode(),
-          row.id,
-        ])
+        await client.query(
+          'UPDATE board_shares SET code = $1, code_expires_at = $2 WHERE id = $3',
+          [generateCode(), codeExpiryFrom(), row.id],
+        )
         break
       } catch (err) {
         if (err.code !== '23505') throw err

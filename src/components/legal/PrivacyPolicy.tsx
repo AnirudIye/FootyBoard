@@ -7,7 +7,7 @@ export default function PrivacyPolicy() {
     <LegalPage title="Privacy Policy" updated={UPDATED}>
       <Clause heading="The short version">
         <p>
-          If you use Soccerboard without an account, everything stays in your browser. If you create
+          If you use FootyBoard without an account, everything stays in your browser. If you create
           one, two things reach our server and nothing else: your email address, and the boards you
           save. Your password is never stored in readable form.
         </p>
@@ -19,7 +19,7 @@ export default function PrivacyPolicy() {
 
       <Clause heading="Who this applies to">
         <p>
-          This policy covers everyone who uses Soccerboard, and is written to meet the expectations
+          This policy covers everyone who uses FootyBoard, and is written to meet the expectations
           of the UK GDPR and Data Protection Act 2018, the EU GDPR, and US state privacy laws
           including the California Consumer Privacy Act as amended by the CPRA.
         </p>
@@ -38,7 +38,7 @@ export default function PrivacyPolicy() {
             from the hash.
           </li>
           <li>
-            <strong className="text-ink">Your boards</strong> — player positions, drawings,
+            <strong className="text-ink">Your boards</strong>: player positions, drawings,
             animation frames, and view settings.
           </li>
           <li>
@@ -92,7 +92,7 @@ export default function PrivacyPolicy() {
         <p>
           UK and EU users have the right to access, correct, erase, restrict, port, and object to
           the processing of their personal data. California residents have the right to know,
-          delete, correct, and opt out of the sale or sharing of personal information — Soccerboard
+          delete, correct, and opt out of the sale or sharing of personal information. FootyBoard
           does not sell or share personal information, and never has.
         </p>
         <p>
@@ -113,7 +113,7 @@ export default function PrivacyPolicy() {
 
       <Clause heading="International transfers">
         <p>
-          Your account and boards are held wherever this instance of Soccerboard is hosted. If that
+          Your account and boards are held wherever this instance of FootyBoard is hosted. If that
           is outside your country, the transfer is covered by the standard safeguards for the
           hosting arrangement in use.
         </p>
@@ -121,7 +121,7 @@ export default function PrivacyPolicy() {
 
       <Clause heading="Children">
         <p>
-          Soccerboard is intended for coaches and analysts and is not directed at children under
+          FootyBoard is intended for coaches and analysts and is not directed at children under
           13. We knowingly collect nothing from anyone, children included.
         </p>
       </Clause>
@@ -135,7 +135,7 @@ export default function PrivacyPolicy() {
         </p>
         <p>
           What we do not yet have: encryption of board contents at rest, two-factor authentication,
-          or a password reset. Treat a Soccerboard account as protecting tactical work, not
+          or a password reset. Treat a FootyBoard account as protecting tactical work, not
           sensitive personal information.
         </p>
       </Clause>

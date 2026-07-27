@@ -23,7 +23,7 @@ export function AuthShell({
         <Link to="/" className="mb-8 flex items-center gap-2.5">
           <img src="/favicon.svg" alt="" width={28} height={28} />
           <span className="font-display text-[18px] font-semibold tracking-[-0.02em]">
-            Soccerboard
+            FootyBoard
           </span>
         </Link>
 

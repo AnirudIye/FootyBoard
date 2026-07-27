@@ -25,7 +25,7 @@ function download(dataUrl: string, filename: string) {
 export async function exportBoardPng(
   stage: Konva.Stage,
   crop: CropRect,
-  filename = 'soccerboard.png',
+  filename = 'footyboard.png',
   pixelRatio = 2,
 ): Promise<void> {
   const pad = 24
@@ -56,7 +56,7 @@ export async function exportBoardPng(
   ctx.fillStyle = 'rgba(23,25,29,0.4)'
   ctx.textAlign = 'right'
   ctx.textBaseline = 'bottom'
-  ctx.fillText('soccerboard', canvas.width - size, canvas.height - size * 0.7)
+  ctx.fillText('footyboard', canvas.width - size, canvas.height - size * 0.7)
 
   download(canvas.toDataURL('image/png'), filename)
 }

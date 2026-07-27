@@ -49,7 +49,7 @@ export default function AuthPage({ mode }: { mode: Mode }) {
         <Link to="/" className="mb-8 flex items-center gap-2.5">
           <img src="/favicon.svg" alt="" width={28} height={28} />
           <span className="font-display text-[18px] font-semibold tracking-[-0.02em]">
-            Soccerboard
+            FootyBoard
           </span>
         </Link>
 
@@ -164,7 +164,7 @@ export default function AuthPage({ mode }: { mode: Mode }) {
           <Link to="/board" className="underline underline-offset-2 transition-colors hover:text-accent">
             Continue as a guest
           </Link>{' '}
-          — full board, nothing saved.
+          for a full board that is never saved.
         </p>
       </motion.div>
     </div>
