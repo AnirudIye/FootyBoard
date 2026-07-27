@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto'
+import { APP_ENV, allowsDerivedKey } from './env.js'
 
 /**
  * Encryption at rest for board contents.
@@ -19,9 +20,15 @@ const PREFIX = 'v1' // lets the format change later without guessing
 let key = null
 
 /**
- * Resolves the key once at startup. In production a real key is required; in
- * development we derive a stable one from SESSION_SECRET so nobody has to set
- * up key material just to run the app locally.
+ * Resolves the key once at startup. A real key is required everywhere except
+ * the environments that are explicitly local, where a stable one is derived
+ * from SESSION_SECRET so nobody has to set up key material to run the app.
+ *
+ * The permission to do that comes from `APP_ENV` rather than from the absence
+ * of a signal, which is the whole point: this used to fall through to a derived
+ * key whenever `NODE_ENV` was anything other than the literal 'production', so
+ * a staging box quietly encrypted real boards under a key derivable from the
+ * placeholder in `.env.example`.
  */
 export function initEncryption() {
   const configured = process.env.ENCRYPTION_KEY?.trim()
@@ -38,13 +45,16 @@ export function initEncryption() {
     return
   }
 
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('ENCRYPTION_KEY is required in production. Boards will not be stored unencrypted.')
+  if (!allowsDerivedKey) {
+    throw new Error(
+      `ENCRYPTION_KEY is required when APP_ENV is "${APP_ENV}". Boards will not be stored unencrypted, ` +
+        'and they will not be stored under a key anyone holding .env.example can recompute.',
+    )
   }
 
   key = createHash('sha256').update(`dev-key:${process.env.SESSION_SECRET ?? 'dev'}`).digest()
   console.warn(
-    'ENCRYPTION_KEY is not set — using a key derived from SESSION_SECRET for local development only.',
+    `ENCRYPTION_KEY is not set — using a key derived from SESSION_SECRET, allowed because APP_ENV is "${APP_ENV}".`,
   )
 }
 
@@ -79,6 +89,3 @@ export function decrypt(stored) {
     decipher.final(),
   ]).toString('utf8')
 }
-
-/** True when a value is already in the encrypted envelope. */
-export const isEncrypted = (value) => typeof value === 'string' && value.startsWith(`${PREFIX}:`)

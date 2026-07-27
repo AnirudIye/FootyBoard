@@ -14,6 +14,7 @@ import type { Pos, Slot, BlockHeight } from '../lib/formations'
 import { getFormation, applyBlock, mirror, formationCode, FORMATION_NAMES } from '../lib/formations'
 import type { PitchKind } from '../lib/types'
 import { clampNorm } from '../lib/geometry'
+import { clamp } from '../lib/math'
 import type { DrawStyle } from '../lib/drawings'
 import { shiftAttached } from '../lib/drawings'
 import { captureFrame } from '../lib/frames'
@@ -505,13 +506,17 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   moveTokens: (ids, dx, dy) => {
     if (!get()._pending) set({ _pending: get()._snapshot() })
     const idset = new Set(ids)
+    // Clamp the delta once, against the selection's own bounding box, rather
+    // than clamping each chip as it arrives at the touchline. Clamping them
+    // individually meant the leading edge of a selection stopped while the rest
+    // kept coming, so dragging a back four into the byline squashed it flat and
+    // dragging back out did not restore the spacing. The set moves as a set.
+    const { dx: cdx, dy: cdy } = clampGroupDelta(get().tokens, idset, dx, dy)
     set((s) => ({
-      tokens: s.tokens.map((t) => {
-        if (!idset.has(t.id)) return t
-        const c = clampNorm(t.x + dx, t.y + dy)
-        return { ...t, x: c.x, y: c.y }
-      }),
-      drawings: shiftAttached(s.drawings, idset, dx, dy),
+      tokens: s.tokens.map((t) => (idset.has(t.id) ? { ...t, x: t.x + cdx, y: t.y + cdy } : t)),
+      // Pinned annotations take the same clamped delta, or they would drift off
+      // the chips they are pinned to as soon as the set hit an edge.
+      drawings: shiftAttached(s.drawings, idset, cdx, cdy),
     }))
     for (const i of ids) get()._touched.add(i)
     emit({ type: 'bulk', tokens: bulkFor(get().tokens, idset) }, 'group')
@@ -815,6 +820,36 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       }),
     ),
 }))
+
+/**
+ * The largest part of a group drag that keeps every named token on the pitch.
+ *
+ * Taken from the bounding box of the set, so the answer is one delta for
+ * everybody and the arrangement is preserved exactly.
+ */
+function clampGroupDelta(
+  tokens: Token[],
+  ids: Set<string>,
+  dx: number,
+  dy: number,
+): { dx: number; dy: number } {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const t of tokens) {
+    if (!ids.has(t.id)) continue
+    minX = Math.min(minX, t.x)
+    maxX = Math.max(maxX, t.x)
+    minY = Math.min(minY, t.y)
+    maxY = Math.max(maxY, t.y)
+  }
+  if (!Number.isFinite(minX)) return { dx, dy }
+  return {
+    dx: clamp(dx, -minX, 100 - maxX),
+    dy: clamp(dy, -minY, 100 - maxY),
+  }
+}
 
 /** The fields a `bulk` op carries, for whichever tokens are named. */
 function bulkFor(tokens: Token[], ids: Set<string>) {

@@ -7,17 +7,7 @@ import { Button } from '../ui/Button'
 import { Popover } from '../ui/Popover'
 import { toast } from '../../store/toastStore'
 import { toUserMessage } from '../../lib/errors'
-
-/** "3 minutes ago" reads better than a timestamp for something you just touched. */
-function ago(iso: string): string {
-  const seconds = Math.max(0, (Date.now() - Date.parse(iso)) / 1000)
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.floor(hours / 24)}d ago`
-}
+import { relativeTime } from './relativeTime'
 
 export default function BoardPicker() {
   const signedIn = useAuthStore((s) => s.email)
@@ -78,13 +68,14 @@ export default function BoardPicker() {
     <Popover
       align="left"
       className="w-[300px]"
+      triggerClassName="max-w-[190px] gap-2"
       trigger={
-        <Button variant="secondary" className="max-w-[190px] gap-2">
+        <>
           <span className="truncate">{current?.name ?? 'Boards'}</span>
           <span aria-hidden className="text-ink-3">
             ▾
           </span>
-        </Button>
+        </>
       }
     >
       <div className="flex flex-col gap-2">
@@ -130,7 +121,9 @@ export default function BoardPicker() {
                       >
                         {board.name}
                       </span>
-                      <span className="font-mono text-[10px] text-ink-3">{ago(board.updatedAt)}</span>
+                      <span className="font-mono text-[10px] text-ink-3">
+                        {relativeTime(Date.parse(board.updatedAt) - Date.now())}
+                      </span>
                     </button>
 
                     <button

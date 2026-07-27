@@ -1,18 +1,38 @@
 import express from 'express'
 import { createServer } from 'node:http'
-import { migrate, purgeExpiredSessions, closePool } from './db.js'
+import {
+  migrate,
+  purgeExpiredSessions,
+  purgeStaleAllowances,
+  closePool,
+} from './db.js'
 import { initEncryption } from './crypto.js'
 import { userForToken, readCookie, COOKIE_NAME } from './auth.js'
 import { attachRealtime } from './realtime.js'
+import { purgeExpiredResets } from './passwordReset.js'
 import { authRouter } from './routes/auth.js'
 import { boardsRouter } from './routes/boards.js'
 import { sharesRouter, redeemRouter } from './routes/shares.js'
 import { assistantRouter } from './routes/assistant.js'
-import { BadRequest } from './validate.js'
 import { TooManyRequests } from './rateLimit.js'
+import { ORIGIN, APP_ENV } from './env.js'
 
 const PORT = Number(process.env.PORT ?? 8787)
-const ORIGIN = process.env.CORS_ORIGIN ?? 'http://localhost:5173'
+const INSTANCE_LABEL = process.env.INSTANCE_LABEL ?? `pid-${process.pid}`
+
+/**
+ * Whether to believe `X-Forwarded-For`, and how many hops of it.
+ *
+ * Off unless something is actually in front of us. Trusting the header
+ * unconditionally lets any caller pick which bucket the per-IP limiters count
+ * them in, simply by sending their own — and the join code's entire defence is
+ * that limiter, so this is not a hardening detail. Unset, `req.ip` is the
+ * socket address, which a client cannot choose.
+ *
+ * `npm run cluster` sets this for its children, because its balancer overwrites
+ * the header with the real peer address before forwarding.
+ */
+const TRUST_PROXY = process.env.TRUST_PROXY?.trim()
 
 // Fail fast: a misconfigured key should stop startup, not surface later as a
 // board that cannot be opened.
@@ -24,7 +44,7 @@ await migrate()
 
 const app = express()
 
-app.set('trust proxy', 1)
+if (TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(TRUST_PROXY) ? Number(TRUST_PROXY) : TRUST_PROXY)
 app.disable('x-powered-by')
 app.use(express.json({ limit: '1mb' }))
 
@@ -40,23 +60,51 @@ app.use((req, res, next) => {
   next()
 })
 
+/**
+ * Every response here is JSON. Nothing this process serves is a document, so
+ * the policy says exactly that: no scripts, no styles, no images, no
+ * connections, nothing. `default-src 'none'` is the strongest statement
+ * available and costs nothing, because there is nothing to permit.
+ *
+ * That is also its limit, and worth being plain about: a CSP only governs the
+ * response carrying it, so this one protects the API's own replies and says
+ * nothing about the app. The document policy belongs on whatever serves
+ * `index.html`, which in development is Vite and in production is the static
+ * host, neither of which passes through here.
+ *
+ * `frame-ancestors` restates `X-Frame-Options` in the form modern browsers
+ * actually read; the older header stays for the ones that do not.
+ */
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join('; ')
+
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Referrer-Policy', 'no-referrer')
   res.setHeader('X-Frame-Options', 'DENY')
+  res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY)
+  // Only on a connection that is already secure. Sent over plain HTTP it is
+  // ignored by browsers and actively wrong in development, where it would pin
+  // localhost to HTTPS in the developer's browser for a year. `req.secure`
+  // follows `trust proxy`, so a TLS-terminating proxy has to be declared for
+  // this to fire behind one, which is the same variable the rate limiters need.
+  if (req.secure) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  }
   next()
 })
 
 // Resolve the caller once per request. Now async, since the session lookup is
-// a database round trip rather than an in-process read.
+// a database round trip rather than an in-process read. Express 5 forwards a
+// rejected promise to the error handler on its own.
 app.use(async (req, _res, next) => {
-  try {
-    req.clientIp = req.ip ?? 'unknown'
-    req.user = await userForToken(readCookie(req.headers.cookie, COOKIE_NAME))
-    next()
-  } catch (err) {
-    next(err)
-  }
+  req.clientIp = req.ip ?? 'unknown'
+  req.user = await userForToken(readCookie(req.headers.cookie, COOKIE_NAME))
+  next()
 })
 
 // Reporting which instance answered makes it visible that requests are really
@@ -74,33 +122,50 @@ app.use('/api/assistant', assistantRouter)
 
 app.use((_req, res) => res.status(404).json({ error: 'No such endpoint.' }))
 
+/**
+ * Anything carrying a status has already said what it is: BadRequest sets 400
+ * and TooManyRequests 429, so one branch answers both. The header is the only
+ * thing that is particular to being rate limited, and `field` is dropped from
+ * the body by JSON.stringify wherever there isn't one.
+ */
 app.use((err, _req, res, _next) => {
-  if (err instanceof BadRequest) return res.status(400).json({ error: err.message, field: err.field })
-  if (err instanceof TooManyRequests) {
-    res.setHeader('Retry-After', String(err.retryAfter))
-    return res.status(429).json({ error: err.message })
-  }
-  if (err?.status) return res.status(err.status).json({ error: err.message })
+  if (err instanceof TooManyRequests) res.setHeader('Retry-After', String(err.retryAfter))
+  if (err?.status) return res.status(err.status).json({ error: err.message, field: err.field })
   console.error('Unhandled:', err)
   res.status(500).json({ error: 'Something went wrong on our end.' })
 })
 
-const INSTANCE_LABEL = process.env.INSTANCE_LABEL ?? `pid-${process.pid}`
-
 const server = createServer(app)
 const realtime = await attachRealtime(server)
 
-// Only one instance needs to sweep expired sessions; the rest would just be
-// running the same DELETE against the same rows.
+/**
+ * Only one instance needs to sweep; the rest would run the same DELETEs against
+ * the same rows.
+ *
+ * Three things accumulate. Sessions and reset links expire on a timestamp the
+ * row carries. Rate-limit allowances do not expire at all on their own, and
+ * several of them are keyed on values a stranger chooses, so without this the
+ * table grows by one row per distinct address anyone has ever typed into
+ * "forgot password".
+ */
 if (process.env.RUN_MAINTENANCE !== 'false') {
-  const purge = setInterval(() => {
-    purgeExpiredSessions().catch((err) => console.error('Session purge failed:', err.message))
-  }, 60 * 60 * 1000)
+  const sweep = async () => {
+    for (const [what, purge] of [
+      ['Session', purgeExpiredSessions],
+      ['Reset link', purgeExpiredResets],
+      ['Rate limit', purgeStaleAllowances],
+    ]) {
+      await purge().catch((err) => console.error(`${what} purge failed:`, err.message))
+    }
+  }
+  const purge = setInterval(() => void sweep(), 60 * 60 * 1000)
   purge.unref?.()
 }
 
 server.listen(PORT, () => {
-  console.log(`API instance ${INSTANCE_LABEL} on :${PORT} (ws /ws, allowing ${ORIGIN})`)
+  console.log(
+    `API instance ${INSTANCE_LABEL} on :${PORT} (ws /ws, ${APP_ENV}, allowing ${ORIGIN})`,
+  )
 })
 
 const shutdown = async (signal) => {

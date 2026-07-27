@@ -36,12 +36,7 @@ function sendViaConsole({ to, subject, text }) {
   )
 }
 
-export const transportName = process.env.RESEND_API_KEY ? 'resend' : 'console'
-
-export async function send(message) {
-  if (transportName === 'resend') return sendViaResend(message)
-  return sendViaConsole(message)
-}
+export const send = process.env.RESEND_API_KEY ? sendViaResend : sendViaConsole
 
 export function passwordResetEmail({ to, link, minutes }) {
   return {

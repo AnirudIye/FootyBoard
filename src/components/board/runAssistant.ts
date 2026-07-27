@@ -13,63 +13,74 @@ interface Outcome {
   undoable: boolean
 }
 
-/** Execute a parsed command against the board. Each returns a human reply. */
+type Board = ReturnType<typeof useBoardStore.getState>
+
+type Runners = {
+  [K in Command['type']]?: (command: Extract<Command, { type: K }>, s: Board) => void
+}
+
+/**
+ * What each command does to the board. Most are a straight forward to a store
+ * action that already knows how to do the work, so they are a table rather than
+ * a case each; the ones that answer with something other than the parser's own
+ * reply, or that decline, are written out in `execute` above the table.
+ */
+const RUN: Runners = {
+  setFormation: (c, s) => s.applyFormation(c.side, c.name, c.block),
+  setBlock: (c, s) => {
+    if (s.lastFormation) s.applyFormation(c.side, s.lastFormation, c.block)
+  },
+  clearDrawings: (_c, s) => s.deleteDrawings(s.drawings.map((d) => d.id)),
+  resetBoard: (_c, s) => s.resetBoardAction(),
+  setView: (c, s) => s.setView({ view: c.view }),
+  toggleGrid: (_c, s) => s.setView({ overlayGrid: !s.view.overlayGrid }),
+  addFrame: (_c, s) => s.addFrame(),
+  play: (_c, s) => s.setPlayback({ playing: true, position: 0 }),
+  fit: () => boardHandles.fitPitch?.(),
+}
+
+/** Which of those change the board, and so leave something to take back. */
+const UNDOABLE = new Set<Command['type']>([
+  'setFormation',
+  'setBlock',
+  'clearDrawings',
+  'resetBoard',
+  'addFrame',
+])
+
+/** Execute a parsed command against the board, with a human reply. */
 function execute(command: Command, fallbackReply: string): Outcome {
   const s = useBoardStore.getState()
 
   switch (command.type) {
-    case 'setFormation':
-      s.applyFormation(command.side, command.name, command.block)
-      return { reply: fallbackReply, undoable: true }
-
-    case 'setBlock': {
+    case 'setBlock':
       if (!s.lastFormation) {
         return { reply: 'Apply a formation first, then I can change its block height.', undoable: false }
       }
-      s.applyFormation(command.side, s.lastFormation, command.block)
-      return { reply: fallbackReply, undoable: true }
-    }
+      break
 
-    case 'clearDrawings': {
-      const ids = s.drawings.map((d) => d.id)
-      if (ids.length === 0) return { reply: 'There were no annotations to clear.', undoable: false }
-      s.deleteDrawings(ids)
-      return { reply: fallbackReply, undoable: true }
-    }
-
-    case 'resetBoard':
-      s.resetBoardAction()
-      return { reply: fallbackReply, undoable: true }
-
-    case 'setView':
-      s.setView({ view: command.view })
-      return { reply: fallbackReply, undoable: false }
-
-    case 'toggleGrid':
-      s.setView({ overlayGrid: !s.view.overlayGrid })
-      return { reply: fallbackReply, undoable: false }
-
-    case 'addFrame':
-      s.addFrame()
-      return { reply: fallbackReply, undoable: true }
+    case 'clearDrawings':
+      if (s.drawings.length === 0) {
+        return { reply: 'There were no annotations to clear.', undoable: false }
+      }
+      break
 
     case 'play':
       if (s.frames.length < 2) {
         return { reply: 'Add at least two frames and I can play the sequence.', undoable: false }
       }
-      s.setPlayback({ playing: true, position: 0 })
-      return { reply: fallbackReply, undoable: false }
-
-    case 'fit':
-      boardHandles.fitPitch?.()
-      return { reply: fallbackReply, undoable: false }
+      break
 
     case 'readBoard':
       return { reply: describeBoard(s.tokens, s.view), undoable: false }
-
-    default:
-      return { reply: fallbackReply, undoable: false }
   }
+
+  // The table is keyed by the same discriminant the command carries, which the
+  // compiler cannot follow across the lookup even though the mapped type above
+  // guarantees it.
+  const run = RUN[command.type] as ((c: Command, s: Board) => void) | undefined
+  run?.(command, s)
+  return { reply: fallbackReply, undoable: UNDOABLE.has(command.type) }
 }
 
 /** Run a command through the board, reporting whatever comes back. */
@@ -97,13 +108,18 @@ async function askAI(text: string, offlineReply: string) {
   const board = useBoardStore.getState()
 
   try {
-    const result = await api.askAssistant({
+    // `consent` is not a hint to the server, it is the record the server keeps:
+    // a request without it is refused. This path is only reached once the
+    // switch in the panel is on, so it is never anything but true here.
+    const request = {
       message: text,
       board: describeBoard(board.tokens, board.view),
       formationNames: FORMATION_NAMES[board.view.kind],
       kind: board.view.kind,
       activeTeam: board.activeTeam,
-    })
+      consent: true,
+    }
+    const result = await api.askAssistant(request)
 
     if (result.command) {
       commit(result.command as Command, result.reply ?? 'Done.')

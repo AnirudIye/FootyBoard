@@ -65,18 +65,12 @@ export default function DrawingShape({ drawing: d, mapping: m, selected }: Props
   }
 
   switch (d.type) {
+    // A pen stroke is a line through many points with the corners taken off.
     case 'pen':
-      return (
-        <Group>
-          <Line points={mapped} tension={0.35} {...common} />
-          {selectionOutline()}
-        </Group>
-      )
-
     case 'line':
       return (
         <Group>
-          <Line points={mapped} {...common} />
+          <Line points={mapped} tension={d.type === 'pen' ? 0.35 : undefined} {...common} />
           {selectionOutline()}
         </Group>
       )
@@ -186,7 +180,7 @@ export default function DrawingShape({ drawing: d, mapping: m, selected }: Props
             y={y}
             text={d.text ?? ''}
             fontSize={size}
-            fontFamily="Archivo, sans-serif"
+            fontFamily="Geist Sans, ui-sans-serif, system-ui, sans-serif"
             fontStyle="500"
             fill={d.color}
             onPointerDown={common.onPointerDown}

@@ -1,9 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { buttonClass, pressMotion } from './Button'
+import type { Variant } from './Button'
+import { useDismiss } from './useDismiss'
 
 interface Props {
+  /**
+   * Label content for the trigger. The popover renders the button itself: the
+   * trigger has to carry `aria-expanded`, and a caller passing its own button
+   * would nest one inside another.
+   */
   trigger: ReactNode
+  triggerVariant?: Variant
+  triggerClassName?: string
   children: ReactNode
   align?: 'left' | 'right'
   className?: string
@@ -17,6 +27,8 @@ interface Props {
 
 export function Popover({
   trigger,
+  triggerVariant = 'secondary',
+  triggerClassName = '',
   children,
   align = 'left',
   className = '',
@@ -32,25 +44,29 @@ export function Popover({
   }
   const wrapRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    window.addEventListener('mousedown', onDown)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('mousedown', onDown)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [open])
+  useDismiss(wrapRef, open, () => setOpen(false))
 
   return (
     <div ref={wrapRef} className="relative inline-block">
-      <span onClick={() => setOpen(!open)}>{trigger}</span>
+      <motion.button
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        // Pointerdown rather than click, so the panel is already there under the
+        // finger still on its way down. A keyboard press produces a click with
+        // no pointer behind it, which `detail === 0` is the signal for, and that
+        // is the other half of the same toggle.
+        onPointerDown={(e) => {
+          if (e.button === 0) setOpen(!open)
+        }}
+        onClick={(e) => {
+          if (e.detail === 0) setOpen(!open)
+        }}
+        {...pressMotion}
+        className={buttonClass(triggerVariant, triggerClassName)}
+      >
+        {trigger}
+      </motion.button>
       <AnimatePresence>
         {open && (
           <motion.div

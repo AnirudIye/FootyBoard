@@ -1,5 +1,5 @@
 import type { Op, ServerMessage } from './protocol'
-import { withinSizeLimit } from './protocol'
+import { isEphemeral, withinSizeLimit } from './protocol'
 
 /**
  * The socket, and the rules about what goes down it.
@@ -18,6 +18,23 @@ const THROTTLE_MS = 50
 
 const BACKOFF_MIN_MS = 1000
 const BACKOFF_MAX_MS = 30_000
+
+/**
+ * How much work is held while the socket is away.
+ *
+ * The backoff reaches half a minute, which is long enough to draw a whole
+ * training move, so ops written while disconnected are kept and replayed rather
+ * than dropped on the floor.
+ *
+ * 32 is not arbitrary: the server buffers messages that arrive before a socket
+ * has finished authenticating, and its buffer is 32 deep. A flush longer than
+ * that would have the tail silently discarded at the other end, which is the
+ * failure this queue exists to stop. The byte cap is the second half of the
+ * same guard, because thirty-two text annotations are not the same size as
+ * thirty-two chip positions.
+ */
+const QUEUE_MAX_OPS = 32
+const QUEUE_MAX_BYTES = 64_000
 
 export type Status = 'connecting' | 'live' | 'reconnecting' | 'offline'
 
@@ -47,6 +64,10 @@ export class RoomConnection {
   private pending = new Map<string, Op>()
   private flushTimer: number | null = null
 
+  /** Ops written with no socket to write them to, oldest first. */
+  private offline: { json: string; bytes: number }[] = []
+  private offlineBytes = 0
+
   private readonly boardId: string
   private readonly handlers: ConnectionHandlers
 
@@ -67,6 +88,13 @@ export class RoomConnection {
 
     socket.onopen = () => {
       this.attempts = 0
+      // Before anything else, and in particular before `welcome` arrives and
+      // useRealtime asks for `need-state`. What was written while offline
+      // describes edits nobody else has seen; the resync that follows exists to
+      // reconcile whatever the room holds *including* these, so they have to be
+      // in flight first. Flushing after the handshake would instead replay them
+      // on top of a board that was just adopted wholesale, and they would fight.
+      this.flushOffline()
       this.handlers.onStatus('live')
     }
 
@@ -78,10 +106,6 @@ export class RoomConnection {
         return
       }
       this.handlers.onMessage(message)
-    }
-
-    socket.onerror = () => {
-      // Always followed by a close, which is where the retry decision lives.
     }
 
     socket.onclose = (event) => {
@@ -175,21 +199,74 @@ export class RoomConnection {
   }
 
   private write(op: Op): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) return
-
     // The relay drops an oversized message only after delivering it to sockets
     // on its own instance, so sending one would reach some peers and not
-    // others. Failing here makes it uniform.
+    // others. Failing here makes it uniform — and it is checked before the
+    // socket is, since there is no point holding something we could never send.
     if (!withinSizeLimit(op)) {
       if (import.meta.env.DEV) console.warn('Realtime op too large to send:', op.type)
       return
     }
 
-    this.socket.send(JSON.stringify(op))
+    const json = JSON.stringify(op)
+    if (this.socket?.readyState !== WebSocket.OPEN) {
+      this.hold(op, json)
+      return
+    }
+
+    this.socket.send(json)
   }
 
-  get isLive(): boolean {
-    return this.socket?.readyState === WebSocket.OPEN
+  /**
+   * Keep an op until there is a socket again.
+   *
+   * Presence is deliberately not kept: replaying a cursor from thirty seconds
+   * ago moves a peer's pointer to somewhere they left long ago, which is worse
+   * than the pointer simply not being there.
+   *
+   * When the queue is full the oldest goes, not the newest. A board is edited
+   * forwards, so the tail is the part closest to what the person actually has
+   * in front of them, and the resync on reconnect is what repairs the rest.
+   */
+  private hold(op: Op, json: string): void {
+    if (isEphemeral(op)) return
+
+    // Bytes, not UTF-16 units, for the same reason the size limit measures
+    // bytes: a text annotation full of emoji is twice the units and four times
+    // the bytes, so counting characters would size this cap wrong.
+    const bytes = new TextEncoder().encode(json).length
+    this.offline.push({ json, bytes })
+    this.offlineBytes += bytes
+
+    let dropped = 0
+    while (
+      this.offline.length > QUEUE_MAX_OPS ||
+      (this.offlineBytes > QUEUE_MAX_BYTES && this.offline.length > 1)
+    ) {
+      this.offlineBytes -= this.offline.shift()!.bytes
+      dropped += 1
+    }
+    if (dropped > 0 && import.meta.env.DEV) {
+      console.warn(`Realtime queue full while offline; dropped ${dropped} of the oldest ops.`)
+    }
+  }
+
+  /**
+   * Drain the queue, oldest first.
+   *
+   * Each op is removed only once it has actually gone down the socket, so a
+   * connection that dies part-way through leaves the rest queued for the next
+   * attempt rather than throwing away the tail it never sent.
+   */
+  private flushOffline(): void {
+    while (this.offline.length > 0) {
+      if (this.socket?.readyState !== WebSocket.OPEN) return
+      const next = this.offline[0]
+      this.socket.send(next.json)
+      this.offline.shift()
+      this.offlineBytes -= next.bytes
+    }
+    this.offlineBytes = 0
   }
 
   close(): void {
@@ -199,6 +276,8 @@ export class RoomConnection {
     this.timer = null
     this.flushTimer = null
     this.pending.clear()
+    this.offline = []
+    this.offlineBytes = 0
     this.socket?.close()
     this.socket = null
   }

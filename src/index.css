@@ -87,6 +87,18 @@
   }
 }
 
+/* The demo pitch draws its own markings on. Each shape carries the length of
+   its outline as --len and its slot in the queue as --i, which is what lets
+   seven shapes of different sizes share one rule and still draw at one speed. */
+@keyframes miniDraw {
+  from {
+    stroke-dashoffset: var(--len);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -123,4 +135,48 @@
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   pointer-events: none;
+}
+
+/* One dash exactly as long as the shape's own outline, walked back to zero, is
+   the whole draw-on. The fill mode is `backwards` so a shape is invisible
+   through its delay rather than sitting there fully drawn and then redrawing
+   itself when its turn comes. */
+.mini-line {
+  stroke-dasharray: var(--len);
+  animation: miniDraw 1.1s cubic-bezier(0.45, 0, 0.55, 1) backwards;
+  animation-delay: calc(var(--i) * 70ms);
+}
+
+/* Glass costs legibility for anyone who has asked for less of it, and the flat
+   surface underneath is what the glass was standing in for anyway. */
+@media (prefers-reduced-transparency: reduce) {
+  .liquid-glass {
+    background: rgb(var(--surface));
+    backdrop-filter: none;
+  }
+
+  .liquid-glass::before {
+    display: none;
+  }
+}
+
+/* Reduced motion needs more than switching the animations off here, because
+   these two are drawn *by* their animations. tokens.css cuts every animation to
+   0.01ms, which leaves each pass line at its pre-animation state: fully offset
+   and transparent, so the move would simply not be there. Pin the finished
+   state instead, hold the markings drawn, and drop the ball, which has nowhere
+   to run to. */
+@media (prefers-reduced-motion: reduce) {
+  .tactical-pass {
+    stroke-dashoffset: 0;
+    opacity: 0.35;
+  }
+
+  .tactical-ball {
+    display: none;
+  }
+
+  .mini-line {
+    animation: none;
+  }
 }

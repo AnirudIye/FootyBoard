@@ -70,7 +70,7 @@ export default function DrawingToolbar() {
 
   return (
     <aside
-      className="absolute left-1/2 -translate-x-1/2 bottom-[4.75rem] z-20 flex items-center gap-3
+      className="absolute left-1/2 -translate-x-1/2 bottom-4 z-20 flex items-center gap-3
         rounded-lg border border-rule bg-surface/95 px-3 py-2 shadow-2 backdrop-blur-[2px]"
     >
       <div className="flex items-center gap-0.5">
@@ -82,7 +82,7 @@ export default function DrawingToolbar() {
               title={t.hint}
               onClick={() => setTool(t.id)}
               className={`relative rounded px-2 py-1 text-[12px] font-medium transition-colors
-                duration-150 ease-out ${active ? 'text-[#fbf9f5]' : 'text-ink-2 hover:text-ink'}`}
+                duration-150 ease-out ${active ? 'text-paper' : 'text-ink-2 hover:text-ink'}`}
             >
               {active && (
                 <motion.span
@@ -99,16 +99,24 @@ export default function DrawingToolbar() {
 
       <span className="h-5 w-px bg-rule" />
 
-      <div className="flex items-center gap-1.5">
+      {/* A 16px swatch is the right size to look at and too small to hit, so
+          the button is 28px and the swatch is what you see inside it. */}
+      <div className="flex items-center">
         {INKS.map((c) => (
           <button
             key={c}
             aria-label={`Ink ${c}`}
+            aria-pressed={drawStyle.color === c}
             onClick={() => applyStyle({ color: c })}
-            style={{ background: c }}
-            className={`h-4 w-4 rounded-sm border transition-transform duration-150 ease-out
-              hover:scale-125 ${drawStyle.color === c ? 'border-ink ring-1 ring-ink' : 'border-rule'}`}
-          />
+            className="group grid h-7 w-7 place-items-center rounded"
+          >
+            <span
+              style={{ background: c }}
+              className={`h-4 w-4 rounded-sm border transition-transform duration-150 ease-out
+                group-hover:scale-125
+                ${drawStyle.color === c ? 'border-ink ring-1 ring-ink' : 'border-rule'}`}
+            />
+          </button>
         ))}
       </div>
 

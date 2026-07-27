@@ -9,6 +9,7 @@ import { toast } from '../../store/toastStore'
 import { Button } from '../ui/Button'
 import { Popover } from '../ui/Popover'
 import { Toggle } from '../ui/Toggle'
+import { relativeTime } from './relativeTime'
 
 /**
  * Sharing a board, and taking the floor.
@@ -21,22 +22,18 @@ import { Toggle } from '../ui/Toggle'
  * a hash, so there is no "show me the link again" to build; regenerating is the
  * honest alternative, and it revokes the previous one.
  */
-/**
- * How long the code has left, in the terms someone about to read it out cares
- * about. Rounded down, so "1h" never means "in fifty seconds".
- */
+/** How long the code has left, in the terms someone about to read it out cares
+ *  about. */
 function expiryLabel(expiresAt: number | null): string {
   if (expiresAt === null) return ''
   const left = expiresAt - Date.now()
-  if (left <= 0) return 'Expired'
-
-  const minutes = Math.floor(left / 60_000)
-  if (minutes < 60) return `Expires in ${Math.max(1, minutes)}m`
-
-  const hours = Math.floor(minutes / 60)
-  const rest = minutes % 60
-  return rest === 0 ? `Expires in ${hours}h` : `Expires in ${hours}h ${rest}m`
+  return left <= 0 ? 'Expired' : `Expires ${relativeTime(left)}`
 }
+
+// A removed member can be let back in with the code, so the safe order is to
+// act and offer it back rather than to ask first. The write is held for as long
+// as the toast is up, which is the only window in which Undo can mean anything.
+const UNDO_WINDOW = 4000
 
 export default function ShareDialog() {
   const email = useAuthStore((s) => s.email)
@@ -60,24 +57,32 @@ export default function ShareDialog() {
     return () => window.clearInterval(t)
   }, [open])
 
-  /**
-   * Read, never copied.
-   *
-   * This used to be local state seeded from `boards[].membersCanEdit`, which is
-   * a mirror nothing updates when the lock changes — so after one toggle the
-   * dialog showed the state as of page load rather than the truth, and told the
-   * owner the board was unlocked while the server had it locked. The socket
-   * already carries the authoritative value and the server already broadcasts
-   * every change, so the honest thing is to render that directly.
-   */
-  const locked = useRealtimeStore((s) => s.boardLocked)
-
   const expired = codeExpiresAt !== null && codeExpiresAt <= Date.now()
 
   const board = boards.find((b) => b.id === currentId)
   // Fall back to the board list when the socket has not landed yet, so the
   // control does not flicker in on connect.
   const isOwner = role ? role === 'owner' : (board?.role ?? 'owner') === 'owner'
+
+  /**
+   * Read, never copied.
+   *
+   * This used to be local state seeded from `boards[].membersCanEdit`, which is
+   * a mirror nothing updates when the lock changes — so after one toggle the
+   * dialog showed the state as of page load rather than the truth, and told the
+   * owner the board was unlocked while the server had it locked.
+   *
+   * The socket is authoritative once it has said `welcome`, which `peerId` is
+   * the signal for. Before that it has said nothing, and `boardLocked` is only
+   * its own default — reading it regardless told the same lie in the other
+   * direction, showing a locked board as unlocked on every reload and for as
+   * long as the socket was down. The list's REST value is the only truth
+   * available in that window. Still read on every render, never copied into
+   * state, which is the part that mattered.
+   */
+  const socketLocked = useRealtimeStore((s) => s.boardLocked)
+  const peerId = useRealtimeStore((s) => s.peerId)
+  const locked = peerId ? socketLocked : board?.membersCanEdit === false
 
   useEffect(() => {
     if (!open || !currentId) return
@@ -175,15 +180,28 @@ export default function ShareDialog() {
     }
   }
 
-  const removeMember = async (member: BoardMember) => {
-    if (!window.confirm(`Remove ${member.email} from this board?`)) return
-    try {
-      await api.removeMember(currentId, member.id)
-      setMembers((m) => m.filter((x) => x.id !== member.id))
-      toast(`${member.email} was removed.`)
-    } catch (err) {
-      toast(toUserMessage(err, 'Could not remove them.'))
-    }
+  const removeMember = (member: BoardMember) => {
+    const restore = () =>
+      setMembers((m) => (m.some((x) => x.id === member.id) ? m : [...m, member]))
+
+    // The row goes at once and the request follows once Undo has had its
+    // chance, which is the only way an undo can be honest: there is no endpoint
+    // that puts a member back, only the code they came in with.
+    setMembers((m) => m.filter((x) => x.id !== member.id))
+    const pending = window.setTimeout(() => {
+      void api.removeMember(currentId, member.id).catch((err) => {
+        restore()
+        toast(toUserMessage(err, 'Could not remove them.'))
+      })
+    }, UNDO_WINDOW)
+
+    toast(`${member.email} was removed.`, {
+      label: 'Undo',
+      run: () => {
+        window.clearTimeout(pending)
+        restore()
+      },
+    })
   }
 
   return (
@@ -192,7 +210,7 @@ export default function ShareDialog() {
       className="w-[300px]"
       open={open}
       onOpenChange={setOpen}
-      trigger={<Button variant="secondary">Share</Button>}
+      trigger="Share"
     >
       <div className="flex flex-col gap-3.5">
         <div>

@@ -1,21 +1,24 @@
 import { useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
-import { animate, stagger, utils } from 'animejs'
 import { useReducedMotion } from '../../../hooks/useReducedMotion'
 
+/** Lines in the burst, evenly spaced around the click. */
+const COUNT = 8
+const TRAVEL = 14 // px each line covers before it fades out
+const DURATION = 520
+const STAGGER = 12 // ms between neighbouring lines, so the ring unwinds
+
 /**
- * Emits a short burst of ink lines from the pointer on click, using anime.js.
- * A tactile, on-brand acknowledgement rather than a neon ripple.
+ * Emits a short burst of ink lines from the pointer on click. A tactile,
+ * on-brand acknowledgement rather than a neon ripple.
+ *
+ * Written against the Web Animations API directly. The elements being animated
+ * are created here, imperatively, and never seen by React, so there is nothing
+ * for a declarative animation library to hold on to; a dependency would only be
+ * wrapping `Element.animate`, which every browser this app supports has had for
+ * years.
  */
-export function ClickSpark({
-  children,
-  color = 'rgb(var(--accent))',
-  count = 8,
-}: {
-  children: ReactNode
-  color?: string
-  count?: number
-}) {
+export function ClickSpark({ children }: { children: ReactNode }) {
   const ref = useRef<HTMLSpanElement>(null)
   const reduced = useReducedMotion()
 
@@ -25,38 +28,49 @@ export function ClickSpark({
 
     const onClick = (e: MouseEvent) => {
       const rect = host.getBoundingClientRect()
-      const cx = e.clientX - rect.left
-      const cy = e.clientY - rect.top
       const layer = document.createElement('div')
-      layer.style.cssText = `position:absolute;left:${cx}px;top:${cy}px;pointer-events:none;z-index:5`
-      const sparks: HTMLElement[] = []
-      for (let i = 0; i < count; i++) {
-        const s = document.createElement('span')
-        const angle = (360 / count) * i
-        s.style.cssText =
-          `position:absolute;left:0;top:0;width:2px;height:9px;border-radius:2px;` +
-          `background:${color};transform-origin:center;transform:rotate(${angle}deg) translateY(0)`
-        layer.appendChild(s)
-        sparks.push(s)
-      }
+      layer.style.cssText =
+        `position:absolute;left:${e.clientX - rect.left}px;top:${e.clientY - rect.top}px;` +
+        `pointer-events:none;z-index:5`
       host.appendChild(layer)
 
-      animate(sparks, {
-        translateY: [0, -14],
-        opacity: [1, 0],
-        scaleY: [1, 0.3],
-        duration: 520,
-        delay: stagger(12),
-        ease: 'outExpo',
-        onComplete: () => layer.remove(),
-      })
+      let last: Animation | undefined
+      for (let i = 0; i < COUNT; i++) {
+        const spark = document.createElement('span')
+        const angle = (360 / COUNT) * i
+        spark.style.cssText =
+          `position:absolute;left:0;top:0;width:2px;height:9px;border-radius:2px;` +
+          `background:rgb(var(--accent));transform-origin:center`
+        layer.appendChild(spark)
+        // The rotation is part of every keyframe rather than a starting
+        // transform, because a WAAPI transform keyframe replaces the whole
+        // property rather than composing with what is already there.
+        last = spark.animate(
+          [
+            { transform: `rotate(${angle}deg) translateY(0) scaleY(1)`, opacity: 1 },
+            { transform: `rotate(${angle}deg) translateY(${-TRAVEL}px) scaleY(0.3)`, opacity: 0 },
+          ],
+          {
+            duration: DURATION,
+            delay: i * STAGGER,
+            easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+            fill: 'forwards',
+          },
+        )
+      }
+      // The last line started last, so it also finishes last.
+      if (last) last.onfinish = () => layer.remove()
+
       // Nudge the host itself for a tactile press.
-      animate(host, { scale: [utils.get(host, 'scale') || 1, 0.96, 1], duration: 260, ease: 'outElastic(1, .6)' })
+      host.animate([{ transform: 'scale(1)' }, { transform: 'scale(0.96)' }, { transform: 'scale(1)' }], {
+        duration: 260,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      })
     }
 
     host.addEventListener('click', onClick)
     return () => host.removeEventListener('click', onClick)
-  }, [color, count, reduced])
+  }, [reduced])
 
   return (
     <span ref={ref} style={{ position: 'relative', display: 'inline-flex' }}>

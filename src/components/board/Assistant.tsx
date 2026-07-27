@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useAssistantStore } from '../../store/assistantStore'
 import { useBoardStore } from '../../store/boardStore'
+import { useReducedMotion } from '../../hooks/useReducedMotion'
 import { api } from '../../lib/api'
 import { runAssistant } from './runAssistant'
 
@@ -14,6 +15,34 @@ const PROMPTS = [
 
 const spring = { type: 'spring' as const, stiffness: 380, damping: 32, mass: 0.7 }
 
+interface NoticeSpec {
+  text: string
+  action?: { label: string; run: () => void }
+  onDismiss?: () => void
+}
+
+/** The strip above the composer. There is at most one, and it says one thing. */
+function Notice({ text, action, onDismiss }: NoticeSpec) {
+  return (
+    <div className="flex items-center gap-2 border-t border-rule bg-sunken/60 px-3 py-1.5 text-[11px] text-ink-3">
+      <span className="flex-1">{text}</span>
+      {action && (
+        <button
+          onClick={action.run}
+          className="shrink-0 font-medium text-accent hover:text-accent-hover"
+        >
+          {action.label}
+        </button>
+      )}
+      {onDismiss && (
+        <button onClick={onDismiss} className="shrink-0 font-medium text-ink-2 hover:text-ink">
+          Got it
+        </button>
+      )}
+    </div>
+  )
+}
+
 export default function Assistant() {
   const open = useAssistantStore((s) => s.open)
   const toggle = useAssistantStore((s) => s.toggle)
@@ -25,13 +54,19 @@ export default function Assistant() {
   const setAiConsented = useAssistantStore((s) => s.setAiConsented)
   const thinking = useAssistantStore((s) => s.thinking)
   const undoAction = useBoardStore((s) => s.undoAction)
+  const reduced = useReducedMotion()
 
   const [value, setValue] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages, open, thinking])
+    // Programmatic smooth scrolling is a vestibular trigger, and neither the
+    // CSS block nor MotionConfig can reach it.
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: reduced ? 'auto' : 'smooth',
+    })
+  }, [messages, open, thinking, reduced])
 
   // Asked once, the first time the panel is opened. A server with no key never
   // offers the AI at all, so nobody is shown a switch that does nothing.
@@ -56,6 +91,37 @@ export default function Assistant() {
     setValue('')
   }
 
+  // What the panel actually is right now. Saying OFFLINE while a message is on
+  // its way to Google was the one thing this header could not be allowed to do.
+  const hybrid = aiAvailable && aiConsented
+
+  const notice = ((): NoticeSpec | null => {
+    // The offer, not the switch. An earlier build promised in this very panel
+    // that an online assistant would ask first; a configured key makes the AI
+    // available, and this is where it gets turned on. It stays until answered.
+    if (aiAvailable && !aiConsented) {
+      return {
+        text:
+          "For anything it doesn't recognise, this can ask Google Gemini. That sends your " +
+          'message and a summary of the board off the device. Everything it already ' +
+          'understands stays offline either way.',
+        action: { label: 'Turn on', run: () => setAiConsented(true) },
+      }
+    }
+    if (noticeDismissed) return null
+    if (hybrid) {
+      return {
+        text: "Anything the built-in commands don't cover goes to Google Gemini.",
+        action: { label: 'Keep it offline', run: () => setAiConsented(false) },
+        onDismiss: dismissNotice,
+      }
+    }
+    return {
+      text: 'This one is offline. Nothing you type here leaves the device.',
+      onDismiss: dismissNotice,
+    }
+  })()
+
   return (
     <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2">
       <AnimatePresence>
@@ -72,7 +138,9 @@ export default function Assistant() {
             <header className="flex items-center justify-between border-b border-rule px-3 py-2">
               <div className="flex items-baseline gap-2">
                 <span className="text-[14px] font-semibold tracking-[-0.01em]">Assistant</span>
-                <span className="font-mono text-[10px] tracking-[0.08em] text-ink-3">OFFLINE</span>
+                <span className="font-mono text-[10px] tracking-[0.08em] text-ink-3">
+                  {hybrid ? 'HYBRID' : 'OFFLINE'}
+                </span>
               </div>
               <button
                 onClick={toggle}
@@ -87,8 +155,9 @@ export default function Assistant() {
               {messages.length === 0 && (
                 <div className="space-y-3">
                   <p className="text-[13px] leading-relaxed text-ink-2">
-                    Tell me what to set up. I run on your machine, so nothing you type here goes
-                    anywhere.
+                    {hybrid
+                      ? 'Tell me what to set up. Everything I recognise runs on your machine. Anything else can go to Google Gemini.'
+                      : 'Tell me what to set up. I run on your machine, so nothing you type here goes anywhere.'}
                   </p>
                   <div className="flex flex-col gap-1.5">
                     {PROMPTS.map((p) => (
@@ -146,52 +215,7 @@ export default function Assistant() {
               )}
             </div>
 
-            {/* The offer, not the switch. An earlier build promised in this very
-                panel that an online assistant would ask first; a configured key
-                makes the AI available, and this is where it gets turned on. */}
-            {aiAvailable && !aiConsented && (
-              <div className="flex items-center gap-2 border-t border-rule bg-sunken/60 px-3 py-1.5 text-[11px] text-ink-3">
-                <span className="flex-1">
-                  For anything it doesn't recognise, this can ask Google Gemini. That sends your
-                  message and a summary of the board off the device. Everything it already
-                  understands stays offline either way.
-                </span>
-                <button
-                  onClick={() => setAiConsented(true)}
-                  className="shrink-0 font-medium text-accent hover:text-accent-hover"
-                >
-                  Turn on
-                </button>
-              </div>
-            )}
-
-            {aiAvailable && aiConsented && !noticeDismissed && (
-              <div className="flex items-center gap-2 border-t border-rule bg-sunken/60 px-3 py-1.5 text-[11px] text-ink-3">
-                <span className="flex-1">
-                  Anything the built-in commands don't cover goes to Google Gemini.{' '}
-                  <button
-                    onClick={() => setAiConsented(false)}
-                    className="font-medium text-ink-2 underline hover:text-ink"
-                  >
-                    Keep it offline
-                  </button>
-                </span>
-                <button onClick={dismissNotice} className="shrink-0 font-medium text-ink-2 hover:text-ink">
-                  Got it
-                </button>
-              </div>
-            )}
-
-            {!aiAvailable && !noticeDismissed && (
-              <div className="flex items-center gap-2 border-t border-rule bg-sunken/60 px-3 py-1.5 text-[11px] text-ink-3">
-                <span className="flex-1">
-                  This one is offline. Nothing you type here leaves the device.
-                </span>
-                <button onClick={dismissNotice} className="font-medium text-ink-2 hover:text-ink">
-                  Got it
-                </button>
-              </div>
-            )}
+            {notice && <Notice {...notice} />}
 
             <form
               onSubmit={(e) => {
@@ -211,7 +235,7 @@ export default function Assistant() {
                 type="submit"
                 whileTap={{ scale: 0.92 }}
                 disabled={!value.trim()}
-                className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-[#fbf9f5]
+                className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-paper
                   transition-colors duration-150 hover:bg-accent-hover disabled:opacity-40"
               >
                 Send

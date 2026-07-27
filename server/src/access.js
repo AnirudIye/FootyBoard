@@ -48,7 +48,3 @@ export async function accessFor(boardId, userId) {
     canEdit: role === 'owner' || row.members_can_edit,
   }
 }
-
-export const roleFor = async (boardId, userId) => (await accessFor(boardId, userId)).role
-
-export const canEdit = async (boardId, userId) => (await accessFor(boardId, userId)).canEdit

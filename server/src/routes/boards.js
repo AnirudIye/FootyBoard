@@ -31,6 +31,15 @@ boardsRouter.use((req, res, next) => {
  * scan of every board in the table. The second branch excludes boards you own,
  * so the two halves are disjoint by construction and UNION ALL cannot produce a
  * duplicate.
+ *
+ * Each branch carries its own ORDER BY and LIMIT, and that is what makes the
+ * seek flat rather than merely looking flat. With them only on the outside,
+ * "shared with you" was materialised and sorted in full on every page before
+ * the outer LIMIT threw nearly all of it away — so a member of a thousand
+ * boards paid for a thousand rows to read twenty. Bounding each branch first
+ * leaves the outer sort merging two inputs of at most `limit` rows, and the
+ * answer is identical because the branches are disjoint: a row that belongs on
+ * the page cannot have been cut from its own branch by a row that outranks it.
  */
 const PAGE_COLUMNS = `b.id, b.name, b.created_at, b.updated_at, b.members_can_edit`
 
@@ -38,16 +47,19 @@ const ownedAndSharedPage = (userId, limit, cursor) => {
   const where = cursor ? 'AND (b.updated_at, b.id) < ($2, $3)' : ''
   const limitParam = cursor ? '$4' : '$2'
   const params = cursor ? [userId, cursor.updatedAt, cursor.id, limit] : [userId, limit]
+  const seek = `ORDER BY b.updated_at DESC, b.id DESC LIMIT ${limitParam}`
 
   return all(
     `(SELECT ${PAGE_COLUMNS}, 'owner' AS role
         FROM boards b
-       WHERE b.user_id = $1 ${where})
+       WHERE b.user_id = $1 ${where}
+       ${seek})
      UNION ALL
      (SELECT ${PAGE_COLUMNS}, 'member' AS role
         FROM boards b
         JOIN board_members m ON m.board_id = b.id AND m.user_id = $1
-       WHERE b.user_id <> $1 ${where})
+       WHERE b.user_id <> $1 ${where}
+       ${seek})
      ORDER BY updated_at DESC, id DESC
      LIMIT ${limitParam}`,
     ...params,
@@ -58,13 +70,8 @@ boardsRouter.get('/', async (req, res) => {
   const { limit, cursor } = validatePageQuery(req.query)
 
   // Cursor is "<updated_at>|<id>" — the sort key of the last row on the page.
-  let parsedCursor = null
-  if (cursor) {
-    const [updatedAt, id] = cursor.split('|')
-    parsedCursor = { updatedAt, id }
-  }
-
-  const rows = await ownedAndSharedPage(req.user.id, limit + 1, parsedCursor)
+  const [updatedAt, id] = cursor?.split('|') ?? []
+  const rows = await ownedAndSharedPage(req.user.id, limit + 1, cursor ? { updatedAt, id } : null)
 
   // One extra row is fetched purely to know whether another page exists.
   const hasMore = rows.length > limit
@@ -121,71 +128,84 @@ boardsRouter.get('/:id', async (req, res) => {
   })
 })
 
-boardsRouter.post('/', async (req, res, next) => {
-  try {
-    const name = validateBoardName(req.body?.name)
-    const data = validateBoardData(req.body?.data)
-    const now = new Date().toISOString()
-    const id = randomUUID()
-    await run(
-      `INSERT INTO boards (id, user_id, name, data, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      id,
-      req.user.id,
-      name,
-      encrypt(data),
-      now,
-      now,
-    )
-    res.status(201).json({ board: { id, name, createdAt: now, updatedAt: now } })
-  } catch (err) {
-    next(err)
-  }
+boardsRouter.post('/', async (req, res) => {
+  // The one caller that wants a fallback title supplies it. `validateBoardName`
+  // used to, which meant every other caller got one too, including the rename
+  // endpoint where a missing name can only be a mistake.
+  const name = validateBoardName(req.body?.name ?? 'Untitled board')
+  const data = validateBoardData(req.body?.data)
+  const now = new Date().toISOString()
+  const id = randomUUID()
+  await run(
+    `INSERT INTO boards (id, user_id, name, data, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    id,
+    req.user.id,
+    name,
+    encrypt(data),
+    now,
+    now,
+  )
+  res.status(201).json({ board: { id, name, createdAt: now, updatedAt: now } })
 })
 
-boardsRouter.put('/:id', async (req, res, next) => {
-  try {
-    // The editing lock is enforced here as well as in the relay, so a locked
-    // member cannot route around a blocked op by saving the whole board.
-    const access = await accessFor(req.params.id, req.user.id)
-    if (!access.role) return res.status(404).json({ error: 'That board does not exist.' })
-    if (!access.canEdit)
-      return res.status(403).json({ error: 'The owner has locked editing on this board.' })
+boardsRouter.put('/:id', async (req, res) => {
+  // The editing lock is enforced here as well as in the relay, so a locked
+  // member cannot route around a blocked op by saving the whole board.
+  const access = await accessFor(req.params.id, req.user.id)
+  if (!access.role) return res.status(404).json({ error: 'That board does not exist.' })
+  if (!access.canEdit)
+    return res.status(403).json({ error: 'The owner has locked editing on this board.' })
 
-    const name = validateBoardName(req.body?.name)
-    const data = validateBoardData(req.body?.data)
-    const now = new Date().toISOString()
-    const result = await run(
-      'UPDATE boards SET name = $1, data = $2, updated_at = $3 WHERE id = $4',
-      name,
-      encrypt(data),
-      now,
-      req.params.id,
-    )
-    if (result.changes === 0) return res.status(404).json({ error: 'That board does not exist.' })
-    res.json({ board: { id: req.params.id, name, updatedAt: now } })
-  } catch (err) {
-    next(err)
-  }
+  /**
+   * Renaming stays the owner's, matching PATCH.
+   *
+   * A member's autosave sends whatever name their client resolved, so writing
+   * it unconditionally let anyone with edit rights retitle a board they do not
+   * own — routing straight around the restriction PATCH enforces. A member's
+   * PUT writes the board and leaves its title alone. `RETURNING` gives back
+   * the name that actually stands either way.
+   *
+   * Absent and explicitly null both mean "leave the title alone". A client that
+   * does not know the name is the case this exists for, and `null` is how a
+   * good many of them say that; answering 400 would refuse to save the board
+   * over a field the caller was right not to fill in.
+   */
+  const renaming = access.role === 'owner' && req.body?.name != null
+  const name = renaming ? validateBoardName(req.body.name) : null
+  const data = validateBoardData(req.body?.data)
+  const now = new Date().toISOString()
+  const updated = renaming
+    ? await get(
+        'UPDATE boards SET name = $1, data = $2, updated_at = $3 WHERE id = $4 RETURNING name',
+        name,
+        encrypt(data),
+        now,
+        req.params.id,
+      )
+    : await get(
+        'UPDATE boards SET data = $1, updated_at = $2 WHERE id = $3 RETURNING name',
+        encrypt(data),
+        now,
+        req.params.id,
+      )
+  if (!updated) return res.status(404).json({ error: 'That board does not exist.' })
+  res.json({ board: { id: req.params.id, name: updated.name, updatedAt: now } })
 })
 
 /** Rename only. Sending a whole board just to change its title would be waste. */
-boardsRouter.patch('/:id', async (req, res, next) => {
-  try {
-    const name = validateBoardName(req.body?.name)
-    const now = new Date().toISOString()
-    const result = await run(
-      'UPDATE boards SET name = $1, updated_at = $2 WHERE id = $3 AND user_id = $4',
-      name,
-      now,
-      req.params.id,
-      req.user.id,
-    )
-    if (result.changes === 0) return res.status(404).json({ error: 'That board does not exist.' })
-    res.json({ board: { id: req.params.id, name, updatedAt: now } })
-  } catch (err) {
-    next(err)
-  }
+boardsRouter.patch('/:id', async (req, res) => {
+  const name = validateBoardName(req.body?.name)
+  const now = new Date().toISOString()
+  const result = await run(
+    'UPDATE boards SET name = $1, updated_at = $2 WHERE id = $3 AND user_id = $4',
+    name,
+    now,
+    req.params.id,
+    req.user.id,
+  )
+  if (result.changes === 0) return res.status(404).json({ error: 'That board does not exist.' })
+  res.json({ board: { id: req.params.id, name, updatedAt: now } })
 })
 
 boardsRouter.delete('/:id', async (req, res) => {

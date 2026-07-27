@@ -65,10 +65,17 @@ export const useBoardsStore = create<BoardsState>((set, get) => ({
     set({ loading: true })
     try {
       const { boards, nextCursor } = await api.listBoards(PAGE)
-      // Reopen the last board if it still exists, otherwise the most recent.
+      // A board already chosen wins. A share link picks its board and can
+      // finish before this request does, and overwriting the choice here is
+      // what made a followed link flash the right board and then drop back to
+      // whatever was open last. Otherwise reopen the last board if it still
+      // exists, and failing that the most recent.
+      const chosen = get().currentId
       const remembered = readLastOpened()
       const currentId =
-        (remembered && boards.some((b) => b.id === remembered) ? remembered : boards[0]?.id) ?? null
+        (chosen && boards.some((b) => b.id === chosen) ? chosen : null) ??
+        (remembered && boards.some((b) => b.id === remembered) ? remembered : boards[0]?.id) ??
+        null
       set({ boards, nextCursor, currentId, loading: false })
       writeLastOpened(currentId)
       return currentId

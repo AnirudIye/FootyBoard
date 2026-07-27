@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useBoardStore } from '../../store/boardStore'
+import { SPRING_SNAP } from '../../theme/motion'
 import type { Side } from '../../lib/types'
 
 const spring = { type: 'spring' as const, stiffness: 480, damping: 32, mass: 0.6 }
@@ -51,7 +52,7 @@ export default function BenchRail({ side }: { side: Side }) {
             onClick={() => unbenchToken(t.id, isHome ? 22 : 78, 92)}
             style={{ background: t.color }}
             className="grid h-8 w-8 place-items-center rounded-full border border-black/25
-              font-mono text-[12px] text-[#fbf9f5] shadow-1"
+              font-mono text-[12px] text-paper shadow-1"
           >
             {t.number}
           </motion.button>
@@ -60,14 +61,17 @@ export default function BenchRail({ side }: { side: Side }) {
 
       {bench.length === 0 && <span className="py-1 text-[11px] text-ink-3">none</span>}
 
+      {/* Scale and fade rather than an animated height: a spring on `height`
+          relaid out the rail on every frame, and reduced-motion cannot see a
+          raw height the way it sees a transform. */}
       <AnimatePresence>
         {selectedOwn && (
           <motion.button
-            layout
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={spring}
+            initial={{ opacity: 0, scaleY: 0.7 }}
+            animate={{ opacity: 1, scaleY: 1 }}
+            exit={{ opacity: 0, scaleY: 0.7 }}
+            transition={SPRING_SNAP}
+            style={{ transformOrigin: 'top center' }}
             onClick={() => benchToken(selectedOwn.id)}
             className="mt-1 w-full rounded-sm border border-rule px-1 py-1 text-[10px] leading-tight
               text-ink-2 hover:text-ink hover:border-rule-strong transition-colors duration-150"

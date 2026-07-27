@@ -47,7 +47,7 @@ export default function HUD() {
 
   return (
     <div
-      className="pointer-events-none absolute top-[3.75rem] left-4 z-10 flex items-center gap-4
+      className="pointer-events-none absolute top-4 left-4 z-10 flex items-center gap-4
         rounded border border-rule bg-surface/90 px-3 py-1.5 shadow-1"
     >
       {selectionCount > 0 && <MonoReadout label="SEL" value={String(selectionCount)} />}

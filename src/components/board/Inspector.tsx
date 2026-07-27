@@ -1,10 +1,20 @@
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useBoardStore, HOME_COLOR, AWAY_COLOR } from '../../store/boardStore'
 import { Button } from '../ui/Button'
 import { Slider } from '../ui/Slider'
+import { useDismiss } from '../ui/useDismiss'
+import type { Side, TokenShape } from '../../lib/types'
 
 const SWATCHES = [HOME_COLOR, AWAY_COLOR, '#3F6B4A', '#6B5B95', '#C08A2E', '#4A4E54', '#F2EDE3']
+const ROLES: [TokenShape, string][] = [
+  ['outfield', 'Outfield'],
+  ['keeper', 'Keeper'],
+]
+const TEAMS: [Side, string, string][] = [
+  ['home', 'Home', HOME_COLOR],
+  ['away', 'Away', AWAY_COLOR],
+]
 
 export default function Inspector() {
   const inspector = useBoardStore((s) => s.inspector)
@@ -18,21 +28,7 @@ export default function Inspector() {
 
   const token = inspector ? tokens.find((t) => t.id === inspector.tokenId) : undefined
 
-  useEffect(() => {
-    if (!inspector) return
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) closeInspector()
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeInspector()
-    }
-    window.addEventListener('mousedown', onDown)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('mousedown', onDown)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [inspector, closeInspector])
+  useDismiss(ref, inspector !== null, closeInspector)
 
   const isPlayer = token?.type === 'player'
 
@@ -96,48 +92,36 @@ export default function Inspector() {
               <div className="mb-2.5">
                 <span className="block text-[11px] text-ink-3 mb-1">Role</span>
                 <div className="flex gap-1.5">
-                  <Button
-                    variant={token.shape === 'outfield' ? 'primary' : 'secondary'}
-                    onClick={() => updateToken(token.id, { shape: 'outfield' })}
-                    className="flex-1"
-                  >
-                    Outfield
-                  </Button>
-                  <Button
-                    variant={token.shape === 'keeper' ? 'primary' : 'secondary'}
-                    onClick={() => updateToken(token.id, { shape: 'keeper' })}
-                    className="flex-1"
-                  >
-                    Keeper
-                  </Button>
+                  {ROLES.map(([shape, label]) => (
+                    <Button
+                      key={shape}
+                      variant={token.shape === shape ? 'primary' : 'secondary'}
+                      onClick={() => updateToken(token.id, { shape })}
+                      className="flex-1"
+                    >
+                      {label}
+                    </Button>
+                  ))}
                 </div>
               </div>
 
               <div className="mb-2.5">
                 <span className="block text-[11px] text-ink-3 mb-1">Team</span>
                 <div className="flex gap-1.5">
-                  <Button
-                    variant={token.teamId === 'home' ? 'primary' : 'secondary'}
-                    onClick={() => token.teamId !== 'home' && switchPlayerTeam(token.id)}
-                    className="flex-1"
-                  >
-                    <span
-                      className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle ring-1 ring-black/15"
-                      style={{ background: HOME_COLOR }}
-                    />
-                    Home
-                  </Button>
-                  <Button
-                    variant={token.teamId === 'away' ? 'primary' : 'secondary'}
-                    onClick={() => token.teamId !== 'away' && switchPlayerTeam(token.id)}
-                    className="flex-1"
-                  >
-                    <span
-                      className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle ring-1 ring-black/15"
-                      style={{ background: AWAY_COLOR }}
-                    />
-                    Away
-                  </Button>
+                  {TEAMS.map(([side, label, color]) => (
+                    <Button
+                      key={side}
+                      variant={token.teamId === side ? 'primary' : 'secondary'}
+                      onClick={() => token.teamId !== side && switchPlayerTeam(token.id)}
+                      className="flex-1"
+                    >
+                      <span
+                        className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle ring-1 ring-black/15"
+                        style={{ background: color }}
+                      />
+                      {label}
+                    </Button>
+                  ))}
                 </div>
               </div>
             </>
@@ -145,23 +129,32 @@ export default function Inspector() {
 
           <div className="mb-2.5">
             <span className="block text-[11px] text-ink-3 mb-1">Colour</span>
-            <div className="flex flex-wrap items-center gap-1.5">
+            {/* The swatch stays 20px because that is the size it reads at; the
+                button around it is 28px, because that is the size a finger
+                lands on. */}
+            <div className="flex flex-wrap items-center">
               {SWATCHES.map((c) => (
                 <button
                   key={c}
                   aria-label={`Set colour ${c}`}
+                  aria-pressed={token.color === c}
                   onClick={() => updateToken(token.id, { color: c })}
-                  style={{ background: c }}
-                  className={`h-5 w-5 rounded-sm border transition-transform duration-150 ease-out
-                    hover:scale-110 ${token.color === c ? 'border-ink ring-1 ring-ink' : 'border-rule'}`}
-                />
+                  className="group grid h-7 w-7 place-items-center rounded"
+                >
+                  <span
+                    style={{ background: c }}
+                    className={`h-5 w-5 rounded-sm border transition-transform duration-150 ease-out
+                      group-hover:scale-110
+                      ${token.color === c ? 'border-ink ring-1 ring-ink' : 'border-rule'}`}
+                  />
+                </button>
               ))}
               <input
                 type="color"
                 value={token.color}
                 onChange={(e) => updateToken(token.id, { color: e.target.value })}
                 aria-label="Custom colour"
-                className="h-5 w-6 cursor-pointer rounded-sm border border-rule bg-transparent p-0"
+                className="ml-1 h-7 w-8 cursor-pointer rounded-sm border border-rule bg-transparent p-0"
               />
             </div>
           </div>

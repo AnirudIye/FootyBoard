@@ -2,7 +2,7 @@ import test, { before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { migrate, run, get, closePool } from './db.js'
-import { accessFor, roleFor, canEdit } from './access.js'
+import { accessFor } from './access.js'
 
 /**
  * The authorization matrix.
@@ -83,9 +83,14 @@ test('a shared-in user is a member and can edit while the board is unlocked', as
 test('locking the board stops members editing but never the owner', async () => {
   await run('UPDATE boards SET members_can_edit = false WHERE id = $1', boardId)
 
-  assert.equal(await canEdit(boardId, member), false)
-  assert.equal(await roleFor(boardId, member), 'member', 'a locked member is still in the room')
-  assert.equal(await canEdit(boardId, owner), true, 'the owner is not locked out by their own lock')
+  const locked = await accessFor(boardId, member)
+  assert.equal(locked.canEdit, false)
+  assert.equal(locked.role, 'member', 'a locked member is still in the room')
+  assert.equal(
+    (await accessFor(boardId, owner)).canEdit,
+    true,
+    'the owner is not locked out by their own lock',
+  )
 })
 
 test('a stranger has no role at all', async () => {
@@ -96,7 +101,7 @@ test('a stranger has no role at all', async () => {
 
 test('removing the membership removes the access', async () => {
   await run('DELETE FROM board_members WHERE board_id = $1 AND user_id = $2', boardId, member)
-  assert.equal(await roleFor(boardId, member), null)
+  assert.equal((await accessFor(boardId, member)).role, null)
 })
 
 test('a board that does not exist reads the same as one you cannot see', async () => {
@@ -106,9 +111,9 @@ test('a board that does not exist reads the same as one you cannot see', async (
 })
 
 test('missing arguments are refused rather than matching everything', async () => {
-  assert.equal(await roleFor(null, owner), null)
-  assert.equal(await roleFor(boardId, null), null)
-  assert.equal(await roleFor(undefined, undefined), null)
+  assert.equal((await accessFor(null, owner)).role, null)
+  assert.equal((await accessFor(boardId, null)).role, null)
+  assert.equal((await accessFor(undefined, undefined)).role, null)
 })
 
 test('a share issued before join codes existed gets one on migrate', async () => {

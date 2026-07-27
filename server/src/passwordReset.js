@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
-import { get, run, transaction } from './db.js'
+import { run, transaction } from './db.js'
 import { hashPassword } from './auth.js'
 
 /**
@@ -39,25 +39,38 @@ export async function createResetToken(userId) {
  * still stands, rather than leaving the account half-changed.
  */
 export async function consumeResetToken(token, newPassword) {
-  const row = await get(
-    `SELECT id, user_id, expires_at, used_at
-       FROM password_resets WHERE token_hash = $1`,
-    digest(token),
-  )
-
-  // One message for every failure mode, so the endpoint cannot be used to
-  // work out whether a token existed, was already spent, or merely expired.
-  if (!row || row.used_at !== null || Number(row.expires_at) <= Date.now()) return null
-
+  // Derived before the claim below, so the transaction is not held open across
+  // scrypt. It also costs an invalid token the same work as a valid one.
   const { hash, salt } = await hashPassword(newPassword)
 
-  await transaction(async (client) => {
+  return transaction(async (client) => {
+    /**
+     * The claim *is* the check.
+     *
+     * Reading the row first and judging it in JavaScript left a window: two
+     * requests carrying the same token could both see `used_at IS NULL` before
+     * either committed, and both would go on to set a password. Making the
+     * conditions part of the UPDATE means exactly one caller can move `used_at`
+     * off NULL, so "works once" is enforced by the database rather than by
+     * timing. One message for every failure mode either way, so the endpoint
+     * still cannot be used to tell a token that never existed from one already
+     * spent or merely expired.
+     */
+    const now = Date.now()
+    const { rows } = await client.query(
+      `UPDATE password_resets SET used_at = $1
+        WHERE token_hash = $2 AND used_at IS NULL AND expires_at > $1
+        RETURNING user_id`,
+      [now, digest(token)],
+    )
+    const row = rows[0]
+    if (!row) return null
+
     await client.query('UPDATE users SET password_hash = $1, password_salt = $2 WHERE id = $3', [
       hash,
       salt,
       row.user_id,
     ])
-    await client.query('UPDATE password_resets SET used_at = $1 WHERE id = $2', [Date.now(), row.id])
     // Any other outstanding link for this account is now void.
     await client.query('DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NULL', [
       row.user_id,
@@ -65,9 +78,9 @@ export async function consumeResetToken(token, newPassword) {
     // Signing everyone out is the point: a stolen session must not survive the
     // password that was changed to stop it.
     await client.query('DELETE FROM sessions WHERE user_id = $1', [row.user_id])
-  })
 
-  return row.user_id
+    return row.user_id
+  })
 }
 
 /** Housekeeping for links nobody followed. */

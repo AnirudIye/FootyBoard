@@ -8,10 +8,6 @@ import type {
 } from './types'
 
 export const SCHEMA_VERSION = 2
-// Storage keys keep the old name on purpose. Renaming one silently discards
-// every board a guest has saved, which is a steep price for a string nobody
-// sees. The same goes for `soccerboard.lastBoard` and the Postgres database.
-const KEY = 'soccerboard.board'
 
 export interface PersistedBoard {
   version: number
@@ -28,10 +24,14 @@ export interface PersistedBoard {
 /**
  * Whether a payload is actually a board we can load.
  *
- * The version number alone is not enough: board data now arrives over the
- * network, and a truncated or hand-edited record can carry the right version
- * with half its arrays missing. Checking the shape here means a bad board
- * falls back to a fresh one instead of crashing the app on load.
+ * The version number alone is not enough: board data arrives over the network,
+ * and a truncated or hand-edited record can carry the right version with half
+ * its arrays missing. Checking the shape here means a bad board falls back to a
+ * fresh one instead of crashing the app on load.
+ *
+ * This is all that survives of the old localStorage path. Boards live on the
+ * server now, so the only thing worth keeping is the guard that decides whether
+ * what came back is loadable.
  */
 export function isPersistedBoard(value: unknown): value is PersistedBoard {
   if (!value || typeof value !== 'object') return false
@@ -47,37 +47,4 @@ export function isPersistedBoard(value: unknown): value is PersistedBoard {
     // `bench` is intentionally not required: boards written before it existed
     // are still loadable, and loadPersisted defaults it to an empty rail.
   )
-}
-
-/** Returns false when the board could not be written, so callers can report it. */
-export function saveBoard(data: PersistedBoard, key = KEY): boolean {
-  try {
-    localStorage.setItem(key, JSON.stringify(data))
-    return true
-  } catch {
-    // Storage is full or unavailable. Dropping the write keeps the board usable.
-    return false
-  }
-}
-
-/** `onProblem` receives a ready-to-show sentence when a stored board is discarded. */
-export function loadBoard(
-  key = KEY,
-  onProblem?: (message: string) => void,
-): PersistedBoard | null {
-  const raw = localStorage.getItem(key)
-  if (!raw) return null
-  try {
-    const parsed = JSON.parse(raw)
-    if (!isPersistedBoard(parsed)) {
-      onProblem?.(
-        'Your saved board came from an older version of FootyBoard and could not be opened, so a fresh one is ready.',
-      )
-      return null
-    }
-    return parsed
-  } catch {
-    onProblem?.('Your saved board could not be read, so a fresh one is open. Nothing else was changed.')
-    return null
-  }
 }

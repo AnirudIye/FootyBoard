@@ -2,6 +2,7 @@ import { Group, Line, Rect, Circle } from 'react-konva'
 import { useBoardStore } from '../../store/boardStore'
 import type { Token } from '../../lib/types'
 import type { PitchMapping } from './pitchMapping'
+import { useTokenDrag } from './useTokenDrag'
 
 const SELECT_INK = '#f4f2ef'
 
@@ -14,8 +15,12 @@ interface Props {
 }
 
 /**
- * Training props: cones, poles, mini-goals, mannequins and directional
- * markers. Sized from the pitch so they stay proportional at any format.
+ * Everything on the board that is not a player: the ball, and training props
+ * (cones, poles, mini-goals, mannequins and directional markers). Sized from
+ * the pitch so they stay proportional at any format.
+ *
+ * The ball used to have its own component, which was this one's Group, drag and
+ * selection scaffolding written out a second time.
  */
 export default function PropToken({ token, mapping, nx: atX, ny: atY, selected }: Props) {
   const moveToken = useBoardStore((s) => s.moveToken)
@@ -24,15 +29,34 @@ export default function PropToken({ token, mapping, nx: atX, ny: atY, selected }
   const toggleSelection = useBoardStore((s) => s.toggleSelection)
   const openInspector = useBoardStore((s) => s.openInspector)
 
-  const pos = mapping.toPx(atX, atY)
   const u = mapping.ppm * (mapping.L / 105)
   const color = token.color
+  const ballR = 0.95 * u
+  const isBall = token.type === 'ball'
+
+  const drag = useTokenDrag(mapping, isBall ? ballR : 2 * u)
+  const pos = drag.place(mapping.toPx(atX, atY))
 
   const body = () => {
     switch (token.type) {
+      case 'ball':
+        return (
+          <>
+            <Circle
+              ref={drag.bodyRef}
+              radius={ballR}
+              fill={color}
+              stroke="#17191d"
+              strokeWidth={1}
+              opacity={0.96}
+            />
+            <Circle radius={ballR * 0.4} fill="#17191d" opacity={0.75} listening={false} />
+          </>
+        )
       case 'cone':
         return (
           <Line
+            ref={drag.bodyRef}
             points={[0, -1.5 * u, 1.15 * u, 1.1 * u, -1.15 * u, 1.1 * u]}
             closed
             fill={color}
@@ -44,6 +68,7 @@ export default function PropToken({ token, mapping, nx: atX, ny: atY, selected }
         return (
           <>
             <Rect
+              ref={drag.bodyRef}
               x={-0.28 * u}
               y={-2.6 * u}
               width={0.56 * u}
@@ -59,6 +84,7 @@ export default function PropToken({ token, mapping, nx: atX, ny: atY, selected }
       case 'goal':
         return (
           <Line
+            ref={drag.bodyRef}
             points={[-3 * u, 1 * u, -3 * u, -1 * u, 3 * u, -1 * u, 3 * u, 1 * u]}
             stroke={color}
             strokeWidth={Math.max(1.5, 0.34 * u)}
@@ -70,6 +96,7 @@ export default function PropToken({ token, mapping, nx: atX, ny: atY, selected }
         return (
           <>
             <Rect
+              ref={drag.bodyRef}
               x={-0.85 * u}
               y={-1.1 * u}
               width={1.7 * u}
@@ -86,6 +113,7 @@ export default function PropToken({ token, mapping, nx: atX, ny: atY, selected }
         return (
           <>
             <Line
+              ref={drag.bodyRef}
               points={[-1.9 * u, 0, 1.4 * u, 0]}
               stroke={color}
               strokeWidth={Math.max(1.5, 0.36 * u)}
@@ -101,10 +129,12 @@ export default function PropToken({ token, mapping, nx: atX, ny: atY, selected }
 
   return (
     <Group
+      ref={drag.ref}
       x={pos.x}
       y={pos.y}
       rotation={token.rotation}
       draggable
+      dragBoundFunc={drag.dragBoundFunc}
       onContextMenu={(e) => {
         e.evt.preventDefault()
         setSelection([token.id])
@@ -114,16 +144,25 @@ export default function PropToken({ token, mapping, nx: atX, ny: atY, selected }
         if (e.evt.button !== 0) return
         if (e.evt.shiftKey) toggleSelection(token.id)
         else if (!selected) setSelection([token.id])
+        drag.pickUp()
       }}
+      onPointerUp={() => drag.putDown()}
+      onDragStart={() => drag.beginDrag()}
       onDragMove={(e) => {
         const n = mapping.toNorm(e.target.x(), e.target.y())
         moveToken(token.id, n.x, n.y)
       }}
-      onDragEnd={() => commit()}
+      onDragEnd={() => {
+        commit()
+        // Home is wherever the store settled, which is the clamped position the
+        // rest of the room has: the give was never anything but a view.
+        const at = useBoardStore.getState().tokens.find((t) => t.id === token.id)
+        drag.endDrag(mapping.toPx(at?.x ?? token.x, at?.y ?? token.y))
+      }}
     >
       {selected && (
         <Circle
-          radius={3.1 * u}
+          radius={isBall ? ballR + 3.5 : 3.1 * u}
           stroke={SELECT_INK}
           strokeWidth={1.5}
           dash={[3, 3]}

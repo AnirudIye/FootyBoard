@@ -2,7 +2,6 @@ import { useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, useScroll, useTransform } from 'framer-motion'
 import ScrollProgress from './ScrollProgress'
-import HeroVideo from './HeroVideo'
 import FloodlitBackdrop from './FloodlitBackdrop'
 import TacticalLoop from './TacticalLoop'
 import MiniPitch from './MiniPitch'
@@ -11,22 +10,16 @@ import type { GlyphName } from './TacticalGlyph'
 import { Reveal } from './fx/Reveal'
 import { Magnetic } from './fx/Magnetic'
 import { ClickSpark } from './fx/ClickSpark'
+import { useReducedMotion } from '../../hooks/useReducedMotion'
 import { useAuthStore } from '../../store/authStore'
-
-/**
- * Background film for the hero. Point this at your own clip (drop an .mp4 in
- * /public and use "/your-clip.mp4"); with it empty the floodlit backdrop
- * carries the section on its own.
- */
-const HERO_VIDEO = ''
 
 // Green stand-in for the reference's indigo→purple→amber sweep.
 const HEADLINE_GRADIENT = 'linear-gradient(to left, #0f7a45, #2ae07a, #c9ffe0)'
 
-const NAV: { label: string; href: string; caret?: boolean }[] = [
-  { label: 'Features', href: '#features', caret: true },
+const NAV: { label: string; href: string }[] = [
+  { label: 'Features', href: '#features' },
   { label: 'Demo', href: '#demo' },
-  { label: 'Assistant', href: '#assistant', caret: true },
+  { label: 'Assistant', href: '#assistant' },
 ]
 
 const FEATURES: { glyph: GlyphName; tag: string; title: string; body: string }[] = [
@@ -71,17 +64,23 @@ const FEATURES: { glyph: GlyphName; tag: string; title: string; body: string }[]
 // Shapes the board ships with — honest marquee content, not invented clients.
 const SHAPES = ['4-3-3', '4-2-3-1', '3-5-2', '4-4-2', '5-3-2', '4-1-4-1', '3-4-3', '4-3-2-1']
 
-function Caret() {
+/** The one thing the page is asking for, in the two places it asks. */
+function OpenBoardCta() {
   return (
-    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 opacity-70" fill="none" aria-hidden>
-      <path
-        d="M6 9.5 L12 15.5 L18 9.5"
-        stroke="currentColor"
-        strokeWidth={2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <Magnetic>
+      <ClickSpark>
+        <Link
+          to="/board"
+          className="liquid-glass inline-flex items-center gap-2 rounded-full px-[29px] py-[24px]
+            text-[15px] font-medium leading-none text-foreground transition-colors duration-200
+            hover:bg-[var(--accent-wash)] focus-visible:outline focus-visible:outline-2
+            focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+          Open the board
+          <span aria-hidden>→</span>
+        </Link>
+      </ClickSpark>
+    </Magnetic>
   )
 }
 
@@ -106,11 +105,10 @@ function Navbar() {
             <a
               key={item.label}
               href={item.href}
-              className="flex items-center gap-1 text-[14px] text-foreground/90 transition-colors
-                duration-200 hover:text-accent"
+              className="text-[14px] text-foreground/90 transition-colors duration-200
+                hover:text-accent"
             >
               {item.label}
-              {item.caret && <Caret />}
             </a>
           ))}
         </div>
@@ -191,18 +189,24 @@ export default function LandingPage() {
   // Scroll-linked hero hand-off: the copy drifts up and dims while the
   // backdrop trails behind it, so the section leaves deliberately rather than
   // just sliding under the fold. Transform and opacity only — both composited.
+  //
+  // MotionConfig cannot help here: these are motion values wired straight to
+  // style, not animations, so nothing suppresses them. Two layers moving at
+  // different speeds is the definition of parallax, which is the one thing
+  // reduced motion is most clearly asking for less of, so the travel is what
+  // goes. The fade stays, because a fade has no direction to disagree with.
+  const reduced = useReducedMotion()
   const { scrollYProgress } = useScroll({
     target: heroRef,
     offset: ['start start', 'end start'],
   })
-  const copyY = useTransform(scrollYProgress, [0, 1], ['0%', '-40%'])
+  const copyY = useTransform(scrollYProgress, [0, 1], ['0%', reduced ? '0%' : '-40%'])
   const copyOpacity = useTransform(scrollYProgress, [0, 0.7], [1, 0])
-  const backdropY = useTransform(scrollYProgress, [0, 1], ['0%', '16%'])
+  const backdropY = useTransform(scrollYProgress, [0, 1], ['0%', reduced ? '0%' : '16%'])
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-paper">
       <ScrollProgress />
-      <HeroVideo src={HERO_VIDEO} />
       <motion.div style={{ y: backdropY }} className="absolute inset-0">
         <FloodlitBackdrop />
         <TacticalLoop className="pointer-events-none absolute inset-0 h-screen w-full opacity-70" />
@@ -213,7 +217,7 @@ export default function LandingPage() {
           <Navbar />
 
           <div className="relative flex flex-1 items-center justify-center px-6">
-            {/* Blurred mass that lets the headline sit on the footage. */}
+            {/* Blurred mass that lets the headline sit on the backdrop. */}
             <div
               aria-hidden
               className="pointer-events-none absolute left-1/2 top-1/2 h-[527px] w-[984px]
@@ -224,9 +228,15 @@ export default function LandingPage() {
               style={{ y: copyY, opacity: copyOpacity }}
               className="relative flex flex-col items-center text-center"
             >
+              {/* The ceiling is in rem so the headline still answers to the
+                  browser's text size. In px it did not, and the page had two
+                  behaviours: section heads below that scaled, a hero that did
+                  not. Tracking tightens as the type grows, which is the whole
+                  reason one fixed value cannot serve a 220px display and a
+                  29px section head. */}
               <h1
-                className="font-display font-normal leading-[1.02] tracking-[-0.024em]
-                  text-[clamp(4.25rem,17vw,220px)]"
+                className="font-display font-normal leading-[1.02] tracking-[-0.035em]
+                  text-[clamp(4.25rem,17vw,13.75rem)]"
               >
                 <span className="text-foreground">Total </span>
                 <span
@@ -241,21 +251,9 @@ export default function LandingPage() {
                 Two teams, a pitch, and nothing in the way. Set the shape, move it, send the link.
               </p>
 
-              <Magnetic strength={0.3}>
-                <ClickSpark>
-                  <Link
-                    to="/board"
-                    className="liquid-glass mt-[25px] inline-flex items-center gap-2 rounded-full
-                      px-[29px] py-[24px] text-[15px] font-medium leading-none text-foreground
-                      transition-colors duration-200 hover:bg-[var(--accent-wash)]
-                      focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
-                      focus-visible:outline-accent"
-                  >
-                    Open the board
-                    <span aria-hidden>→</span>
-                  </Link>
-                </ClickSpark>
-              </Magnetic>
+              <div className="mt-[25px]">
+                <OpenBoardCta />
+              </div>
             </motion.div>
           </div>
 
@@ -271,7 +269,7 @@ export default function LandingPage() {
             <Reveal
               delay={0.05}
               className="mb-14 max-w-2xl font-display text-[clamp(1.8rem,4vw,2.9rem)] font-normal
-                leading-[1.06] tracking-[-0.024em]"
+                leading-[1.06] tracking-[-0.015em]"
             >
               What a coach actually needs, and not much else.
             </Reveal>
@@ -311,7 +309,7 @@ export default function LandingPage() {
             </Reveal>
             <Reveal
               delay={0.05}
-              className="font-display text-[clamp(1.8rem,4vw,2.9rem)] font-normal leading-[1.06] tracking-[-0.024em]"
+              className="font-display text-[clamp(1.8rem,4vw,2.9rem)] font-normal leading-[1.06] tracking-[-0.015em]"
             >
               Say the shape. The board builds it.
             </Reveal>
@@ -336,25 +334,11 @@ export default function LandingPage() {
         {/* Closing */}
         <section className="border-t border-rule/60">
           <div className="mx-auto max-w-6xl px-8 py-24 text-center">
-            <Reveal className="mx-auto mb-8 max-w-2xl font-display text-[clamp(2rem,4.6vw,3.2rem)] font-normal leading-[1.04] tracking-[-0.028em]">
+            <Reveal className="mx-auto mb-8 max-w-2xl font-display text-[clamp(2rem,4.6vw,3.2rem)] font-normal leading-[1.04] tracking-[-0.015em]">
               Open a pitch and show the idea.
             </Reveal>
             <Reveal delay={0.1} className="flex justify-center">
-              <Magnetic strength={0.3}>
-                <ClickSpark>
-                  <Link
-                    to="/board"
-                    className="liquid-glass inline-flex items-center gap-2 rounded-full px-[29px]
-                      py-[24px] text-[15px] font-medium leading-none text-foreground
-                      transition-colors duration-200 hover:bg-[var(--accent-wash)]
-                      focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
-                      focus-visible:outline-accent"
-                  >
-                    Open the board
-                    <span aria-hidden>→</span>
-                  </Link>
-                </ClickSpark>
-              </Magnetic>
+              <OpenBoardCta />
             </Reveal>
           </div>
         </section>
@@ -402,7 +386,7 @@ function LiveBoardSection() {
           </Reveal>
           <Reveal
             delay={0.05}
-            className="font-display text-[clamp(1.8rem,4vw,2.9rem)] font-normal leading-[1.06] tracking-[-0.024em]"
+            className="font-display text-[clamp(1.8rem,4vw,2.9rem)] font-normal leading-[1.06] tracking-[-0.015em]"
           >
             Move a back line, watch it settle.
           </Reveal>

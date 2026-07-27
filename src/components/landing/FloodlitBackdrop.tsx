@@ -1,30 +1,24 @@
-import { useReducedMotion } from '../../hooks/useReducedMotion'
-
 /**
  * The hero ground: a pitch grid receding into black under two floodlight
  * pools. The grid is the pitch's own geometry rather than a generic tech
  * mesh, and the light drifts slowly so the section breathes without asking
- * for attention. Pure CSS — nothing to schedule, nothing to clean up.
+ * for attention. Pure CSS — nothing to schedule, nothing to clean up, and
+ * reduced motion is already handled by the global rule in tokens.css, which
+ * leaves both pools sitting at the size and opacity they rest at anyway.
  */
 export default function FloodlitBackdrop() {
-  const reduced = useReducedMotion()
-
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
       {/* Floodlight pools: wrapper places them, inner element breathes. */}
       <div className="absolute -top-1/3 left-1/2 h-[46rem] w-[46rem] -translate-x-1/2">
         <div
-          className={`h-full w-full rounded-full blur-[120px] ${
-            reduced ? '' : 'animate-[flood_14s_ease-in-out_infinite]'
-          }`}
+          className="h-full w-full animate-[flood_14s_ease-in-out_infinite] rounded-full blur-[120px]"
           style={{ background: 'radial-gradient(circle, var(--accent-glow) 0%, transparent 68%)' }}
         />
       </div>
       <div className="absolute -bottom-1/4 right-[-10%] h-[34rem] w-[34rem]">
         <div
-          className={`h-full w-full rounded-full blur-[130px] ${
-            reduced ? '' : 'animate-[flood_18s_ease-in-out_infinite_reverse]'
-          }`}
+          className="h-full w-full animate-[flood_18s_ease-in-out_infinite_reverse] rounded-full blur-[130px]"
           style={{ background: 'radial-gradient(circle, rgba(42,224,122,0.16) 0%, transparent 70%)' }}
         />
       </div>

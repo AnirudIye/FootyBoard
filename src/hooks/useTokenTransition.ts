@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { animate } from 'framer-motion'
 import type { Token } from '../lib/types'
 import { useReducedMotion } from './useReducedMotion'
 
@@ -7,7 +8,9 @@ export interface Pt {
   y: number
 }
 
-const DURATION = 420
+const DURATION = 0.42 // seconds
+// The same cubic ease-out the hand-rolled tween used, kept exactly, because
+// this is the curve every chip on the board travels along.
 const easeOut = (t: number) => 1 - Math.pow(1 - t, 3)
 
 /**
@@ -16,6 +19,11 @@ const easeOut = (t: number) => 1 - Math.pow(1 - t, 3)
  * `epoch` changes (a formation applied, or an undo), chips glide from where
  * they were to their new positions instead of teleporting, because seeing the
  * movement is itself informative.
+ *
+ * The glide runs on framer-motion's `animate` over a 0..1 progress. Reading the
+ * store fresh on every update is what makes the travel survive the board
+ * changing underneath it: a peer's op landing mid-glide moves the destination
+ * rather than snapping the chip.
  */
 export function useTokenTransition(tokens: Token[], epoch: number): Record<string, Pt> {
   const reduced = useReducedMotion()
@@ -26,8 +34,6 @@ export function useTokenTransition(tokens: Token[], epoch: number): Record<strin
 
   const displayRef = useRef<Record<string, Pt>>({})
   const fromRef = useRef<Record<string, Pt>>({})
-  const startRef = useRef(0)
-  const rafRef = useRef<number | null>(null)
   const animatingRef = useRef(false)
 
   // While idle the display follows the store exactly.
@@ -38,43 +44,36 @@ export function useTokenTransition(tokens: Token[], epoch: number): Record<strin
   }
 
   useEffect(() => {
+    // Epoch 0 is the board as it opened: there is nowhere to travel from.
     if (epoch === 0) return
     if (reduced) return
 
     fromRef.current = { ...displayRef.current }
-    startRef.current = performance.now()
     animatingRef.current = true
 
-    const tick = () => {
-      const raw = Math.min(1, (performance.now() - startRef.current) / DURATION)
-      const t = easeOut(raw)
-      const next: Record<string, Pt> = {}
-      for (const tok of tokensRef.current) {
-        const from = fromRef.current[tok.id] ?? { x: tok.x, y: tok.y }
-        next[tok.id] = {
-          x: from.x + (tok.x - from.x) * t,
-          y: from.y + (tok.y - from.y) * t,
+    const controls = animate(0, 1, {
+      duration: DURATION,
+      ease: easeOut,
+      onUpdate: (p) => {
+        const next: Record<string, Pt> = {}
+        for (const tok of tokensRef.current) {
+          const from = fromRef.current[tok.id] ?? { x: tok.x, y: tok.y }
+          next[tok.id] = {
+            x: from.x + (tok.x - from.x) * p,
+            y: from.y + (tok.y - from.y) * p,
+          }
         }
-      }
-      displayRef.current = next
-      force((n) => n + 1)
-      if (raw < 1) {
-        rafRef.current = requestAnimationFrame(tick)
-      } else {
+        displayRef.current = next
+        force((n) => n + 1)
+      },
+      onComplete: () => {
         animatingRef.current = false
-        rafRef.current = null
-      }
-    }
-
-    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
-    rafRef.current = requestAnimationFrame(tick)
+      },
+    })
 
     return () => {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-        animatingRef.current = false
-      }
+      controls.stop()
+      animatingRef.current = false
     }
   }, [epoch, reduced])
 

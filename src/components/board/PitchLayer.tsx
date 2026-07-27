@@ -80,33 +80,26 @@ export default function PitchLayer({ mapping: m }: { mapping: PitchMapping }) {
     // Both ends
     for (const end of [0, 100] as const) {
       const dir = end === 0 ? 1 : -1
-      const penFar = end + dir * penDepth
-      const sixFar = end + dir * sixDepth
 
-      nodes.push(
-        <Line
-          key={key()}
-          points={poly([
-            [end, 50 - penHalfW],
-            [penFar, 50 - penHalfW],
-            [penFar, 50 + penHalfW],
-            [end, 50 + penHalfW],
-          ])}
-          {...stroke}
-        />,
-      )
-      nodes.push(
-        <Line
-          key={key()}
-          points={poly([
-            [end, 50 - sixHalfW],
-            [sixFar, 50 - sixHalfW],
-            [sixFar, 50 + sixHalfW],
-            [end, 50 + sixHalfW],
-          ])}
-          {...stroke}
-        />,
-      )
+      // Penalty box and six-yard box: the same three-sided shape, twice.
+      for (const [depth, halfW] of [
+        [penDepth, penHalfW],
+        [sixDepth, sixHalfW],
+      ]) {
+        const far = end + dir * depth
+        nodes.push(
+          <Line
+            key={key()}
+            points={poly([
+              [end, 50 - halfW],
+              [far, 50 - halfW],
+              [far, 50 + halfW],
+              [end, 50 + halfW],
+            ])}
+            {...stroke}
+          />,
+        )
+      }
 
       const spot = p(end + dir * penSpot, 50)
       nodes.push(<Circle key={key()} x={spot.x} y={spot.y} radius={spotR} fill={lineColor} opacity={lineOpacity} />)

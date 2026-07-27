@@ -58,6 +58,54 @@ describe('selection actions', () => {
     })
   })
 
+  it('keeps a selection’s shape when it is dragged into the touchline', () => {
+    // Clamping each chip as it reached the edge used to squash the set flat:
+    // the leading players stopped, the rest kept coming, and dragging back out
+    // did not undo it. The delta is clamped once for the whole selection now.
+    const s = useBoardStore.getState()
+    const squad = s.tokens.filter((t) => t.type === 'player' && t.teamId === 'home')
+    const ids = squad.map((t) => t.id)
+    const gaps = squad.map((t) => ({ id: t.id, dx: t.x - squad[0].x, dy: t.y - squad[0].y }))
+
+    s.setSelection(ids)
+    s.moveTokens(ids, -1000, 0)
+    s.commit()
+
+    const after = useBoardStore.getState().tokens
+    const anchor = after.find((t) => t.id === squad[0].id)!
+    for (const g of gaps) {
+      const t = after.find((x) => x.id === g.id)!
+      expect(t.x).toBeCloseTo(anchor.x + g.dx, 6)
+      expect(t.y).toBeCloseTo(anchor.y + g.dy, 6)
+    }
+    // And the set stopped exactly at the line rather than piling up on it.
+    expect(Math.min(...after.filter((t) => ids.includes(t.id)).map((t) => t.x))).toBeCloseTo(0, 6)
+  })
+
+  it('a pinned annotation travels with a selection that hits an edge', () => {
+    const s = useBoardStore.getState()
+    const player = s.tokens.find((t) => t.type === 'player' && t.teamId === 'home')!
+    const ids = s.tokens.filter((t) => t.type === 'player' && t.teamId === 'home').map((t) => t.id)
+    const drawingId = s.addDrawing({
+      type: 'arrow',
+      points: [player.x, player.y, player.x + 5, player.y],
+      color: '#2ae07a',
+      thickness: 2.4,
+      attachedTokenId: player.id,
+    })
+
+    useBoardStore.getState().setSelection(ids)
+    useBoardStore.getState().moveTokens(ids, -1000, 0)
+    useBoardStore.getState().commit()
+
+    const after = useBoardStore.getState()
+    const moved = after.tokens.find((t) => t.id === player.id)!
+    const arrow = after.drawings.find((d) => d.id === drawingId)!
+    // The arrow's tail started on the chip and is still on it: shiftAttached
+    // took the same clamped delta the tokens did.
+    expect(arrow.points[0]).toBeCloseTo(moved.x, 6)
+  })
+
   it('benching moves a player off the pitch and back on again', () => {
     const s = useBoardStore.getState()
     const player = s.tokens.find((t) => t.teamId === 'home' && t.type === 'player')!

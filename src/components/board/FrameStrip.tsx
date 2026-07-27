@@ -1,13 +1,19 @@
 import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useBoardStore } from '../../store/boardStore'
+import { SPRING_SNAP } from '../../theme/motion'
 import { Button } from '../ui/Button'
 import { boardHandles } from './boardHandles'
+import type { SequenceKind } from './exportSequence'
 import { toast } from '../../store/toastStore'
 import { toUserMessage } from '../../lib/errors'
 
 const spring = { type: 'spring' as const, stiffness: 460, damping: 34, mass: 0.6 }
 const SPEEDS = [0.5, 1, 2]
+const FLAGS = [
+  ['loop', 'Loop', 'Loop'],
+  ['eased', 'Ease', 'Ease movement'],
+] as const
 
 export default function FrameStrip() {
   const frames = useBoardStore((s) => s.frames)
@@ -17,17 +23,17 @@ export default function FrameStrip() {
   const recaptureFrame = useBoardStore((s) => s.recaptureFrame)
   const setPlayback = useBoardStore((s) => s.setPlayback)
 
-  const [exporting, setExporting] = useState<'gif' | 'webm' | null>(null)
+  const [exporting, setExporting] = useState<SequenceKind | null>(null)
   const hasFrames = frames.length > 0
   const canPlay = frames.length >= 2
+  const lastFrame = Math.max(0, frames.length - 1)
   const nearest = playback.position >= 0 ? Math.round(playback.position) : -1
   const activeFrame = nearest >= 0 ? frames[nearest] : undefined
 
-  const runExport = async (kind: 'gif' | 'webm') => {
+  const runExport = async (kind: SequenceKind) => {
     setExporting(kind)
     try {
-      if (kind === 'gif') await boardHandles.exportGif?.()
-      else await boardHandles.exportWebm?.()
+      await boardHandles.exportSequence?.(kind)
       toast(`Exported the sequence as ${kind.toUpperCase()}`)
     } catch (err) {
       toast(
@@ -47,7 +53,7 @@ export default function FrameStrip() {
   const stopPlayhead = () => setPlayback({ position: -1, playing: false })
 
   return (
-    <div className="absolute inset-x-0 bottom-0 z-10 flex justify-center px-4 pb-2">
+    <div className="flex shrink-0 justify-center px-4 pb-2">
       <motion.div
         layout
         transition={spring}
@@ -66,12 +72,15 @@ export default function FrameStrip() {
 
         <AnimatePresence>
           {hasFrames && (
+            // Scale and fade rather than an animated width: a spring on `width`
+            // relaid out the whole strip on every frame, and reduced-motion
+            // cannot see a raw width the way it sees a transform.
             <motion.div
-              layout
-              initial={{ opacity: 0, width: 0 }}
-              animate={{ opacity: 1, width: 'auto' }}
-              exit={{ opacity: 0, width: 0 }}
-              transition={spring}
+              initial={{ opacity: 0, scaleX: 0.92 }}
+              animate={{ opacity: 1, scaleX: 1 }}
+              exit={{ opacity: 0, scaleX: 0.92 }}
+              transition={SPRING_SNAP}
+              style={{ transformOrigin: 'left center' }}
               className="flex items-center gap-3 overflow-hidden"
             >
               <span className="h-6 w-px bg-rule" />
@@ -95,7 +104,7 @@ export default function FrameStrip() {
                         className={`grid h-8 w-8 place-items-center rounded border font-mono text-[12px]
                           transition-colors duration-150 ${
                             active
-                              ? 'border-accent bg-accent text-[#fbf9f5]'
+                              ? 'border-accent bg-accent text-paper'
                               : 'border-rule bg-paper text-ink-2 hover:border-rule-strong'
                           }`}
                       >
@@ -131,11 +140,28 @@ export default function FrameStrip() {
                 <input
                   type="range"
                   min={0}
-                  max={Math.max(0, frames.length - 1)}
+                  max={lastFrame}
                   step={0.01}
                   value={playback.position < 0 ? 0 : playback.position}
                   disabled={!canPlay}
                   onChange={(e) => setPlayback({ position: Number(e.target.value), playing: false })}
+                  // A hundredth of a frame is the right grain for a pointer and
+                  // hopeless for a key, which would need a hundred presses to
+                  // reach the next frame. Arrows step whole frames instead.
+                  onKeyDown={(e) => {
+                    const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0
+                    const to =
+                      step !== 0
+                        ? Math.round(Math.max(0, playback.position)) + step
+                        : e.key === 'Home'
+                          ? 0
+                          : e.key === 'End'
+                            ? lastFrame
+                            : null
+                    if (to === null) return
+                    e.preventDefault()
+                    setPlayback({ position: Math.min(lastFrame, Math.max(0, to)), playing: false })
+                  }}
                   style={{ accentColor: 'rgb(var(--accent))' }}
                   className="w-40 cursor-pointer"
                   aria-label="Scrub"
@@ -154,24 +180,23 @@ export default function FrameStrip() {
                   ))}
                 </div>
 
-                <button
-                  onClick={() => setPlayback({ loop: !playback.loop })}
-                  className={`rounded px-1.5 py-1 text-[12px] transition-colors ${
-                    playback.loop ? 'text-accent' : 'text-ink-3 hover:text-ink'
-                  }`}
-                  title="Loop"
-                >
-                  Loop
-                </button>
-                <button
-                  onClick={() => setPlayback({ eased: !playback.eased })}
-                  className={`rounded px-1.5 py-1 text-[12px] transition-colors ${
-                    playback.eased ? 'text-accent' : 'text-ink-3 hover:text-ink'
-                  }`}
-                  title="Ease movement"
-                >
-                  Ease
-                </button>
+                {FLAGS.map(([key, label, hint]) => (
+                  <button
+                    key={key}
+                    onClick={() => setPlayback({ [key]: !playback[key] })}
+                    aria-pressed={playback[key]}
+                    // 28x26 was under the 24px floor once the padding is taken
+                    // off the text; the inset pseudo-element widens the target
+                    // without moving the label.
+                    className={`relative rounded px-1.5 py-1 text-[12px] transition-colors
+                      before:absolute before:-inset-1.5 before:content-[''] ${
+                        playback[key] ? 'text-accent' : 'text-ink-3 hover:text-ink'
+                      }`}
+                    title={hint}
+                  >
+                    {label}
+                  </button>
+                ))}
 
                 {nearest >= 0 && (
                   <Button variant="quiet" className="text-[12px]" onClick={stopPlayhead}>

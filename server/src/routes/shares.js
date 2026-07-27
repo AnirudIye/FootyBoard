@@ -4,7 +4,7 @@ import { get, all, run, transaction } from '../db.js'
 import { accessFor } from '../access.js'
 import { publish } from '../realtime.js'
 import { consume } from '../rateLimit.js'
-import { generateCode, normalizeCode, codeExpiryFrom } from '../joinCode.js'
+import { normalizeCode, codeExpiryFrom, withFreshCode } from '../joinCode.js'
 import { BadRequest } from '../validate.js'
 
 /**
@@ -48,58 +48,33 @@ async function requireOwner(req, res) {
  * a moment when two links are live — "regenerate" means the old one stops
  * working, which is the only useful reading of it.
  */
-sharesRouter.post('/:id/share', async (req, res, next) => {
-  try {
-    if (!(await requireOwner(req, res))) return
+sharesRouter.post('/:id/share', async (req, res) => {
+  if (!(await requireOwner(req, res))) return
 
-    const token = randomBytes(32).toString('base64url')
-    const id = randomUUID()
+  const token = randomBytes(32).toString('base64url')
+  const id = randomUUID()
+  const expiresAt = codeExpiryFrom()
 
-    // The code has to be unique among live shares, and six readable characters
-    // is a small enough space that a collision is worth planning for rather
-    // than assuming away. The unique index is the arbiter; this just retries.
-    const expiresAt = codeExpiryFrom()
-    let code = null
-    for (let attempt = 0; attempt < 5 && code === null; attempt++) {
-      const candidate = generateCode()
-      try {
-        await transaction(async (client) => {
-          await client.query(
-            'UPDATE board_shares SET revoked_at = $1 WHERE board_id = $2 AND revoked_at IS NULL',
-            [Date.now(), req.params.id],
-          )
-          await client.query(
-            `INSERT INTO board_shares
-               (id, board_id, token_hash, code, code_expires_at, created_by, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [
-              id,
-              req.params.id,
-              digest(token),
-              candidate,
-              expiresAt,
-              req.user.id,
-              new Date().toISOString(),
-            ],
-          )
-        })
-        code = candidate
-      } catch (err) {
-        // 23505 is unique_violation: that code is already in use by a live
-        // share. Anything else is a real failure and should surface.
-        if (err.code !== '23505') throw err
-      }
-    }
-    if (code === null) throw new Error('could not allocate a unique join code')
+  const code = await withFreshCode((candidate) =>
+    transaction(async (client) => {
+      await client.query(
+        'UPDATE board_shares SET revoked_at = $1 WHERE board_id = $2 AND revoked_at IS NULL',
+        [Date.now(), req.params.id],
+      )
+      await client.query(
+        `INSERT INTO board_shares
+           (id, board_id, token_hash, code, code_expires_at, created_by, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [id, req.params.id, digest(token), candidate, expiresAt, req.user.id, new Date().toISOString()],
+      )
+    }),
+  )
 
-    // The only time the plaintext token exists outside the owner's browser. The
-    // code, unlike the token, can be read again — being readable is its job.
-    res.status(201).json({
-      share: { id, token, code, codeExpiresAt: expiresAt, createdAt: new Date().toISOString() },
-    })
-  } catch (err) {
-    next(err)
-  }
+  // The only time the plaintext token exists outside the owner's browser. The
+  // code, unlike the token, can be read again — being readable is its job.
+  res.status(201).json({
+    share: { id, token, code, codeExpiresAt: expiresAt, createdAt: new Date().toISOString() },
+  })
 })
 
 /**
@@ -109,31 +84,27 @@ sharesRouter.post('/:id/share', async (req, res, next) => {
  * because the owner has to be able to put it back on screen at the start of
  * every session without invalidating everyone's existing access.
  */
-sharesRouter.get('/:id/share', async (req, res, next) => {
-  try {
-    if (!(await requireOwner(req, res))) return
-    const row = await get(
-      `SELECT id, code, code_expires_at, created_at FROM board_shares
-        WHERE board_id = $1 AND revoked_at IS NULL
-        ORDER BY created_at DESC LIMIT 1`,
-      req.params.id,
-    )
-    res.json({
-      share: row
-        ? {
-            id: row.id,
-            code: row.code,
-            // Returned even when it has passed, so the owner is shown an
-            // expired code and a way to refresh it rather than an empty panel
-            // that looks like sharing was never turned on.
-            codeExpiresAt: Number(row.code_expires_at),
-            createdAt: row.created_at,
-          }
-        : null,
-    })
-  } catch (err) {
-    next(err)
-  }
+sharesRouter.get('/:id/share', async (req, res) => {
+  if (!(await requireOwner(req, res))) return
+  const row = await get(
+    `SELECT id, code, code_expires_at, created_at FROM board_shares
+      WHERE board_id = $1 AND revoked_at IS NULL
+      ORDER BY created_at DESC LIMIT 1`,
+    req.params.id,
+  )
+  res.json({
+    share: row
+      ? {
+          id: row.id,
+          code: row.code,
+          // Returned even when it has passed, so the owner is shown an
+          // expired code and a way to refresh it rather than an empty panel
+          // that looks like sharing was never turned on.
+          codeExpiresAt: Number(row.code_expires_at),
+          createdAt: row.created_at,
+        }
+      : null,
+  })
 })
 
 /**
@@ -145,87 +116,65 @@ sharesRouter.get('/:id/share', async (req, res, next) => {
  * Making "new code" also break every saved link would mean nobody dares press
  * it, which defeats having an expiry at all.
  */
-sharesRouter.post('/:id/share/code', async (req, res, next) => {
-  try {
-    if (!(await requireOwner(req, res))) return
+sharesRouter.post('/:id/share/code', async (req, res) => {
+  if (!(await requireOwner(req, res))) return
 
-    const share = await get(
-      `SELECT id FROM board_shares
-        WHERE board_id = $1 AND revoked_at IS NULL
-        ORDER BY created_at DESC LIMIT 1`,
-      req.params.id,
-    )
-    if (!share) return res.status(404).json({ error: 'Sharing is not on for this board.' })
+  const share = await get(
+    `SELECT id FROM board_shares
+      WHERE board_id = $1 AND revoked_at IS NULL
+      ORDER BY created_at DESC LIMIT 1`,
+    req.params.id,
+  )
+  if (!share) return res.status(404).json({ error: 'Sharing is not on for this board.' })
 
-    const expiresAt = codeExpiryFrom()
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const candidate = generateCode()
-      try {
-        await run(
-          'UPDATE board_shares SET code = $1, code_expires_at = $2 WHERE id = $3',
-          candidate,
-          expiresAt,
-          share.id,
-        )
-        return res.json({ share: { id: share.id, code: candidate, codeExpiresAt: expiresAt } })
-      } catch (err) {
-        if (err.code !== '23505') throw err
-      }
-    }
-    throw new Error('could not allocate a unique join code')
-  } catch (err) {
-    next(err)
-  }
+  const expiresAt = codeExpiryFrom()
+  const code = await withFreshCode((candidate) =>
+    run(
+      'UPDATE board_shares SET code = $1, code_expires_at = $2 WHERE id = $3',
+      candidate,
+      expiresAt,
+      share.id,
+    ),
+  )
+  res.json({ share: { id: share.id, code, codeExpiresAt: expiresAt } })
 })
 
-sharesRouter.delete('/:id/share', async (req, res, next) => {
-  try {
-    if (!(await requireOwner(req, res))) return
-    await run(
-      'UPDATE board_shares SET revoked_at = $1 WHERE board_id = $2 AND revoked_at IS NULL',
-      Date.now(),
-      req.params.id,
-    )
-    res.status(204).end()
-  } catch (err) {
-    next(err)
-  }
+sharesRouter.delete('/:id/share', async (req, res) => {
+  if (!(await requireOwner(req, res))) return
+  await run(
+    'UPDATE board_shares SET revoked_at = $1 WHERE board_id = $2 AND revoked_at IS NULL',
+    Date.now(),
+    req.params.id,
+  )
+  res.status(204).end()
 })
 
-sharesRouter.get('/:id/members', async (req, res, next) => {
-  try {
-    if (!(await requireOwner(req, res))) return
-    const rows = await all(
-      `SELECT u.id, u.email, m.joined_at
-         FROM board_members m
-         JOIN users u ON u.id = m.user_id
-        WHERE m.board_id = $1
-        ORDER BY m.joined_at ASC`,
-      req.params.id,
-    )
-    res.json({
-      members: rows.map((r) => ({ id: r.id, email: r.email, joinedAt: r.joined_at })),
-    })
-  } catch (err) {
-    next(err)
-  }
+sharesRouter.get('/:id/members', async (req, res) => {
+  if (!(await requireOwner(req, res))) return
+  const rows = await all(
+    `SELECT u.id, u.email, m.joined_at
+       FROM board_members m
+       JOIN users u ON u.id = m.user_id
+      WHERE m.board_id = $1
+      ORDER BY m.joined_at ASC`,
+    req.params.id,
+  )
+  res.json({
+    members: rows.map((r) => ({ id: r.id, email: r.email, joinedAt: r.joined_at })),
+  })
 })
 
 /** Removing a member also throws them out of the room, on every instance. */
-sharesRouter.delete('/:id/members/:userId', async (req, res, next) => {
-  try {
-    if (!(await requireOwner(req, res))) return
-    const { changes } = await run(
-      'DELETE FROM board_members WHERE board_id = $1 AND user_id = $2',
-      req.params.id,
-      req.params.userId,
-    )
-    if (changes === 0) return res.status(404).json({ error: 'That person is not on this board.' })
-    publish(req.params.id, { type: 'evict', userId: req.params.userId })
-    res.status(204).end()
-  } catch (err) {
-    next(err)
-  }
+sharesRouter.delete('/:id/members/:userId', async (req, res) => {
+  if (!(await requireOwner(req, res))) return
+  const { changes } = await run(
+    'DELETE FROM board_members WHERE board_id = $1 AND user_id = $2',
+    req.params.id,
+    req.params.userId,
+  )
+  if (changes === 0) return res.status(404).json({ error: 'That person is not on this board.' })
+  publish(req.params.id, { type: 'evict', userId: req.params.userId })
+  res.status(204).end()
 })
 
 /**
@@ -236,29 +185,17 @@ sharesRouter.delete('/:id/members/:userId', async (req, res, next) => {
  * The relay enforces it independently — this message updates the display, it is
  * not what makes the lock real.
  */
-sharesRouter.patch('/:id/lock', async (req, res, next) => {
-  try {
-    if (!(await requireOwner(req, res))) return
-    if (typeof req.body?.locked !== 'boolean')
-      throw new BadRequest('Say whether editing is locked.', 'locked')
+sharesRouter.patch('/:id/lock', async (req, res) => {
+  if (!(await requireOwner(req, res))) return
+  if (typeof req.body?.locked !== 'boolean')
+    throw new BadRequest('Say whether editing is locked.', 'locked')
 
-    const locked = req.body.locked
-    await run('UPDATE boards SET members_can_edit = $1 WHERE id = $2', !locked, req.params.id)
-    publish(req.params.id, { type: 'lock', locked })
-    res.json({ locked })
-  } catch (err) {
-    next(err)
-  }
+  const locked = req.body.locked
+  await run('UPDATE boards SET members_can_edit = $1 WHERE id = $2', !locked, req.params.id)
+  publish(req.params.id, { type: 'lock', locked })
+  res.json({ locked })
 })
 
-/**
- * Redeem a link.
- *
- * Rate-limited per IP, because guessing a share token is credential-guessing
- * and deserves the same treatment as guessing a password. Every failure mode
- * returns one message, so the endpoint cannot be used to tell an unknown token
- * from a revoked one.
- */
 /** Shared by both ways in: whoever is asking becomes a member of `share`. */
 async function admit(share, user) {
   // Owners and existing members redeem harmlessly: joining twice is the same
@@ -278,29 +215,41 @@ async function admit(share, user) {
   return { id: share.board_id, name: share.name }
 }
 
-redeemRouter.post('/:token/redeem', async (req, res, next) => {
-  try {
-    if (!req.user) return res.status(401).json({ error: 'Sign in to open a shared board.' })
+/**
+ * Redeem a link.
+ *
+ * Rate-limited per IP, because guessing a share token is credential-guessing
+ * and deserves the same treatment as guessing a password. Every failure mode
+ * returns one message, so the endpoint cannot be used to tell an unknown token
+ * from a revoked one.
+ *
+ * **Only wrong tokens are counted**, for the reason `/join` was restructured
+ * around: an allowance is per IP, and a squad, a staff room or a school shares
+ * one address, so charging successful redeems meant the twenty-first person to
+ * open one perfectly good link was refused. Someone guessing a 32-byte token
+ * produces nothing but failures, so counting only those leaves the guessing
+ * protection exactly as strict and costs a real room nothing.
+ */
+redeemRouter.post('/:token/redeem', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Sign in to open a shared board.' })
 
+  const share = await get(
+    `SELECT s.id, s.board_id, b.name
+       FROM board_shares s
+       JOIN boards b ON b.id = s.board_id
+      WHERE s.token_hash = $1 AND s.revoked_at IS NULL`,
+    digest(String(req.params.token)),
+  )
+  if (!share) {
     await consume(`share:${req.clientIp}`, {
       max: 20,
       windowMs: 10 * 60 * 1000,
       message: 'Too many attempts from this network. Try again shortly.',
     })
-
-    const share = await get(
-      `SELECT s.id, s.board_id, b.name
-         FROM board_shares s
-         JOIN boards b ON b.id = s.board_id
-        WHERE s.token_hash = $1 AND s.revoked_at IS NULL`,
-      digest(String(req.params.token)),
-    )
-    if (!share) return res.status(404).json({ error: 'That link is not valid any more.' })
-
-    res.json({ board: await admit(share, req.user) })
-  } catch (err) {
-    next(err)
+    return res.status(404).json({ error: 'That link is not valid any more.' })
   }
+
+  res.json({ board: await admit(share, req.user) })
 })
 
 /**
@@ -313,51 +262,67 @@ redeemRouter.post('/:token/redeem', async (req, res, next) => {
  * counted in Postgres, so it holds across API instances rather than being
  * resettable by landing on a different one.
  *
+ * **Only wrong codes are counted.** Counting successes too made the limit fire
+ * on the exact case it exists to serve: a squad in one room shares one address,
+ * so the tenth player to type a perfectly good code was turned away for ten
+ * minutes. Someone searching the space only ever produces failures, so counting
+ * those alone leaves the guessing protection exactly as strict while a room
+ * full of people joining costs nothing.
+ *
  * A malformed code is rejected before the database is touched, but *after* the
  * limiter has counted it, so mashing the keyboard is not a free way to probe.
  */
-redeemRouter.post('/join', async (req, res, next) => {
-  try {
-    if (!req.user) return res.status(401).json({ error: 'Sign in to join a board.' })
+redeemRouter.post('/join', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Sign in to join a board.' })
 
-    await consume(`join:${req.clientIp}`, {
+  const code = normalizeCode(req.body?.code)
+
+  // Counting happens on the failure paths, and throws once the allowance is
+  // spent, so a guesser is cut off and a joiner never is.
+  const charge = () =>
+    consume(`join:${req.clientIp}`, {
       max: 10,
       windowMs: 10 * 60 * 1000,
       message: 'Too many attempts from this network. Try again shortly.',
     })
 
-    const code = normalizeCode(req.body?.code)
-    // One message for every failure, so this cannot be used to tell a wrong
-    // code from a well-formed code for a board that does not exist.
-    const wrong = () => res.status(404).json({ error: 'That code is not valid. Check it and try again.' })
-    if (!code) return wrong()
-
-    const share = await get(
-      `SELECT s.id, s.board_id, s.code_expires_at, b.name
-         FROM board_shares s
-         JOIN boards b ON b.id = s.board_id
-        WHERE s.code = $1 AND s.revoked_at IS NULL`,
-      code,
-    )
-    if (!share) return wrong()
-
-    /**
-     * An expired code is called expired, unlike a wrong one.
-     *
-     * This does leak one bit — that a given string was a real code once — but
-     * the string is useless by then, and a live code is still never
-     * distinguishable from a wrong one. Weighed against telling someone whose
-     * session ran over "that code is not valid" when it plainly was, and
-     * sending them to check for a typo that is not there, the bit is worth it.
-     */
-    if (Number(share.code_expires_at) <= Date.now()) {
-      return res
-        .status(410)
-        .json({ error: 'That code has expired. Ask for the new one and try again.' })
-    }
-
-    res.json({ board: await admit(share, req.user) })
-  } catch (err) {
-    next(err)
+  // One message for every failure, so this cannot be used to tell a wrong code
+  // from a well-formed code for a board that does not exist.
+  const wrong = async () => {
+    await charge()
+    return res.status(404).json({ error: 'That code is not valid. Check it and try again.' })
   }
+  if (!code) return await wrong()
+
+  const share = await get(
+    `SELECT s.id, s.board_id, s.code_expires_at, b.name
+       FROM board_shares s
+       JOIN boards b ON b.id = s.board_id
+      WHERE s.code = $1 AND s.revoked_at IS NULL`,
+    code,
+  )
+  if (!share) return await wrong()
+
+  /**
+   * An expired code is called expired, unlike a wrong one.
+   *
+   * This does leak one bit — that a given string was a real code once — but
+   * the string is useless by then, and a live code is still never
+   * distinguishable from a wrong one. Weighed against telling someone whose
+   * session ran over "that code is not valid" when it plainly was, and
+   * sending them to check for a typo that is not there, the bit is worth it.
+   *
+   * It is charged the allowance all the same. That one bit is exactly what a
+   * search wants, so landing on a code that was real once has to cost the same
+   * as landing on one that never was; otherwise the informative answer is the
+   * free one, and expired rows accumulate as a growing set of free hits.
+   */
+  if (Number(share.code_expires_at) <= Date.now()) {
+    await charge()
+    return res
+      .status(410)
+      .json({ error: 'That code has expired. Ask for the new one and try again.' })
+  }
+
+  res.json({ board: await admit(share, req.user) })
 })

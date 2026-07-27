@@ -1,8 +1,8 @@
 /*
   FootyBoard visual language: "floodlit".
-  Near-black ground, one signal green, and the turf as the only other colour.
-  The green is the pitch's own colour pushed to a floodlit intensity, so the
-  accent belongs to football rather than to generic AI-product neon.
+  Near-black ground, one signal green, and the two team colours as the only
+  others. The green is the pitch's own colour pushed to a floodlit intensity,
+  so the accent belongs to football rather than to generic AI-product neon.
 
   Palette colours are stored as space-separated RGB channels so Tailwind's
   opacity modifiers (bg-surface/95, border-accent/40) resolve to valid
@@ -34,31 +34,20 @@
   --accent-glow: rgba(42, 224, 122, 0.32);
 
   /* Teams: still separable on a dark ground, still colour-blind safe */
-  --turf: 26 46 34;
   --home: 232 92 66;
   --away: 82 154 224;
-
-  /* Canvas-only colours consumed directly by Konva as concrete values */
-  --pitch: #070b08;
-  --pitch-line: #dfe9e2;
-  --turf-line: rgba(223, 233, 226, 0.85);
 
   /* Varied radii, not one uniform value */
   --r-sm: 3px;
   --r-md: 6px;
   --r-lg: 12px;
 
-  /* Elevation: depth from black, with one restrained green lift for the CTA */
+  /* Elevation: depth from black */
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
   --shadow-2: 0 18px 40px -18px rgba(0, 0, 0, 0.9);
-  --shadow-accent: 0 10px 30px -10px var(--accent-glow);
 
-  /* Motion */
+  /* Motion. Framer Motion's half of this lives in theme/motion.ts. */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  --dur-fast: 130ms;
-  --dur: 240ms;
-  --dur-slow: 460ms;
 }
 
 html,
@@ -94,7 +83,9 @@ option {
   color: rgb(var(--ink));
 }
 
-/* Every interactive element gets a real press response. */
+/* Anything the browser is animating for us stops here. This reaches CSS
+   animations and transitions only; the app's Framer Motion work is covered
+   separately by <MotionConfig reducedMotion="user"> in App.tsx. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -102,5 +93,20 @@ option {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Contrast. The micro-labels are the reason this block exists: --ink-3 on
+   --paper measures 4.46:1, which is under the 4.5:1 AA floor, and it is the
+   colour of nearly every 10px and 11px label in the product. Asked for more,
+   lift the two secondary inks and the hairline rather than flattening
+   everything to white, so the hierarchy survives the change: the values below
+   take --ink-3 to 9.1:1 and --rule from 1.39:1 to 3.21:1, which is the bar for
+   a line that carries meaning. */
+@media (prefers-contrast: more) {
+  :root {
+    --ink-2: 205 212 207;
+    --ink-3: 168 178 171;
+    --rule: 88 100 92;
   }
 }

@@ -1,2 +1,7 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Normalize line endings: LF in the repo, checked out as-is.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.woff binary
+*.woff2 binary
+*.svg text eol=lf

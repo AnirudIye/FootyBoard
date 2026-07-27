@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID, scrypt, timingSafeEqual, createHash } from 'node:crypto'
 import { promisify } from 'node:util'
 import { get, run } from './db.js'
+import { isProduction } from './env.js'
 
 const scryptAsync = promisify(scrypt)
 
@@ -74,27 +75,24 @@ export async function destroySession(token) {
 
 export const COOKIE_NAME = 'sb_session'
 
-export function sessionCookie(token, { secure }) {
-  const parts = [
-    `${COOKIE_NAME}=${token}`,
-    'Path=/',
-    'HttpOnly', // unreadable from JavaScript, so XSS cannot lift it
-    'SameSite=Lax', // blocks the cookie on cross-site form posts
-    `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
-  ]
-  if (secure) parts.push('Secure')
-  return parts.join('; ')
+/**
+ * How the session cookie is set, and cleared, everywhere it is.
+ *
+ * One object rather than a string built per route, so setting and clearing
+ * cannot drift: a cleared cookie only actually replaces the live one when every
+ * attribute matches, and a `Secure` that appears on the way in but not on the
+ * way out leaves a signed-out browser still holding a session cookie.
+ *
+ * `secure` follows APP_ENV, not the absence of one. Spread `maxAge` on at the
+ * call site that is setting a session; leaving it off is what `clearCookie`
+ * wants.
+ */
+export const SESSION_COOKIE = {
+  httpOnly: true, // unreadable from JavaScript, so XSS cannot lift it
+  sameSite: 'lax', // blocks the cookie on cross-site form posts
+  path: '/',
+  secure: isProduction,
 }
-
-export const clearedCookie = ({ secure }) =>
-  [
-    `${COOKIE_NAME}=`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-    'Max-Age=0',
-    ...(secure ? ['Secure'] : []),
-  ].join('; ')
 
 /** Minimal cookie parser — we only ever need our own key. */
 export function readCookie(header, name) {

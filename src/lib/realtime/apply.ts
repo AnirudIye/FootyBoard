@@ -58,9 +58,6 @@ export function applyOp(state: BoardSlice, op: EntityOp): Partial<BoardSlice> {
           drawings: state.drawings.map((d) => (d.id === op.id ? { ...d, ...op.patch } : d)),
         }
       }
-      if (op.entity === 'team') {
-        return { teams: state.teams.map((t) => (t.id === op.id ? { ...t, ...op.patch } : t)) }
-      }
       return { frames: state.frames.map((f) => (f.id === op.id ? { ...f, ...op.patch } : f)) }
     }
 
@@ -72,10 +69,6 @@ export function applyOp(state: BoardSlice, op: EntityOp): Partial<BoardSlice> {
           return state.tokens.some((t) => t.id === op.item.id)
             ? {}
             : { tokens: [...state.tokens, op.item] }
-        case 'bench':
-          return state.bench.some((t) => t.id === op.item.id)
-            ? {}
-            : { bench: [...state.bench, op.item] }
         case 'drawing':
           return state.drawings.some((d) => d.id === op.item.id)
             ? {}

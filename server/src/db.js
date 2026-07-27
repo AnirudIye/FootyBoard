@@ -1,5 +1,5 @@
 import pg from 'pg'
-import { generateCode, codeExpiryFrom } from './joinCode.js'
+import { codeExpiryFrom, withFreshCode } from './joinCode.js'
 
 /**
  * Postgres, reached through a connection pool.
@@ -22,7 +22,6 @@ export const pool = new Pool({
   max: Number(process.env.PG_POOL_MAX ?? 10),
   idleTimeoutMillis: 30_000, // release sockets that nobody is using
   connectionTimeoutMillis: 5_000, // fail fast rather than hanging a request
-  allowExitOnIdle: false,
 })
 
 // A pooled client can die with the server behind it; without a handler this
@@ -120,6 +119,15 @@ async function applySchema(client) {
       joined_at TEXT NOT NULL,
       PRIMARY KEY (board_id, user_id)
     );
+
+    -- One row per person who has agreed to the assistant's online fallback.
+    -- The panel asks, but a promise the browser keeps is not a consent basis:
+    -- the record of the grant has to survive the person clearing site data,
+    -- and the server has to be the thing that refuses without it.
+    CREATE TABLE IF NOT EXISTS assistant_consents (
+      user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      granted_at TEXT NOT NULL
+    );
   `)
 
   // Whether members may edit is a property of the board, not of the person, so
@@ -144,13 +152,14 @@ async function applySchema(client) {
 
   await backfillJoinCodes(client)
 
-  // Indexes cover every column we filter, join, or sort on.
+  // Indexes cover every column a request filters, joins, or sorts on. The one
+  // deliberate exception is the hourly allowance sweep below, which scans a
+  // table holding roughly one row per address seen in the last hour.
   await client.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email    ON users(email);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash);
     CREATE INDEX        IF NOT EXISTS idx_sessions_user  ON sessions(user_id);
     CREATE INDEX        IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
-    CREATE INDEX        IF NOT EXISTS idx_attempts_locked ON login_attempts(locked_until);
 
     -- Looked up on every reset attempt, so it must not be a sequential scan.
     CREATE UNIQUE INDEX IF NOT EXISTS idx_resets_token  ON password_resets(token_hash);
@@ -176,7 +185,17 @@ async function applySchema(client) {
     -- (user_id, board_id) serves both callers: the board list filters by user,
     -- and the access check looks up the pair.
     CREATE INDEX IF NOT EXISTS idx_members_user ON board_members(user_id, board_id);
+
+    -- The member list filters by board and sorts by join order, which the index
+    -- above cannot serve in that direction.
+    CREATE INDEX IF NOT EXISTS idx_members_board_joined
+      ON board_members(board_id, joined_at);
   `)
+
+  // Every rate-limit query reaches this table by primary key, so an index on
+  // locked_until was only ever write amplification. Dropped rather than left
+  // behind, since installs that already ran the old migration still have it.
+  await client.query('DROP INDEX IF EXISTS idx_attempts_locked;')
 }
 
 /**
@@ -197,18 +216,13 @@ async function backfillJoinCodes(client) {
   )
 
   for (const row of rows) {
-    // Retry on the unique index rather than checking first, which would race.
-    for (let attempt = 0; attempt < 5; attempt++) {
-      try {
-        await client.query(
-          'UPDATE board_shares SET code = $1, code_expires_at = $2 WHERE id = $3',
-          [generateCode(), codeExpiryFrom(), row.id],
-        )
-        break
-      } catch (err) {
-        if (err.code !== '23505') throw err
-      }
-    }
+    await withFreshCode((code) =>
+      client.query('UPDATE board_shares SET code = $1, code_expires_at = $2 WHERE id = $3', [
+        code,
+        codeExpiryFrom(),
+        row.id,
+      ]),
+    )
   }
 }
 
@@ -241,6 +255,33 @@ export async function transaction(fn) {
 
 export async function purgeExpiredSessions() {
   const { changes } = await run('DELETE FROM sessions WHERE expires_at <= $1', Date.now())
+  return changes
+}
+
+/** Comfortably longer than the longest window any limiter uses (one hour). */
+const ALLOWANCE_RETENTION_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Sweep allowances nothing can still be counting.
+ *
+ * Several limiters are keyed on values a stranger chooses — an address typed
+ * into "forgot password", an IP, a user id — so without a sweep the table only
+ * ever grows, one row per distinct value anyone ever sent. A row this old is
+ * already dead: every limiter that reads it treats a window this stale as
+ * expired and starts the count again from one, so deleting it changes no
+ * decision, it just stops the table carrying the history.
+ *
+ * `account:` is the exception, and is left alone deliberately. Its counter has
+ * no rolling window: it resets by serving a lockout, not by going quiet, so
+ * deleting a stale row there would hand back attempts the limiter is still
+ * withholding.
+ */
+export async function purgeStaleAllowances() {
+  const { changes } = await run(
+    `DELETE FROM login_attempts
+      WHERE key NOT LIKE 'account:%' AND last_attempt < $1`,
+    Date.now() - ALLOWANCE_RETENTION_MS,
+  )
   return changes
 }
 

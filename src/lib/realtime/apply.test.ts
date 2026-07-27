@@ -80,11 +80,6 @@ describe('patch', () => {
   it('drops an op for a drawing that no longer exists', () => {
     expect(applyOp(board(), { type: 'patch', entity: 'drawing', id: 'gone', patch: { color: '#fff' } })).toEqual({})
   })
-
-  it('patches a team', () => {
-    const next = applyOp(board(), { type: 'patch', entity: 'team', id: 'home', patch: { name: 'City' } })
-    expect(next.teams?.find((t) => t.id === 'home')?.name).toBe('City')
-  })
 })
 
 describe('add', () => {

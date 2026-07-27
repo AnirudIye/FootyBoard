@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { clamp, lerp, roundTo } from './math'
+import { clamp, lerp } from './math'
 
 describe('math', () => {
   it('clamps into range', () => {
@@ -11,9 +11,5 @@ describe('math', () => {
     expect(lerp(0, 10, 0)).toBe(0)
     expect(lerp(0, 10, 1)).toBe(10)
     expect(lerp(0, 10, 0.5)).toBe(5)
-  })
-  it('rounds to a step', () => {
-    expect(roundTo(7, 5)).toBe(5)
-    expect(roundTo(8, 5)).toBe(10)
   })
 })

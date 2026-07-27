@@ -1,29 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import {
-  normToPx,
-  pxToNorm,
-  clampNorm,
-  dist,
-  arrowHead,
-  quadraticPoints,
-  pointNearSegment,
-  bboxOf,
-} from './geometry'
-
-const box = { x: 100, y: 50, w: 1000, h: 600 }
+import { clampNorm, dist, arrowHead, quadraticPoints, bboxOf } from './geometry'
 
 describe('geometry', () => {
-  it('maps norm to px within the box', () => {
-    expect(normToPx(0, 0, box)).toEqual({ x: 100, y: 50 })
-    expect(normToPx(100, 100, box)).toEqual({ x: 1100, y: 650 })
-    expect(normToPx(50, 50, box)).toEqual({ x: 600, y: 350 })
-  })
-  it('round-trips px<->norm', () => {
-    const p = normToPx(37, 82, box)
-    const n = pxToNorm(p.x, p.y, box)
-    expect(n.x).toBeCloseTo(37)
-    expect(n.y).toBeCloseTo(82)
-  })
   it('clamps norm coordinates to 0..100', () => {
     expect(clampNorm(-5, 120)).toEqual({ x: 0, y: 100 })
   })
@@ -74,21 +52,6 @@ describe('quadraticPoints', () => {
 
   it('emits the requested number of samples', () => {
     expect(quadraticPoints(0, 0, 5, 5, 10, 0, 8)).toHaveLength((8 + 1) * 2)
-  })
-})
-
-describe('pointNearSegment', () => {
-  it('accepts a point sitting on the segment', () => {
-    expect(pointNearSegment(50, 0, 0, 0, 100, 0, 2)).toBe(true)
-  })
-  it('accepts a point just off the segment within tolerance', () => {
-    expect(pointNearSegment(50, 1.5, 0, 0, 100, 0, 2)).toBe(true)
-  })
-  it('rejects a point beyond tolerance', () => {
-    expect(pointNearSegment(50, 20, 0, 0, 100, 0, 2)).toBe(false)
-  })
-  it('rejects a point past the end of the segment', () => {
-    expect(pointNearSegment(200, 0, 0, 0, 100, 0, 2)).toBe(false)
   })
 })
 

@@ -54,8 +54,18 @@ export function validateAcceptedTerms(value) {
   return true
 }
 
+/**
+ * A missing name is a bad request, not a name.
+ *
+ * This used to default to 'Untitled board', which reads as a kindness until you
+ * notice which callers reach it: `PATCH /api/boards/:id` exists only to rename,
+ * so an empty body meant the owner's title was silently replaced with the
+ * default and answered 200. The one caller that genuinely wants a fallback is
+ * board creation, and it now supplies its own.
+ */
 export function validateBoardName(raw) {
-  const name = requireString(raw ?? 'Untitled board', 'name')
+  if (raw === undefined || raw === null) throw new BadRequest('Give the board a name.', 'name')
+  const name = requireString(raw, 'name')
   if (!name) throw new BadRequest('Give the board a name.', 'name')
   if (name.length > MAX_NAME) throw new BadRequest('That board name is too long.', 'name')
   return name
@@ -67,13 +77,10 @@ export function validateBoardName(raw) {
  */
 export function validateBoardData(value) {
   if (value === undefined || value === null) throw new BadRequest('The board is missing.', 'data')
-  let text
-  try {
-    text = JSON.stringify(value)
-  } catch {
-    throw new BadRequest('That board could not be read.', 'data')
-  }
-  if (text === undefined) throw new BadRequest('That board could not be read.', 'data')
+  // Whatever this is, it came back out of express.json(), so it is already a
+  // JSON value: nothing here can be circular, and nothing can serialise to
+  // undefined once null has been turned away above.
+  const text = JSON.stringify(value)
   if (Buffer.byteLength(text, 'utf8') > MAX_BOARD_BYTES)
     throw new BadRequest('That board is too large to save.', 'data')
   return text

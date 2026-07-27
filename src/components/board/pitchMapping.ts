@@ -1,5 +1,6 @@
 import type { PitchView, PitchKind } from '../../lib/types'
 import type { PitchBox } from '../../lib/geometry'
+import { lerp } from '../../lib/math'
 
 // Real pitch dimensions in metres (length x width).
 const DIMS: Record<PitchKind, { L: number; W: number }> = {
@@ -26,11 +27,8 @@ export interface PitchMapping {
   ppm: number // pixels per metre (equal on both axes)
   L: number
   W: number
-  domainStartM: number
   view: PitchView
   kind: PitchKind
-  /** Map a point given in absolute metres (alongLength, alongWidth) to pixels. */
-  m2px: (lengthM: number, widthM: number) => { x: number; y: number }
   /** Map a normalized board coordinate (0..100, 0..100) to pixels. */
   toPx: (nx: number, ny: number) => { x: number; y: number }
   /** Invert a pixel coordinate back to a normalized board coordinate. */
@@ -67,6 +65,8 @@ export function computeMapping(
   const box: PitchBox = { x: (stageW - w) / 2, y: (stageH - h) / 2, w, h }
   const ppm = orientation === 'h' ? box.w / drawnLength : box.h / drawnLength
 
+  // Absolute metres to pixels. Everything on the board is positioned in
+  // normalized units, so this stays inside the module.
   const m2px = (lengthM: number, widthM: number) =>
     orientation === 'h'
       ? { x: box.x + (lengthM - domainStartM) * ppm, y: box.y + widthM * ppm }
@@ -94,16 +94,12 @@ export function computeMapping(
     ppm,
     L,
     W,
-    domainStartM,
     view,
     kind,
-    m2px,
     toPx,
     toNorm,
   }
 }
-
-const mix = (a: number, b: number, t: number) => a + (b - a) * t
 
 /**
  * Blend two mappings by interpolating the pixel positions they produce. Because
@@ -117,22 +113,17 @@ export function blendMappings(a: PitchMapping, b: PitchMapping, t: number): Pitc
   return {
     ...b,
     box: {
-      x: mix(a.box.x, b.box.x, t),
-      y: mix(a.box.y, b.box.y, t),
-      w: mix(a.box.w, b.box.w, t),
-      h: mix(a.box.h, b.box.h, t),
+      x: lerp(a.box.x, b.box.x, t),
+      y: lerp(a.box.y, b.box.y, t),
+      w: lerp(a.box.w, b.box.w, t),
+      h: lerp(a.box.h, b.box.h, t),
     },
-    orientDeg: mix(a.orientDeg, b.orientDeg, t),
-    ppm: mix(a.ppm, b.ppm, t),
-    m2px: (lengthM, widthM) => {
-      const pa = a.m2px(lengthM, widthM)
-      const pb = b.m2px(lengthM, widthM)
-      return { x: mix(pa.x, pb.x, t), y: mix(pa.y, pb.y, t) }
-    },
+    orientDeg: lerp(a.orientDeg, b.orientDeg, t),
+    ppm: lerp(a.ppm, b.ppm, t),
     toPx: (nx, ny) => {
       const pa = a.toPx(nx, ny)
       const pb = b.toPx(nx, ny)
-      return { x: mix(pa.x, pb.x, t), y: mix(pa.y, pb.y, t) }
+      return { x: lerp(pa.x, pb.x, t), y: lerp(pa.y, pb.y, t) }
     },
     toNorm: b.toNorm,
   }

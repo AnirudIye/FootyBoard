@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { get, run } from './db.js'
 
 /**
@@ -20,6 +21,13 @@ const IP_WINDOW_MS = 10 * 60 * 1000
 
 const MIN_GAP_MS = 500
 
+/**
+ * The account counter has no rolling window: it is reset by serving a lockout,
+ * never by going quiet. Passing a span nothing can outlast says that in the
+ * one statement below without giving it a second shape.
+ */
+const NEVER_STALE_MS = Number.MAX_SAFE_INTEGER
+
 export class TooManyRequests extends Error {
   constructor(message, retryAfterSeconds) {
     super(message)
@@ -33,25 +41,77 @@ const readRecord = (key) =>
   get('SELECT key, count, locked_until, last_attempt FROM login_attempts WHERE key = $1', key)
 
 /**
- * One statement per update. Doing this as read-then-write would let two
- * instances interleave and lose a failure; the upsert makes each increment
- * atomic no matter how many processes are counting.
+ * The whole read-modify-write, as one statement.
+ *
+ * This used to be a SELECT, a decision in JavaScript, and an upsert that set
+ * `count = EXCLUDED.count`. That is not an increment, it is last-writer-wins:
+ * a hundred requests arriving together all read count 0 and all wrote 1, so an
+ * allowance of ten never fired however hard it was hit. Which mattered, because
+ * this limiter is the entire defence for a six-letter join code — the thing it
+ * was least able to survive was exactly the parallel guessing it exists to stop.
+ *
+ * So the counter is `login_attempts.count + 1` evaluated by Postgres, and every
+ * decision that used to live in JavaScript lives in the CASE arms:
+ *
+ *  - a held lockout leaves the row completely alone, count and clock alike, so
+ *    being refused does not push the window out in front of the caller;
+ *  - a window that has rolled over starts again at one;
+ *  - anything else counts up, and trips the lock as it crosses the limit.
+ *
+ * `ON CONFLICT DO UPDATE` is what makes it atomic: a second writer landing on
+ * the same key waits for the first to commit and then re-evaluates the arms
+ * against the row it actually left behind, rather than the one it read earlier.
+ *
+ * `hold` is the difference between the two callers. A limiter that turns people
+ * away holds the row still while it does; the login recorder always counts,
+ * because the caller in front of it has already been refused by
+ * `assertMayAttempt` before it gets here.
  */
-const writeRecord = (key, count, lockedUntil, lastAttempt) =>
-  run(
-    `INSERT INTO login_attempts (key, count, locked_until, last_attempt)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (key) DO UPDATE SET
-       count        = EXCLUDED.count,
-       locked_until = EXCLUDED.locked_until,
-       last_attempt = EXCLUDED.last_attempt`,
-    key,
-    count,
-    lockedUntil,
-    lastAttempt,
-  )
+const BUMP_SQL = `
+  INSERT INTO login_attempts AS a (key, count, locked_until, last_attempt)
+  VALUES ($1, 1, CASE WHEN 1 >= $4::int THEN $2::bigint + $5::bigint ELSE 0 END, $2::bigint)
+  ON CONFLICT (key) DO UPDATE SET
+    count = CASE
+      WHEN $6::boolean AND a.locked_until > $2::bigint            THEN a.count
+      WHEN a.locked_until > 0 AND a.locked_until <= $2::bigint    THEN 1
+      WHEN $2::bigint - a.last_attempt > $3::bigint               THEN 1
+      ELSE a.count + 1
+    END,
+    locked_until = CASE
+      WHEN $6::boolean AND a.locked_until > $2::bigint            THEN a.locked_until
+      WHEN (CASE
+              WHEN a.locked_until > 0 AND a.locked_until <= $2::bigint THEN 1
+              WHEN $2::bigint - a.last_attempt > $3::bigint            THEN 1
+              ELSE a.count + 1
+            END) >= $4::int                                       THEN $2::bigint + $5::bigint
+      ELSE 0
+    END,
+    last_attempt = CASE
+      WHEN $6::boolean AND a.locked_until > $2::bigint            THEN a.last_attempt
+      ELSE $2::bigint
+    END
+  RETURNING a.count, a.locked_until`
+
+const bump = (key, { now, staleAfterMs, max, lockoutMs, hold }) =>
+  get(BUMP_SQL, key, now, staleAfterMs, max, lockoutMs, hold)
 
 const secondsUntil = (timestamp) => Math.max(1, Math.ceil((timestamp - Date.now()) / 1000))
+
+/**
+ * Per-address allowances are keyed on a digest of the address, never on the
+ * address itself.
+ *
+ * `forgot:` counts something taken straight out of an unauthenticated request
+ * body. Writing that in verbatim turns a counting table into an unbounded set
+ * of arbitrary strings and, worse, a list of the addresses strangers have been
+ * asking about. The digest counts exactly as well and records neither.
+ */
+export const addressKey = (prefix, email) =>
+  `${prefix}:${createHash('sha256').update(email).digest('hex')}`
+
+/** Hands an allowance back, for when the thing it was guarding has happened. */
+export const clearAllowance = (key) =>
+  run('DELETE FROM login_attempts WHERE key = $1', key)
 
 /**
  * Throws if this address or IP may not attempt a sign-in right now. Checked
@@ -83,36 +143,48 @@ export async function assertMayAttempt({ email, ip }) {
 export async function recordFailure({ email, ip }) {
   const now = Date.now()
 
-  const account = await readRecord(`account:${email}`)
-  const accountCount = account && Number(account.locked_until) <= now ? account.count + 1 : 1
-  await writeRecord(
-    `account:${email}`,
-    accountCount,
-    accountCount >= MAX_ACCOUNT_ATTEMPTS ? now + ACCOUNT_LOCKOUT_MS : 0,
+  // A lockout that has been served starts the count over. Carrying it forward
+  // meant the sixth failure was still >= the limit, so one wrong password every
+  // fifteen minutes re-locked the account indefinitely: a user who mistyped
+  // once after waiting was locked out again, and anyone who knew an address
+  // could hold it shut for good.
+  await bump(`account:${email}`, {
     now,
-  )
+    staleAfterMs: NEVER_STALE_MS,
+    max: MAX_ACCOUNT_ATTEMPTS,
+    lockoutMs: ACCOUNT_LOCKOUT_MS,
+    hold: false,
+  })
 
-  const perIp = await readRecord(`ip:${ip}`)
   // The IP window rolls: a quiet period resets the count rather than banking it.
-  const stale = !perIp || now - Number(perIp.last_attempt) > IP_WINDOW_MS
-  const ipCount = stale ? 1 : perIp.count + 1
-  await writeRecord(`ip:${ip}`, ipCount, ipCount >= MAX_IP_ATTEMPTS ? now + IP_WINDOW_MS : 0, now)
+  await bump(`ip:${ip}`, {
+    now,
+    staleAfterMs: IP_WINDOW_MS,
+    max: MAX_IP_ATTEMPTS,
+    lockoutMs: IP_WINDOW_MS,
+    hold: false,
+  })
 }
 
 export const clearFailures = ({ email }) =>
   run('DELETE FROM login_attempts WHERE key = $1', `account:${email}`)
 
-/** Generic limiter for non-auth routes, keyed however the caller likes. */
+/**
+ * Generic limiter for non-auth routes, keyed however the caller likes.
+ *
+ * One round trip, and the row that comes back is the one that was actually
+ * written, so "did this attempt trip the limit" and "was it already tripped"
+ * are the same question: a lock in the future means turn them away.
+ */
 export async function consume(key, { max, windowMs, message }) {
   const now = Date.now()
-  const record = await readRecord(key)
-  const stale = !record || now - Number(record.last_attempt) > windowMs
-  const count = stale ? 1 : record.count + 1
-
-  if (!stale && Number(record.locked_until) > now) {
-    throw new TooManyRequests(message, secondsUntil(Number(record.locked_until)))
-  }
-
-  await writeRecord(key, count, count >= max ? now + windowMs : 0, now)
-  if (count >= max) throw new TooManyRequests(message, Math.ceil(windowMs / 1000))
+  const record = await bump(key, {
+    now,
+    staleAfterMs: windowMs,
+    max,
+    lockoutMs: windowMs,
+    hold: true,
+  })
+  const lockedUntil = Number(record.locked_until)
+  if (lockedUntil > now) throw new TooManyRequests(message, secondsUntil(lockedUntil))
 }

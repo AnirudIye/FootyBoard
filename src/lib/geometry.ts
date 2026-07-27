@@ -7,16 +7,6 @@ export interface PitchBox {
   h: number
 }
 
-export const normToPx = (nx: number, ny: number, b: PitchBox) => ({
-  x: b.x + (nx / 100) * b.w,
-  y: b.y + (ny / 100) * b.h,
-})
-
-export const pxToNorm = (px: number, py: number, b: PitchBox) => ({
-  x: ((px - b.x) / b.w) * 100,
-  y: ((py - b.y) / b.h) * 100,
-})
-
 export const clampNorm = (nx: number, ny: number) => ({
   x: clamp(nx, 0, 100),
   y: clamp(ny, 0, 100),
@@ -70,25 +60,6 @@ export function quadraticPoints(
     )
   }
   return out
-}
-
-/** Whether (px,py) lies within `tolerance` of the segment a-b. */
-export function pointNearSegment(
-  px: number,
-  py: number,
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number,
-  tolerance: number,
-): boolean {
-  const dx = bx - ax
-  const dy = by - ay
-  const lenSq = dx * dx + dy * dy
-  if (lenSq === 0) return dist(px, py, ax, ay) <= tolerance
-  // Project onto the segment, clamped so the ends do not extend forever.
-  const t = clamp(((px - ax) * dx + (py - ay) * dy) / lenSq, 0, 1)
-  return dist(px, py, ax + t * dx, ay + t * dy) <= tolerance
 }
 
 /** Axis-aligned bounds of a flat [x,y,...] point list. */

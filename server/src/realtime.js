@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import pg from 'pg'
 import { accessFor } from './access.js'
 import { userForToken, readCookie, COOKIE_NAME } from './auth.js'
+import { isAllowedOrigin } from './env.js'
 
 /**
  * Collaborative rooms across several API instances.
@@ -23,6 +24,9 @@ const INSTANCE_ID = randomUUID()
 // NOTIFY payloads are capped at 8000 bytes. Ops are small (a token moving), so
 // anything larger is a bug or an abuse and is dropped rather than truncated.
 const MAX_PAYLOAD = 6000
+
+/** How long to wait before trying the notification bus again after it drops. */
+const LISTENER_RETRY_MS = 2000
 
 /**
  * Messages a client is never allowed to send.
@@ -76,15 +80,6 @@ export function publish(boardId, message) {
   publishFn?.(boardId, message)
 }
 
-const roomFor = (boardId) => {
-  let room = rooms.get(boardId)
-  if (!room) {
-    room = new Set()
-    rooms.set(boardId, room)
-  }
-  return room
-}
-
 function deliverLocally(boardId, message, exceptSocket) {
   const room = rooms.get(boardId)
   if (!room) return
@@ -121,15 +116,11 @@ function applyControl(boardId, message) {
 export async function attachRealtime(httpServer) {
   // LISTEN needs its own dedicated connection: a pooled client would be handed
   // back to the pool and stop receiving notifications.
-  const listener = new pg.Client({
-    connectionString:
-      process.env.DATABASE_URL ??
-      'postgres://soccerboard:soccerboard@127.0.0.1:55432/soccerboard',
-  })
-  await listener.connect()
-  await listener.query(`LISTEN ${CHANNEL}`)
+  let listener = null
+  let listenerTimer = null
+  let closing = false
 
-  listener.on('notification', (msg) => {
+  const onNotification = (msg) => {
     if (!msg.payload) return
     let parsed
     try {
@@ -141,30 +132,117 @@ export async function attachRealtime(httpServer) {
     if (parsed.from === INSTANCE_ID) return
     applyControl(parsed.boardId, parsed.message)
     deliverLocally(parsed.boardId, parsed.message, null)
+  }
+
+  /**
+   * Open the bus, and keep it open.
+   *
+   * Losing this connection is invisible from outside: the instance carries on
+   * serving HTTP and its own sockets perfectly well, and simply stops hearing
+   * every other instance. Rooms then diverge with nothing obviously wrong, so
+   * logging the error and carrying on is not an option — a Postgres restart
+   * would silently split the cluster until somebody noticed and redeployed.
+   */
+  async function openListener() {
+    const client = new pg.Client({
+      connectionString:
+        process.env.DATABASE_URL ??
+        'postgres://soccerboard:soccerboard@127.0.0.1:55432/soccerboard',
+    })
+    client.on('notification', onNotification)
+    client.on('error', (err) => {
+      console.error('LISTEN connection error:', err.message)
+      if (listener !== client) return
+      listener = null
+      client.end().catch(() => {})
+      reopenListener()
+    })
+    await client.connect()
+    await client.query(`LISTEN ${CHANNEL}`)
+    listener = client
+  }
+
+  function reopenListener() {
+    if (closing || listenerTimer) return
+    listenerTimer = setTimeout(() => {
+      listenerTimer = null
+      openListener().catch((err) => {
+        console.error('Could not reopen the LISTEN connection:', err.message)
+        reopenListener()
+      })
+    }, LISTENER_RETRY_MS)
+    listenerTimer.unref?.()
+  }
+
+  await openListener()
+
+  /**
+   * `maxPayload` is the real bound on what an unauthenticated caller can make
+   * this process hold. `ws` defaults it to 100 MiB, so the queue below capping
+   * at 32 frames was capping at 3.2 GB — the count was never the constraint,
+   * the size was. Set here, an oversized frame never reaches JavaScript at all.
+   *
+   * The origin check is the socket's half of what CORS does for REST. A
+   * handshake is not a fetch and never asks a browser's permission, so without
+   * it the only thing standing between a page on another origin and a
+   * cookie-carrying connection into someone's room is `SameSite=Lax`. What
+   * counts as allowed lives in `env.js`, next to the value the REST check uses,
+   * so the two cannot answer differently.
+   */
+  const wss = new WebSocketServer({
+    server: httpServer,
+    path: '/ws',
+    maxPayload: MAX_PAYLOAD,
+    verifyClient: ({ origin }) => isAllowedOrigin(origin),
   })
-
-  listener.on('error', (err) => console.error('LISTEN connection error:', err.message))
-
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws' })
 
   wss.on('connection', async (socket, req) => {
     /**
-     * The handshake finishes before the authorization below does, so anything
-     * the client sends the instant it connects arrives while this handler is
-     * still awaiting. Without a listener attached those messages are emitted
-     * into nothing and silently lost — which in practice means a client's first
-     * op after connecting sometimes vanishes, depending on how quickly the
-     * database answers.
+     * Everything a socket needs before it is anybody goes on synchronously,
+     * because authorization below is two database round trips and a client can
+     * connect, send, and disconnect inside them.
      *
-     * So the listener goes on synchronously and queues until the socket is
-     * authorized. The cap matters: it bounds what an unauthenticated caller can
-     * make this process hold while it is being turned away.
+     * `error`: `ws` rethrows an `error` event that has no listener, so a client
+     * that opens the socket and immediately resets the connection used to take
+     * the whole instance down with an uncaught exception.
+     *
+     * `close`: attaching this after the room was joined looked like it was
+     * enough, and was not. A client that disconnects mid-authorization has
+     * already emitted `close` by then, so the handler never ran: the dead
+     * socket stayed in `rooms` for the life of the process, was announced to
+     * every later joiner as present, and held the room's size above zero so its
+     * cached lock was never dropped. It reads `socket.boardId`, which is only
+     * set once the socket is actually in a room, so a socket turned away before
+     * that does nothing here.
+     *
+     * `message`: queued until there is somewhere to put it, or a client's first
+     * op after connecting vanishes whenever the database is a little slow. The
+     * queue is bounded by size as well as by count, because a count alone
+     * bounds nothing without `maxPayload`.
      */
+    socket.on('error', () => socket.close())
+
+    socket.on('close', () => {
+      const boardId = socket.boardId
+      if (!boardId) return
+      const room = rooms.get(boardId)
+      // `delete` reports whether it was there, which makes a second `close`
+      // event a no-op rather than a second `peer-left`.
+      if (!room?.delete(socket)) return
+      if (room.size === 0) {
+        rooms.delete(boardId)
+        // Drop the cached flag with the room, so a board whose lock changed
+        // while nobody was connected is read fresh next time.
+        membersCanEdit.delete(boardId)
+      }
+      broadcast(boardId, { type: 'peer-left', peerId: socket.peerId }, socket)
+    })
+
     let onMessage = null
     const queued = []
     socket.on('message', (raw) => {
       if (onMessage) onMessage(raw)
-      else if (queued.length < 32) queued.push(raw)
+      else if (queued.length < 32 && raw.length <= MAX_PAYLOAD) queued.push(raw)
     })
 
     try {
@@ -180,12 +258,23 @@ export async function attachRealtime(httpServer) {
       const access = await accessFor(boardId, user.id)
       if (!access.role) return socket.close(4403, 'That board is not shared with you.')
 
+      // Nobody who has already gone joins a room. The `close` handler above
+      // cannot take this socket back out if it goes in after that event has
+      // fired, so the check is here rather than left to be tidied up later.
+      if (socket.readyState !== socket.OPEN) return
+
       socket.peerId = randomUUID()
       socket.userId = user.id
       socket.userEmail = user.email
       socket.boardId = boardId
       socket.role = access.role
-      roomFor(boardId).add(socket)
+
+      let room = rooms.get(boardId)
+      if (!room) {
+        room = new Set()
+        rooms.set(boardId, room)
+      }
+      room.add(socket)
 
       // Seed the cache from the row we just read, so the first op does not have
       // to go back to the database for something we already know.
@@ -254,20 +343,6 @@ export async function attachRealtime(httpServer) {
       // sent, before any new message can overtake it.
       for (const raw of queued) onMessage(raw)
       queued.length = 0
-
-      socket.on('close', () => {
-        const room = rooms.get(boardId)
-        room?.delete(socket)
-        if (room && room.size === 0) {
-          rooms.delete(boardId)
-          // Drop the cached flag with the room, so a board whose lock changed
-          // while nobody was connected is read fresh next time.
-          membersCanEdit.delete(boardId)
-        }
-        broadcast(boardId, { type: 'peer-left', peerId: socket.peerId }, socket)
-      })
-
-      socket.on('error', () => socket.close())
     } catch (err) {
       console.error('WebSocket setup failed:', err.message)
       socket.close(1011, 'Could not open the room.')
@@ -283,9 +358,36 @@ export async function attachRealtime(httpServer) {
 
   /** Local sockets first, then every other instance via NOTIFY. */
   function broadcast(boardId, message, exceptSocket) {
-    deliverLocally(boardId, message, exceptSocket)
     const payload = JSON.stringify({ from: INSTANCE_ID, boardId, message })
-    if (payload.length > MAX_PAYLOAD) return
+    /**
+     * Measured, and refused, before anyone is given it.
+     *
+     * The cap used to be checked after the local room had already received the
+     * message, so an op that fits the inbound limit but not the wrapped payload
+     * reached this instance's peers and no others — leaving the room divided
+     * with no error anywhere. Bytes rather than characters, because NOTIFY's
+     * limit is bytes and a board full of accented names is not ASCII.
+     */
+    if (Buffer.byteLength(payload) > MAX_PAYLOAD) return
+    deliverLocally(boardId, message, exceptSocket)
+
+    /**
+     * A missing listener is said out loud rather than optional-chained past.
+     *
+     * `listener?.query(...)` short-circuited the whole chain, `.catch` and all,
+     * so during the two-second reconnect window every op reached this
+     * instance's sockets and no other instance ever heard about it, silently.
+     * That is precisely the split room the comment above says must never
+     * happen, arrived at from the other direction. Buffering these until the
+     * bus returns is a bigger design than this; knowing it happened is not
+     * optional either way.
+     */
+    if (!listener) {
+      console.error(
+        `Op not published: the notification bus is down, so only this instance saw it (board ${boardId}, ${message?.type}).`,
+      )
+      return
+    }
     // pg_notify is the function form, so the payload can be a bound parameter
     // instead of being concatenated into a NOTIFY statement.
     listener.query('SELECT pg_notify($1, $2)', [CHANNEL, payload]).catch((err) => {
@@ -305,12 +407,14 @@ export async function attachRealtime(httpServer) {
   return {
     instanceId: INSTANCE_ID,
     close: async () => {
+      closing = true
+      if (listenerTimer) clearTimeout(listenerTimer)
+      listenerTimer = null
       clearInterval(heartbeat)
       publishFn = null
       wss.close()
-      await listener.end()
+      await listener?.end()
+      listener = null
     },
   }
 }
-
-export const instanceId = INSTANCE_ID

@@ -1,4 +1,4 @@
-import type { Token, Drawing, Frame, Team, ViewSettings, CustomFormation } from '../types'
+import type { Token, Drawing, Frame, ViewSettings, CustomFormation } from '../types'
 
 /**
  * What travels between peers in a room.
@@ -35,10 +35,8 @@ export interface SelectionOp {
 export type EntityOp =
   | { type: 'patch'; entity: 'token'; id: string; patch: Partial<Token> }
   | { type: 'patch'; entity: 'drawing'; id: string; patch: Partial<Drawing> }
-  | { type: 'patch'; entity: 'team'; id: string; patch: Partial<Team> }
   | { type: 'patch'; entity: 'frame'; id: string; patch: Partial<Frame> }
   | { type: 'add'; entity: 'token'; item: Token }
-  | { type: 'add'; entity: 'bench'; item: Token }
   | { type: 'add'; entity: 'drawing'; item: Drawing }
   | { type: 'add'; entity: 'frame'; item: Frame }
   | { type: 'add'; entity: 'customFormation'; item: CustomFormation }
@@ -115,21 +113,14 @@ export type ServerMessage =
   | IncomingOp
 
 /**
- * Ops whose only effect is presence. They are safe to send while the board is
- * locked, cost nothing to drop, and must never reach the undo stack or trigger
- * a save.
+ * Ops whose only effect is presence.
+ *
+ * They cost nothing to drop, which is why the offline queue refuses to hold
+ * them: a cursor replayed half a minute after the fact puts someone's pointer
+ * somewhere they have long since left, and a stale cursor is worse than none.
  */
 export const isEphemeral = (op: { type: string }): boolean =>
   op.type === 'cursor' || op.type === 'sel'
-
-/**
- * Whether an op changes something worth writing to the server.
- *
- * Resync handshakes and presence do not, which is what keeps a room full of
- * idle cursors from generating a save per frame.
- */
-export const isPersistent = (op: { type: string }): boolean =>
-  !isEphemeral(op) && op.type !== 'need-state' && op.type !== 'replaced' && op.type !== 'lock'
 
 /**
  * A rough size guard, applied before sending.
@@ -141,5 +132,14 @@ export const isPersistent = (op: { type: string }): boolean =>
  */
 export const MAX_OP_BYTES = 5000
 
+/**
+ * Bytes, not characters.
+ *
+ * The relay measures the raw frame in bytes, so counting UTF-16 code units here
+ * meant the two ends disagreed about the same op: a text annotation of emoji is
+ * two units per character and four bytes, so an op that looked comfortably
+ * under the cap was silently dropped on arrival with nothing shown to the
+ * person who wrote it.
+ */
 export const withinSizeLimit = (op: Op): boolean =>
-  JSON.stringify(op).length <= MAX_OP_BYTES
+  new TextEncoder().encode(JSON.stringify(op)).length <= MAX_OP_BYTES

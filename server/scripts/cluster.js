@@ -38,6 +38,9 @@ for (let i = 0; i < COUNT; i++) {
         ...process.env,
         PORT: String(port),
         INSTANCE_LABEL: `api-${i + 1}`,
+        // Safe here and only here: the balancer below overwrites the header
+        // with the real peer address, so one hop of it is the truth.
+        TRUST_PROXY: '1',
         // One instance is enough to run the periodic cleanup.
         RUN_MAINTENANCE: i === 0 ? 'true' : 'false',
       },
@@ -45,6 +48,20 @@ for (let i = 0; i < COUNT; i++) {
     }),
   )
 }
+
+/**
+ * Headers to forward, with the caller's real address stamped on.
+ *
+ * Overwritten rather than appended: whatever the client sent is a claim about
+ * its own address, and passing that through is exactly what turns `trust proxy`
+ * into a way to choose your own rate-limit bucket. Without setting it at all,
+ * every instance sees 127.0.0.1 and the per-IP limits become one global bucket
+ * shared by everybody, which is the same bug from the other side.
+ */
+const forwarded = (req) => ({
+  ...req.headers,
+  'x-forwarded-for': req.socket.remoteAddress ?? '',
+})
 
 let next = 0
 const nextPort = () => {
@@ -56,7 +73,7 @@ const nextPort = () => {
 const proxy = createServer((clientReq, clientRes) => {
   const port = nextPort()
   const upstream = httpRequest(
-    { host: '127.0.0.1', port, path: clientReq.url, method: clientReq.method, headers: clientReq.headers },
+    { host: '127.0.0.1', port, path: clientReq.url, method: clientReq.method, headers: forwarded(clientReq) },
     (upstreamRes) => {
       clientRes.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers)
       upstreamRes.pipe(clientRes)
@@ -75,7 +92,7 @@ proxy.on('upgrade', (req, socket, head) => {
   const upstream = connect(port, '127.0.0.1', () => {
     upstream.write(
       `${req.method} ${req.url} HTTP/1.1\r\n` +
-        Object.entries(req.headers)
+        Object.entries(forwarded(req))
           .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
           .join('\r\n') +
         '\r\n\r\n',

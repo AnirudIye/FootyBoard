@@ -38,13 +38,35 @@ export const CODE_LENGTH = 6
  */
 export const CODE_TTL_MS = 12 * 60 * 60 * 1000
 
-export const codeExpiryFrom = (now = Date.now()) => now + CODE_TTL_MS
+export const codeExpiryFrom = () => Date.now() + CODE_TTL_MS
 
 /** `randomInt`, not `Math.random`: this is a credential, however short. */
 export function generateCode() {
   let code = ''
   for (let i = 0; i < CODE_LENGTH; i++) code += ALPHABET[randomInt(ALPHABET.length)]
   return code
+}
+
+/**
+ * Runs `write` with a fresh code, once more if the unique index rejects it.
+ *
+ * The index on live shares is the arbiter of uniqueness, not a check-then-write
+ * that would race. A collision needs two of a handful of live shares to draw
+ * the same one of 191 million codes, so this is not a loop that expects to go
+ * round; it is here because the alternative — letting 23505 out — is a 500 on
+ * one request from the routes, and a failed migration on every booting instance
+ * from the backfill, in exchange for saving three lines.
+ */
+export async function withFreshCode(write) {
+  for (let attempt = 0; ; attempt++) {
+    const code = generateCode()
+    try {
+      await write(code)
+      return code
+    } catch (err) {
+      if (err.code !== '23505' || attempt > 0) throw err
+    }
+  }
 }
 
 /**

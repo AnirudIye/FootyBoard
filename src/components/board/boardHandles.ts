@@ -4,13 +4,11 @@
  * Konva stage lives inside a separate reconciler.
  */
 export const boardHandles: {
-  exportPng: ((filename?: string) => Promise<void>) | null
-  exportGif: (() => Promise<void>) | null
-  exportWebm: (() => Promise<void>) | null
+  exportPng: (() => Promise<void>) | null
+  exportSequence: ((kind: 'gif' | 'webm') => Promise<void>) | null
   fitPitch: (() => void) | null
 } = {
   exportPng: null,
-  exportGif: null,
-  exportWebm: null,
+  exportSequence: null,
   fitPitch: null,
 }

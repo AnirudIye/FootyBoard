@@ -151,11 +151,75 @@ describe('refusing to send', () => {
     expect(latest().sent).toHaveLength(0)
   })
 
-  it('drops sends when the socket is not open', () => {
+  it('sends nothing over a socket that is not open', () => {
     const connection = connect()
     latest().readyState = 3
     connection.send({ type: 'view', patch: { grass: false } })
     expect(latest().sent).toHaveLength(0)
+  })
+})
+
+describe('editing while disconnected', () => {
+  /** Take the connection down and bring it back on a fresh socket. */
+  const cycle = (connection: RoomConnection, write: () => void) => {
+    latest().serverClosed(1006)
+    write()
+    vi.advanceTimersByTime(60_000)
+    latest().open()
+    return connection
+  }
+
+  it('replays edits made while the socket was away', () => {
+    const connection = connect()
+    cycle(connection, () => {
+      connection.send({ type: 'view', patch: { grass: false } })
+      connection.send({ type: 'remove', entity: 'drawing', ids: ['d1'] })
+    })
+
+    // Half a minute of backoff used to mean half a minute of edits gone, with
+    // nothing shown to the person who made them.
+    expect(parsed(latest())).toEqual([
+      { type: 'view', patch: { grass: false } },
+      { type: 'remove', entity: 'drawing', ids: ['d1'] },
+    ])
+  })
+
+  it('never replays presence, because a stale cursor is worse than none', () => {
+    const connection = connect()
+    cycle(connection, () => {
+      connection.send({ type: 'cursor', x: 10, y: 10 })
+      connection.send({ type: 'sel', ids: ['a'] })
+      connection.send({ type: 'bench', id: 'a' })
+    })
+
+    expect(parsed(latest())).toEqual([{ type: 'bench', id: 'a' }])
+  })
+
+  it('drops the oldest when the queue fills rather than the newest', () => {
+    const connection = connect()
+    cycle(connection, () => {
+      for (let i = 0; i < 40; i++) {
+        connection.send({ type: 'remove', entity: 'drawing', ids: [`d${i}`] })
+      }
+    })
+
+    // A board is edited forwards, so the tail is closest to what the person
+    // actually has in front of them. The cap matches the server's own buffer
+    // for messages that land before a socket has finished authenticating.
+    const sent = parsed(latest())
+    expect(sent).toHaveLength(32)
+    expect(sent[0]).toEqual({ type: 'remove', entity: 'drawing', ids: ['d8'] })
+    expect(sent.at(-1)).toEqual({ type: 'remove', entity: 'drawing', ids: ['d39'] })
+  })
+
+  it('holds nothing once the room has been left deliberately', () => {
+    const connection = connect()
+    latest().serverClosed(1006)
+    connection.send({ type: 'view', patch: { grass: false } })
+    connection.close()
+
+    vi.advanceTimersByTime(60_000)
+    expect(FakeSocket.instances).toHaveLength(1)
   })
 })
 

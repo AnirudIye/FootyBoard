@@ -65,8 +65,26 @@ export default function TermsOfService() {
         <p>
           A board may be shared by link or by join code. Anyone who holds a valid link or code and
           signs in may open that board and, unless editing has been locked by its owner, modify it.
-          You are responsible for whom you give a link or code to. The owner of a board may revoke
-          sharing, remove a member, or lock editing at any time.
+          You are responsible for whom you give a link or code to. A join code stops working after
+          a few hours and the owner can issue a new one. The owner of a board may revoke sharing,
+          remove a member, or lock editing at any time.
+        </p>
+        <p>
+          While you are in a shared board, everyone else in it can see the email address on your
+          account. That is how the presence list says who is present and whose cursor is whose.
+        </p>
+      </Clause>
+
+      <Clause heading="The assistant">
+        <p>
+          The assistant interprets what you type on your own device. If you switch on the optional
+          online fallback, a message it does not recognise is sent, with a description of what is on
+          the board, to a third-party model provider. The Privacy Policy sets out exactly what
+          travels and when.
+        </p>
+        <p>
+          What comes back is a suggestion about a drawing. It is not coaching, medical, or
+          professional advice, it can be wrong, and what you do with it is your decision.
         </p>
       </Clause>
 
@@ -102,8 +120,10 @@ export default function TermsOfService() {
 
       <Clause heading="Termination">
         <p>
-          You may stop using the service at any time by deleting your account or clearing site
-          data, which removes your account and boards from the device immediately.
+          You may stop using the service at any time. Deleting your account removes it, and every
+          board saved under it, from our server immediately and with no backup to restore from.
+          Clearing your browser's site data signs you out and clears what is held on the device,
+          but leaves a saved account as it was.
         </p>
       </Clause>
 

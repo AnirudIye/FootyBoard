@@ -2,13 +2,41 @@ import { useEffect, useRef } from 'react'
 import { useBoardStore } from '../store/boardStore'
 import { useAuthStore } from '../store/authStore'
 import { useBoardsStore } from '../store/boardsStore'
-import { api } from '../lib/api'
-import { loadBoard } from '../lib/boardSync'
+import { loadBoard, flushSave } from '../lib/boardSync'
 import { isApplyingRemote } from '../lib/realtime/bridge'
 import { toUserMessage } from '../lib/errors'
 import { toast } from '../store/toastStore'
 
 const DEBOUNCE = 800
+/** How many debounce beats a pending save will wait for the board to load. */
+const MAX_LOAD_WAITS = 10
+
+type BoardState = ReturnType<typeof useBoardStore.getState>
+
+/**
+ * The fields `_snapshot()` actually writes.
+ *
+ * The board store also holds a pile of state that is nobody's business but this
+ * browser's: the selection, the zoom, the current tool, the inspector, the
+ * playhead. Subscribing to the store as a whole meant scrubbing playback queued
+ * a full clone, serialise and PUT of the entire board every 800ms for the
+ * length of the sequence, and in a room that churned `updated_at` and reordered
+ * everyone's board picker while somebody simply watched a move play.
+ *
+ * Every action that changes one of these replaces the array or object outright,
+ * so reference equality is the whole test.
+ */
+function persistableChanged(a: BoardState, b: BoardState): boolean {
+  return (
+    a.teams !== b.teams ||
+    a.tokens !== b.tokens ||
+    a.bench !== b.bench ||
+    a.drawings !== b.drawings ||
+    a.frames !== b.frames ||
+    a.view !== b.view ||
+    a.customFormations !== b.customFormations
+  )
+}
 
 /**
  * Keeps the open board in step with the server.
@@ -89,39 +117,54 @@ export function useAutosave() {
 
     let timer: number | null = null
     let warned = false
+    let waits = 0
 
-    const unsubscribe = useBoardStore.subscribe(() => {
+    const save = async () => {
+      timer = null
+      // Never write until this exact board has finished loading, or the
+      // previous board's contents would overwrite the new one. An edit made
+      // during that window is still a real edit, though, so wait another beat
+      // rather than returning: dropping it silently left the indicator reading
+      // "Saved" over work that had never been written anywhere.
+      //
+      // Bounded, because a load that failed outright never sets loadedId, and
+      // an unbounded rearm would leave a timer going round for the life of the
+      // page. Ten beats is far longer than a load takes and short of forever.
+      if (loadedId.current !== currentId) {
+        if (waits >= MAX_LOAD_WAITS) return
+        waits += 1
+        timer = window.setTimeout(save, DEBOUNCE)
+        return
+      }
+
+      try {
+        // The same write the realtime hook performs, not a second copy of it:
+        // two implementations of "save this board" meant every change to what
+        // saving means had to be made twice, and once was missed.
+        await flushSave(currentId)
+        warned = false
+      } catch (err) {
+        // flushSave has already set the indicator, and it stays until a save
+        // succeeds. The toast fires once, so a dropped server does not
+        // produce one per edit.
+        if (!warned) {
+          warned = true
+          toast(toUserMessage(err, 'This board is not being saved right now.'))
+        }
+      }
+    }
+
+    const unsubscribe = useBoardStore.subscribe((state, prev) => {
       // A change that arrived from a peer is already theirs to save. Without
       // this, every client in a room writes the whole board on every remote op —
       // N clients fighting over one row, each overwriting the others with a
       // copy of what they just agreed on.
       if (isApplyingRemote()) return
+      if (!persistableChanged(state, prev)) return
 
       if (timer !== null) window.clearTimeout(timer)
-      timer = window.setTimeout(async () => {
-        timer = null
-        // Never write until this exact board has finished loading, or the
-        // previous board's contents would overwrite the new one.
-        if (loadedId.current !== currentId) return
-
-        const boards = useBoardsStore.getState()
-        const name = boards.boards.find((b) => b.id === currentId)?.name
-        boards.setSaveState('saving')
-        try {
-          await api.saveBoard(currentId, name ?? 'My board', useBoardStore.getState().getPersistable())
-          boards.touch(currentId)
-          boards.setSaveState('saved')
-          warned = false
-        } catch (err) {
-          // The indicator stays until a save succeeds; the toast fires once, so
-          // a dropped server does not produce one per edit.
-          boards.setSaveState('offline')
-          if (!warned) {
-            warned = true
-            toast(toUserMessage(err, 'This board is not being saved right now.'))
-          }
-        }
-      }, DEBOUNCE)
+      waits = 0
+      timer = window.setTimeout(save, DEBOUNCE)
     })
 
     return () => {

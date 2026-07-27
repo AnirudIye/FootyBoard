@@ -1,10 +1,13 @@
-import { useReducedMotion } from '../../hooks/useReducedMotion'
-
 /**
  * The looping background play. Five stations, four passes and a ball that runs
  * the move, then the whole thing clears and starts again. It is the product's
  * own subject matter used as ambience — a move being worked through — rather
  * than a decorative particle field.
+ *
+ * Every animation here is pure CSS, so reduced motion is handled entirely in
+ * the stylesheet: tokens.css stops the animations and index.css says what the
+ * pass lines and the ball should look like once they are stopped, which is not
+ * the same as what they look like before they start.
  */
 
 const NODES: [number, number][] = [
@@ -24,8 +27,6 @@ const PASSES = NODES.slice(0, -1).map(([x1, y1], i) => {
 const LOOP = '13s'
 
 export default function TacticalLoop({ className = '' }: { className?: string }) {
-  const reduced = useReducedMotion()
-
   return (
     <svg
       viewBox="0 0 1240 600"
@@ -51,11 +52,7 @@ export default function TacticalLoop({ className = '' }: { className?: string })
           r={7}
           fill="rgb(42 224 122)"
           opacity={0.28}
-          style={
-            reduced
-              ? undefined
-              : { animation: `nodePulse 4s ease-in-out ${i * 0.5}s infinite` }
-          }
+          style={{ animation: `nodePulse 4s ease-in-out ${i * 0.5}s infinite` }}
         />
       ))}
 
@@ -63,6 +60,7 @@ export default function TacticalLoop({ className = '' }: { className?: string })
       {PASSES.map((p, i) => (
         <line
           key={i}
+          className="tactical-pass"
           x1={p.x1}
           y1={p.y1}
           x2={p.x2}
@@ -71,27 +69,24 @@ export default function TacticalLoop({ className = '' }: { className?: string })
           strokeWidth={2.5}
           strokeLinecap="round"
           strokeDasharray={p.len}
-          strokeDashoffset={reduced ? 0 : p.len}
-          opacity={reduced ? 0.35 : 0}
+          strokeDashoffset={p.len}
+          opacity={0}
           style={
-            reduced
-              ? undefined
-              : ({
-                  '--len': `${p.len}`,
-                  animation: `passDraw ${LOOP} linear ${p.delay}s infinite`,
-                } as React.CSSProperties)
+            {
+              '--len': `${p.len}`,
+              animation: `passDraw ${LOOP} linear ${p.delay}s infinite`,
+            } as React.CSSProperties
           }
         />
       ))}
 
       {/* The ball running the move */}
-      {!reduced && (
-        <circle
-          r={6}
-          fill="rgb(240 244 241)"
-          style={{ animation: `ballRun ${LOOP} ease-in-out infinite` }}
-        />
-      )}
+      <circle
+        className="tactical-ball"
+        r={6}
+        fill="rgb(240 244 241)"
+        style={{ animation: `ballRun ${LOOP} ease-in-out infinite` }}
+      />
     </svg>
   )
 }

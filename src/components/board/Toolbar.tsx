@@ -19,57 +19,42 @@ import { toast } from '../../store/toastStore'
 import { toUserMessage } from '../../lib/errors'
 import type { PitchView, PitchKind, Side } from '../../lib/types'
 
-const VIEWS: { id: PitchView; label: string }[] = [
+interface Option<T extends string> {
+  id: T
+  label: string
+  /** A colour dot before the label, for options that are a thing not a mode. */
+  dot?: string
+}
+
+const VIEWS: Option<PitchView>[] = [
   { id: 'fullH', label: 'Full' },
   { id: 'fullV', label: 'Vertical' },
   { id: 'attackHalf', label: 'Att' },
   { id: 'defendHalf', label: 'Def' },
   { id: 'blank', label: 'Blank' },
 ]
-const KINDS: { id: PitchKind; label: string }[] = [
+const KINDS: Option<PitchKind>[] = [
   { id: '11', label: '11' },
   { id: '7aside', label: '7' },
   { id: 'futsal', label: 'Futsal' },
 ]
-const BLOCK_LABELS: Record<BlockHeight, string> = { default: 'Base', mid: 'Mid', high: 'High' }
-
-const TEAMS: { id: Side; label: string; color: string }[] = [
-  { id: 'home', label: 'Home', color: HOME_COLOR },
-  { id: 'away', label: 'Away', color: AWAY_COLOR },
+const BLOCKS: Option<BlockHeight>[] = [
+  { id: 'default', label: 'Base' },
+  { id: 'mid', label: 'Mid' },
+  { id: 'high', label: 'High' },
+]
+const TEAMS: Option<Side>[] = [
+  { id: 'home', label: 'Home', dot: HOME_COLOR },
+  { id: 'away', label: 'Away', dot: AWAY_COLOR },
 ]
 
-// The team you're currently setting up. Identified by its own colour, not the
-// accent, so it reads as "who am I editing" rather than a generic toggle.
-function TeamSwitch({ active, onChange }: { active: Side; onChange: (side: Side) => void }) {
-  return (
-    <div className="inline-flex items-center gap-0.5 rounded border border-rule bg-sunken p-0.5">
-      {TEAMS.map((t) => {
-        const on = active === t.id
-        return (
-          <button
-            key={t.id}
-            onClick={() => onChange(t.id)}
-            aria-pressed={on}
-            className={`relative flex items-center gap-1.5 rounded px-2.5 py-1 text-[12px] font-medium
-              transition-colors duration-150 ${on ? 'text-ink' : 'text-ink-3 hover:text-ink-2'}`}
-          >
-            {on && (
-              <motion.span
-                layoutId="team-switch-pill"
-                transition={{ type: 'spring', stiffness: 520, damping: 34, mass: 0.6 }}
-                className="absolute inset-0 -z-10 rounded bg-surface shadow-1"
-              />
-            )}
-            <span
-              className="h-2 w-2 rounded-full ring-1 ring-black/15"
-              style={{ background: t.color, opacity: on ? 1 : 0.5 }}
-            />
-            {t.label}
-          </button>
-        )
-      })}
-    </div>
-  )
+// Two readings of the same control. `accent` is a mode you are switching the
+// board into; `team` is who you are currently setting up, which is identified
+// by its own colour rather than the accent, so it reads as "who am I editing"
+// rather than as a generic toggle.
+const TONES = {
+  accent: { pill: 'bg-accent', on: 'text-paper', off: 'text-ink-2 hover:text-ink' },
+  team: { pill: 'bg-surface shadow-1', on: 'text-ink', off: 'text-ink-3 hover:text-ink-2' },
 }
 
 function Segmented<T extends string>({
@@ -77,14 +62,17 @@ function Segmented<T extends string>({
   value,
   onChange,
   disabled = false,
+  tone = 'accent',
 }: {
-  options: { id: T; label: string }[]
+  options: Option<T>[]
   value: T
   onChange: (v: T) => void
   disabled?: boolean
+  tone?: keyof typeof TONES
 }) {
   // A shared layoutId slides the active pill between options.
   const group = useId()
+  const look = TONES[tone]
   return (
     <div
       className={`inline-flex items-center gap-0.5 rounded border border-rule bg-sunken p-0.5
@@ -97,15 +85,22 @@ function Segmented<T extends string>({
             key={o.id}
             onClick={() => onChange(o.id)}
             disabled={disabled}
-            className={`relative rounded px-2.5 py-1 text-[12px] font-medium transition-colors duration-150
-              disabled:cursor-not-allowed
-              ${active ? 'text-[#fbf9f5]' : 'text-ink-2 hover:text-ink'}`}
+            aria-pressed={active}
+            className={`relative flex items-center gap-1.5 rounded px-2.5 py-1 text-[12px] font-medium
+              transition-colors duration-150 disabled:cursor-not-allowed
+              ${active ? look.on : look.off}`}
           >
             {active && (
               <motion.span
                 layoutId={`seg-${group}`}
                 transition={{ type: 'spring', stiffness: 520, damping: 34, mass: 0.6 }}
-                className="absolute inset-0 -z-10 rounded bg-accent"
+                className={`absolute inset-0 -z-10 rounded ${look.pill}`}
+              />
+            )}
+            {o.dot && (
+              <span
+                className="h-2 w-2 rounded-full ring-1 ring-black/15"
+                style={{ background: o.dot, opacity: active ? 1 : 0.5 }}
               />
             )}
             {o.label}
@@ -139,7 +134,7 @@ export default function Toolbar() {
   const current = names.includes(formation) ? formation : names[0]
 
   return (
-    <header className="absolute inset-x-0 top-0 z-20 border-b border-rule bg-surface/95 backdrop-blur-[2px]">
+    <header className="relative z-20 shrink-0 border-b border-rule bg-surface/95 backdrop-blur-[2px]">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5">
         <span className="pr-3 mr-1 border-r border-rule font-display text-[15px] font-semibold tracking-[-0.02em]">
           FootyBoard
@@ -174,15 +169,8 @@ export default function Toolbar() {
                 </option>
               ))}
             </select>
-            <TeamSwitch active={activeTeam} onChange={setActiveTeam} />
-            <Segmented
-              options={(['default', 'mid', 'high'] as BlockHeight[]).map((b) => ({
-                id: b,
-                label: BLOCK_LABELS[b],
-              }))}
-              value={block}
-              onChange={setBlock}
-            />
+            <Segmented options={TEAMS} value={activeTeam} onChange={setActiveTeam} tone="team" />
+            <Segmented options={BLOCKS} value={block} onChange={setBlock} />
             <Button variant="primary" onClick={() => applyFormation(activeTeam, current, block)}>
               Apply
             </Button>
@@ -228,11 +216,7 @@ export default function Toolbar() {
           <ShareDialog />
           <AccountMenu />
           <TokenPalette />
-          <Popover
-            align="right"
-            className="w-[220px]"
-            trigger={<Button>Pitch options</Button>}
-          >
+          <Popover align="right" className="w-[220px]" trigger="Pitch options">
             <div className="flex flex-col gap-2.5">
               <Toggle checked={view.grass} onChange={(v) => setView({ grass: v })} label="Mow stripes" />
               <Toggle
@@ -245,7 +229,6 @@ export default function Toolbar() {
                 onChange={(v) => setView({ pitchTheme: v ? 'light' : 'dark' })}
                 label="Chalk pitch"
               />
-              <Toggle checked={view.snap} onChange={(v) => setView({ snap: v })} label="Snap to grid" />
               <label className="mt-1 flex items-center justify-between text-[13px] text-ink-2">
                 <span>Line colour</span>
                 <input
@@ -259,11 +242,7 @@ export default function Toolbar() {
             </div>
           </Popover>
 
-          <Popover
-            align="right"
-            className="w-[230px]"
-            trigger={<Button>Saved shapes</Button>}
-          >
+          <Popover align="right" className="w-[230px]" trigger="Saved shapes">
             <div className="flex flex-col gap-2">
               <Button
                 variant="primary"

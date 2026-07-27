@@ -3,17 +3,37 @@ import { Group, Circle, Text, Line } from 'react-konva'
 import { useBoardStore } from '../../store/boardStore'
 import type { Token } from '../../lib/types'
 import type { PitchMapping } from './pitchMapping'
+import { useTokenDrag } from './useTokenDrag'
 
 const SELECT_RING = '#f4f2ef'
+const INK_DARK = '#080A09'
+const INK_LIGHT = '#FBF9F5'
+
+/**
+ * Which of the two inks reads on a given chip colour.
+ *
+ * WCAG relative luminance, on linearised channels: the gamma-encoded shortcut
+ * this used to run put every default team colour a hair on the wrong side and
+ * printed white at 1.66:1 on all of them. The threshold is where the two inks
+ * contrast equally against the same background (L 0.9486 and L 0.00288 cross at
+ * L 0.1798), so whichever side a colour falls, it gets the better of the two.
+ */
+const lin = (c: number) => {
+  const s = c / 255
+  return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+}
 
 function pickText(hex: string): string {
   const c = hex.replace('#', '')
-  if (c.length < 6) return '#fbf9f5'
-  const r = parseInt(c.slice(0, 2), 16)
-  const g = parseInt(c.slice(2, 4), 16)
-  const b = parseInt(c.slice(4, 6), 16)
-  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-  return lum > 0.62 ? '#17191d' : '#fbf9f5'
+  // Three-digit hex doubles each channel; anything else is not a colour we can
+  // read, and the light ink is the safer guess on this board's dark ground.
+  const full = c.length === 3 ? c.replace(/./g, (d) => d + d) : c
+  if (!/^[0-9a-f]{6}$/i.test(full)) return INK_LIGHT
+  const r = parseInt(full.slice(0, 2), 16)
+  const g = parseInt(full.slice(2, 4), 16)
+  const b = parseInt(full.slice(4, 6), 16)
+  const lum = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+  return lum > 0.18 ? INK_DARK : INK_LIGHT
 }
 
 interface Props {
@@ -34,6 +54,7 @@ export default function PlayerChip({ token, mapping, nx: atX, ny: atY, radius, s
   const toggleSelection = useBoardStore((s) => s.toggleSelection)
   const openInspector = useBoardStore((s) => s.openInspector)
   const longPress = useRef<number | null>(null)
+  const drag = useTokenDrag(mapping, radius)
 
   const cancelLongPress = () => {
     if (longPress.current !== null) {
@@ -42,7 +63,7 @@ export default function PlayerChip({ token, mapping, nx: atX, ny: atY, radius, s
     }
   }
 
-  const pos = mapping.toPx(atX, atY)
+  const pos = drag.place(mapping.toPx(atX, atY))
   const textColor = pickText(token.color)
   const isKeeper = token.shape === 'keeper'
   const dragStart = useRef({ x: token.x, y: token.y })
@@ -60,9 +81,11 @@ export default function PlayerChip({ token, mapping, nx: atX, ny: atY, radius, s
 
   return (
     <Group
+      ref={drag.ref}
       x={pos.x}
       y={pos.y}
       draggable
+      dragBoundFunc={drag.dragBoundFunc}
       onContextMenu={(e) => {
         e.evt.preventDefault()
         setSelection([token.id])
@@ -72,6 +95,7 @@ export default function PlayerChip({ token, mapping, nx: atX, ny: atY, radius, s
         if (e.evt.button !== 0) return
         if (e.evt.shiftKey) toggleSelection(token.id)
         else if (!selected) setSelection([token.id])
+        drag.pickUp()
         // Long-press opens the inspector on touch, where there is no right-click.
         const { clientX, clientY } = e.evt
         cancelLongPress()
@@ -80,9 +104,13 @@ export default function PlayerChip({ token, mapping, nx: atX, ny: atY, radius, s
           openInspector(token.id, clientX, clientY)
         }, 500)
       }}
-      onPointerUp={cancelLongPress}
+      onPointerUp={() => {
+        cancelLongPress()
+        drag.putDown()
+      }}
       onDragStart={() => {
         cancelLongPress()
+        drag.beginDrag()
         dragStart.current = { x: token.x, y: token.y }
       }}
       onDragMove={(e) => {
@@ -102,7 +130,13 @@ export default function PlayerChip({ token, mapping, nx: atX, ny: atY, radius, s
           moveToken(token.id, n.x, n.y)
         }
       }}
-      onDragEnd={() => commit()}
+      onDragEnd={() => {
+        commit()
+        // Home is wherever the store settled, which is the clamped position the
+        // rest of the room has: the give was never anything but a view.
+        const at = useBoardStore.getState().tokens.find((t) => t.id === token.id)
+        drag.endDrag(mapping.toPx(at?.x ?? token.x, at?.y ?? token.y))
+      }}
     >
       {selected && (
         <Circle
@@ -118,7 +152,7 @@ export default function PlayerChip({ token, mapping, nx: atX, ny: atY, radius, s
       {token.rotation !== 0 && (
         <Line points={notch} stroke={token.color} strokeWidth={radius * 0.3} lineCap="round" listening={false} />
       )}
-      <Circle radius={radius} fill={token.color} stroke="rgba(255,255,255,0.5)" strokeWidth={1} />
+      <Circle ref={drag.bodyRef} radius={radius} fill={token.color} stroke="rgba(255,255,255,0.5)" strokeWidth={1} />
       {isKeeper && (
         <Circle
           radius={radius * 0.62}
@@ -148,7 +182,7 @@ export default function PlayerChip({ token, mapping, nx: atX, ny: atY, radius, s
           width={radius * 4.8}
           align="center"
           fontSize={radius * 0.66}
-          fontFamily="Archivo, sans-serif"
+          fontFamily="Geist Sans, ui-sans-serif, system-ui, sans-serif"
           fill="#f0ece2"
           listening={false}
         />

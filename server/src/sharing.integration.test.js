@@ -379,12 +379,27 @@ test('guessing codes is cut off long before the space could be searched', async 
   assert.notEqual(blockedAt, null, 'guessing was never rate limited')
   assert.ok(blockedAt <= 10, `took ${blockedAt} guesses to be cut off`)
 
-  // A correct code is refused too while the limit holds — being right does not
-  // buy an attacker a way past it.
+  /**
+   * A correct code still works while the limit holds, and that is the point.
+   *
+   * Counting successes against the same allowance locked out the case the code
+   * exists to serve: a squad in one room shares one address, so the tenth
+   * player to type a perfectly good code was turned away for ten minutes. It
+   * costs an attacker nothing to give this back, because reaching a code you
+   * were not given takes failures, and failures are what is counted — someone
+   * blocked here cannot search their way to a right answer, only turn up
+   * already holding one.
+   */
   const created = await json(await call(A, `/boards/${boardId}/share`, owner.cookie, { method: 'POST' }))
-  const blocked = await guess(created.body.share.code)
-  assert.equal(blocked.status, 429)
+  const allowed = await guess(created.body.share.code)
+  assert.equal(allowed.status, 200, 'a correct code is not collateral damage')
 
+  // And being right does not refill the allowance: the next wrong guess is
+  // still refused, so a code someone was given is not a way to buy attempts.
+  const after = await guess('ZZZZZZ')
+  assert.equal(after.status, 429)
+
+  await run('DELETE FROM board_members WHERE board_id = $1 AND user_id = $2', boardId, stranger.id)
   await clearRateLimits()
 })
 

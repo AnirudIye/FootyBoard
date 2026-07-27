@@ -39,8 +39,10 @@ In production, skip step 1 and point `DATABASE_URL` at a managed Postgres.
 | GET | `/api/boards/:id` | one board including its data |
 | POST | `/api/boards` | `{ name, data }` |
 | PUT | `/api/boards/:id` | replace name and data |
-| PATCH | `/api/boards/:id` | rename only |
+| PATCH | `/api/boards/:id` | rename only; a missing `name` is a 400, not a default |
 | DELETE | `/api/boards/:id` | remove one board |
+| GET | `/api/assistant/status` | whether the AI fallback is configured |
+| POST | `/api/assistant` | `{ message, consent: true, … }` — 400 without consent |
 | WS | `/ws?board=<id>` | join that board's room |
 
 ## How the five performance concerns are handled
@@ -98,6 +100,36 @@ person's password, and a per-IP limit (30 attempts / 10 minutes) stops one
 common password being sprayed across many accounts. Both live in the database,
 so they survive a restart and hold across processes. Signups are capped per IP.
 
+Every counter is **one statement**, an upsert whose `DO UPDATE` reads
+`login_attempts.count + 1` and expresses the window, the lockout and the
+held-lock cases as SQL. That is the difference between a limiter and a
+suggestion: read-then-write let concurrent requests all read the same count and
+all write the same value, so the allowance never fired under exactly the
+parallel traffic it exists to stop. Allowances keyed on values a stranger
+chooses are hashed, never stored verbatim, and swept hourly.
+
+**`APP_ENV` is a security setting**, not a label. `production` marks the session
+cookie `Secure` and sends HSTS on secure requests; `development` and `test` may
+fall back to an encryption key derived from `SESSION_SECRET`, and nothing else
+may. An unrecognised value stops the process at boot rather than quietly
+choosing the permissive branch, which is what `NODE_ENV=staging` used to do to
+both controls at once. `NODE_ENV` is still read when `APP_ENV` is unset.
+
+**Response headers**: `X-Content-Type-Options`, `Referrer-Policy`,
+`X-Frame-Options`, and a `Content-Security-Policy` of `default-src 'none';
+base-uri 'none'; form-action 'none'; frame-ancestors 'none'` — every response
+here is JSON, so the policy permits nothing at all. The document policy for the
+app belongs on whatever serves `index.html`, which does not pass through here.
+
+**The WebSocket upgrade checks `Origin`**, because a handshake bypasses CORS
+entirely and `SameSite=Lax` would otherwise be the only thing stopping a
+cross-site, cookie-carrying connection into a room. Requests with no `Origin`
+(non-browser clients, the test suite) are allowed; a browser always sends one.
+
+**The assistant's online fallback requires `consent: true` in the request
+body**, answers 400 without it, and records the grant in `assistant_consents`.
+Consent enforced only by the panel that asks for it is not enforced.
+
 **Sessions** are opaque random tokens in an `HttpOnly`, `SameSite=Lax` cookie
 (`Secure` in production). Only the SHA-256 of a token is stored, so a leaked
 database yields no usable cookies, and any session can be revoked by deleting
@@ -141,11 +173,10 @@ Server-side guarantees:
 
 ## Not done yet
 
-The frontend does not open a socket. The rooms work — proven with two sockets
-pinned to different instances exchanging an op — but the board UI still saves
-over REST and does not yet broadcast or apply live ops. That needs an op
-protocol for board mutations and a merge strategy for simultaneous edits, which
-is a design decision rather than plumbing.
+Board *names* are stored unencrypted, deliberately, so the picker can sort
+without decrypting every row.
 
-There is also no password reset, and board *names* are stored unencrypted so
-the list can be sorted without decrypting every row.
+The notification bus does not buffer. Losing the `LISTEN` connection is retried
+every two seconds, and ops published during the gap reach this instance's own
+sockets and are logged as unpublished rather than held for replay. Rooms
+reconverge on the next whole-board `replaced`, not on their own.

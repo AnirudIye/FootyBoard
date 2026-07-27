@@ -17,7 +17,6 @@ export default {
         'hero-sub': 'rgb(var(--hero-sub) / <alpha-value>)',
         accent: 'rgb(var(--accent) / <alpha-value>)',
         'accent-hover': 'rgb(var(--accent-hover) / <alpha-value>)',
-        turf: 'rgb(var(--turf) / <alpha-value>)',
         home: 'rgb(var(--home) / <alpha-value>)',
         away: 'rgb(var(--away) / <alpha-value>)',
       },
@@ -34,11 +33,9 @@ export default {
       boxShadow: {
         1: 'var(--shadow-1)',
         2: 'var(--shadow-2)',
-        accent: 'var(--shadow-accent)',
       },
       transitionTimingFunction: {
         out: 'var(--ease-out)',
-        'in-out': 'var(--ease-in-out)',
       },
     },
   },

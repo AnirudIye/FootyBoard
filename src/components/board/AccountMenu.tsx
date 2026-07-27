@@ -17,7 +17,12 @@ export default function AccountMenu() {
   if (!email) {
     return (
       <div className="flex items-center gap-2">
-        <span className="hidden font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3 lg:inline">
+        {/* The one place a guest is told this, next to the thing that fixes it.
+            The save indicator holds its tongue until there is an account. */}
+        <span
+          title="Sign in and your boards are kept. As a guest nothing is saved."
+          className="hidden font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3 lg:inline"
+        >
           Not saving
         </span>
         <Link
@@ -39,13 +44,14 @@ export default function AccountMenu() {
     <Popover
       align="right"
       className="w-[236px]"
+      triggerClassName="gap-2 pl-2"
       trigger={
-        <Button variant="secondary" className="gap-2 pl-2">
+        <>
           <span className="grid h-5 w-5 place-items-center rounded-full bg-accent font-mono text-[11px] text-paper">
             {initial}
           </span>
           Account
-        </Button>
+        </>
       }
     >
       <div className="flex flex-col gap-3">

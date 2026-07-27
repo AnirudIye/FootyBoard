@@ -2,7 +2,13 @@ import { useEffect } from 'react'
 import { useBoardStore } from '../store/boardStore'
 import { useRealtimeStore } from '../store/realtimeStore'
 
-function isTypingTarget(t: EventTarget | null): boolean {
+/**
+ * Whether a key event is somebody typing rather than driving the board.
+ *
+ * Exported because the viewport shortcuts need exactly the same test, and two
+ * copies of it is two places to forget `contentEditable`.
+ */
+export function isTypingTarget(t: EventTarget | null): boolean {
   if (!(t instanceof HTMLElement)) return false
   const tag = t.tagName
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable

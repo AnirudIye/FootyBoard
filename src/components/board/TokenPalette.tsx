@@ -16,11 +16,7 @@ export default function TokenPalette() {
   const addToken = useBoardStore((s) => s.addToken)
 
   return (
-    <Popover
-      align="right"
-      className="w-[172px]"
-      trigger={<Button>Add props</Button>}
-    >
+    <Popover align="right" className="w-[172px]" trigger="Add props">
       <div className="flex flex-col gap-1.5">
         {PROPS.map((p) => (
           <Button

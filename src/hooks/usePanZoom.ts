@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { animate } from 'framer-motion'
 import type Konva from 'konva'
-import { clamp } from '../lib/math'
+import { clamp, lerp } from '../lib/math'
+import { useReducedMotion } from './useReducedMotion'
+import { isTypingTarget } from './useKeyboard'
 
 const MIN_SCALE = 0.3
 const MAX_SCALE = 3
@@ -23,6 +25,7 @@ export interface PanZoom {
 }
 
 export function usePanZoom(): PanZoom {
+  const reduced = useReducedMotion()
   const [scale, setScale] = useState(1)
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [panning, setPanning] = useState(false)
@@ -34,38 +37,42 @@ export function usePanZoom(): PanZoom {
   scaleRef.current = scale
   posRef.current = position
 
-  // Live tweens, cancelled whenever the user takes over the viewport.
-  const tweens = useRef<{ stop: () => void }[]>([])
+  // The live glide, cancelled whenever the user takes the viewport back.
+  const tween = useRef<{ stop: () => void } | null>(null)
   const stopTweens = useCallback(() => {
-    for (const t of tweens.current) t.stop()
-    tweens.current = []
+    tween.current?.stop()
+    tween.current = null
   }, [])
 
-  /** Spring the viewport to a target rather than snapping to it. */
-  const glideTo = useCallback(
-    (nextScale: number, nextPos: { x: number; y: number }) => {
-      stopTweens()
-      tweens.current = [
-        animate(scaleRef.current, nextScale, {
-          ...VIEWPORT_SPRING,
-          onUpdate: (v) => setScale(v),
-        }),
-        animate(posRef.current.x, nextPos.x, {
-          ...VIEWPORT_SPRING,
-          onUpdate: (v) => setPosition((p) => ({ ...p, x: v })),
-        }),
-        animate(posRef.current.y, nextPos.y, {
-          ...VIEWPORT_SPRING,
-          onUpdate: (v) => setPosition((p) => ({ ...p, y: v })),
-        }),
-      ]
-    },
-    [stopTweens],
-  )
-
+  /**
+   * Spring the whole viewport back to its resting scale and offset.
+   *
+   * One animation over a 0..1 progress rather than three over scale, x and y:
+   * a spring is linear in its target, so driving all three from one progress is
+   * the same motion with a third of the machinery, and there is only one handle
+   * to cancel when somebody grabs the board mid-glide.
+   *
+   * This is the largest movement in the product, so it is also the one that has
+   * to respect a reduced-motion preference. It cannot rely on the app-level
+   * `MotionConfig`, which only reaches motion components; `animate()` is
+   * imperative and never sees it.
+   */
   const fitPitch = useCallback(() => {
-    glideTo(1, { x: 0, y: 0 })
-  }, [glideTo])
+    stopTweens()
+    if (reduced) {
+      setScale(1)
+      setPosition({ x: 0, y: 0 })
+      return
+    }
+    const from = { s: scaleRef.current, x: posRef.current.x, y: posRef.current.y }
+    tween.current = animate(0, 1, {
+      ...VIEWPORT_SPRING,
+      onUpdate: (p) => {
+        setScale(lerp(from.s, 1, p))
+        setPosition({ x: lerp(from.x, 0, p), y: lerp(from.y, 0, p) })
+      },
+    })
+  }, [reduced, stopTweens])
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -148,10 +155,4 @@ export function usePanZoom(): PanZoom {
     fitPitch,
     spaceHeldRef,
   }
-}
-
-function isTypingTarget(t: EventTarget | null): boolean {
-  if (!(t instanceof HTMLElement)) return false
-  const tag = t.tagName
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable
 }

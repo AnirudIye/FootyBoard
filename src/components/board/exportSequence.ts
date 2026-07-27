@@ -11,8 +11,17 @@ export interface Crop {
   height: number
 }
 
+export type SequenceKind = 'gif' | 'webm'
+
 const SECONDS_PER_FRAME = 1.1
 const MAX_WIDTH = 640
+// A GIF's palette and per-frame delay make anything smoother expensive for
+// little gain; a video is cheap enough to run at screen rate.
+const GIF_FPS = 20
+const WEBM_FPS = 30
+
+const NO_CANVAS =
+  "This browser wouldn't produce an image of the board. Reload the page, then export again."
 
 function download(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
@@ -25,17 +34,25 @@ function download(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-/** Target size for the exported media, capped and even for encoder friendliness. */
-function targetSize(crop: Crop) {
+/**
+ * The scratch canvas every frame is composed on, sized to the crop: capped, and
+ * even on both axes because encoders prefer it that way.
+ */
+function makeCanvas(crop: Crop, willReadFrequently = false) {
   const scale = Math.min(1, MAX_WIDTH / crop.width)
   const w = Math.max(2, Math.round((crop.width * scale) / 2) * 2)
   const h = Math.max(2, Math.round((crop.height * scale) / 2) * 2)
-  return { w, h }
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d', { willReadFrequently })
+  if (!ctx) throw new AppError(NO_CANVAS)
+  return { canvas, ctx, w, h }
 }
 
 function watermark(ctx: CanvasRenderingContext2D, w: number, h: number) {
   const size = Math.max(10, Math.round(h * 0.045))
-  ctx.font = `500 ${size}px Archivo, system-ui, sans-serif`
+  ctx.font = `500 ${size}px Geist Sans, ui-sans-serif, system-ui, sans-serif`
   ctx.fillStyle = 'rgba(23,25,29,0.4)'
   ctx.textAlign = 'right'
   ctx.textBaseline = 'bottom'
@@ -81,27 +98,31 @@ async function paintFrame(
 export interface SequenceOpts {
   frameCount: number
   speed: number
-  fps?: number
 }
 
-export async function exportSequenceGif(
+/** Export the captured frames as one moving image, in whichever format. */
+export function exportSequence(
   stage: Konva.Stage,
   crop: Crop,
-  { frameCount, speed, fps = 20 }: SequenceOpts,
+  kind: SequenceKind,
+  opts: SequenceOpts,
+): Promise<void> {
+  return kind === 'gif' ? exportGif(stage, crop, opts) : exportWebm(stage, crop, opts)
+}
+
+async function exportGif(
+  stage: Konva.Stage,
+  crop: Crop,
+  { frameCount, speed }: SequenceOpts,
   filename = 'footyboard.gif',
 ): Promise<void> {
   if (frameCount < 2)
     throw new AppError('A GIF needs at least two frames. Capture another position with + Frame, then export.')
-  const { w, h } = targetSize(crop)
-  const tmp = document.createElement('canvas')
-  tmp.width = w
-  tmp.height = h
-  const ctx = tmp.getContext('2d', { willReadFrequently: true })
-  if (!ctx) throw new AppError("This browser wouldn't produce an image of the board. Reload the page, then export again.")
+  const { ctx, w, h } = makeCanvas(crop, true)
 
   const seconds = sequenceDuration(frameCount, SECONDS_PER_FRAME) / speed
-  const steps = Math.max(2, Math.round(seconds * fps))
-  const delay = Math.round(1000 / fps)
+  const steps = Math.max(2, Math.round(seconds * GIF_FPS))
+  const delay = Math.round(1000 / GIF_FPS)
 
   const gif = GIFEncoder()
   const restore = useBoardStore.getState().playback.position
@@ -135,10 +156,10 @@ function pickMime(): string | null {
   return candidates.find((c) => R.isTypeSupported(c)) ?? null
 }
 
-export async function exportSequenceWebm(
+async function exportWebm(
   stage: Konva.Stage,
   crop: Crop,
-  { frameCount, speed, fps = 30 }: SequenceOpts,
+  { frameCount, speed }: SequenceOpts,
   filename = 'footyboard.webm',
 ): Promise<void> {
   if (frameCount < 2)
@@ -147,14 +168,9 @@ export async function exportSequenceWebm(
   if (!mimeType)
     throw new AppError("This browser can't record video. Export a GIF instead, or try Chrome or Edge.")
 
-  const { w, h } = targetSize(crop)
-  const tmp = document.createElement('canvas')
-  tmp.width = w
-  tmp.height = h
-  const ctx = tmp.getContext('2d')
-  if (!ctx) throw new AppError("This browser wouldn't produce an image of the board. Reload the page, then export again.")
+  const { canvas, ctx, w, h } = makeCanvas(crop)
 
-  const stream = tmp.captureStream(fps)
+  const stream = canvas.captureStream(WEBM_FPS)
   const chunks: BlobPart[] = []
   const rec = new MediaRecorder(stream, { mimeType })
   rec.ondataavailable = (e) => {

@@ -42,10 +42,14 @@ export async function loadBoard(boardId: string, mode: LoadMode): Promise<boolea
  */
 export async function flushSave(boardId: string): Promise<void> {
   const boards = useBoardsStore.getState()
-  const name = boards.boards.find((b) => b.id === boardId)?.name
+  // Never invent a name. The list is one page deep, so a board opened from a
+  // link may not be in it at all, and the literal that used to stand in here
+  // was written straight back over the owner's title on the next autosave.
+  // Null means "leave it as it is", which the server honours.
+  const name = boards.boards.find((b) => b.id === boardId)?.name ?? null
   boards.setSaveState('saving')
   try {
-    await api.saveBoard(boardId, name ?? 'My board', useBoardStore.getState().getPersistable())
+    await api.saveBoard(boardId, name, useBoardStore.getState().getPersistable())
     boards.touch(boardId)
     boards.setSaveState('saved')
   } catch (err) {

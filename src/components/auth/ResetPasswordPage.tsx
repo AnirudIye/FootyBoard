@@ -3,7 +3,7 @@ import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { api } from '../../lib/api'
 import { toUserMessage } from '../../lib/errors'
-import { AuthShell, field } from './AuthShell'
+import { AuthShell, field, submitBtn, FormError } from './AuthShell'
 
 export default function ResetPasswordPage() {
   const [params] = useSearchParams()
@@ -57,10 +57,7 @@ export default function ResetPasswordPage() {
         <motion.button
           whileTap={{ scale: 0.98 }}
           onClick={() => navigate('/login')}
-          className="mt-6 w-full rounded bg-accent px-4 py-2.5 text-[14px] font-medium text-paper
-            transition-colors duration-150 hover:bg-accent-hover
-            focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
-            focus-visible:outline-accent"
+          className={`mt-6 ${submitBtn}`}
         >
           Sign in
         </motion.button>
@@ -105,24 +102,9 @@ export default function ResetPasswordPage() {
           />
         </label>
 
-        {error && (
-          <p
-            role="alert"
-            className="rounded border border-accent/40 bg-[var(--accent-wash)] px-3 py-2 text-[13px] leading-relaxed text-ink"
-          >
-            {error}
-          </p>
-        )}
+        {error && <FormError>{error}</FormError>}
 
-        <motion.button
-          type="submit"
-          whileTap={{ scale: 0.98 }}
-          disabled={busy}
-          className="w-full rounded bg-accent px-4 py-2.5 text-[14px] font-medium text-paper
-            transition-colors duration-150 hover:bg-accent-hover disabled:opacity-50
-            focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
-            focus-visible:outline-accent"
-        >
+        <motion.button type="submit" whileTap={{ scale: 0.98 }} disabled={busy} className={submitBtn}>
           {busy ? 'Saving…' : 'Set the new password'}
         </motion.button>
       </form>

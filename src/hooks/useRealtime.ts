@@ -27,12 +27,29 @@ export function useRealtime() {
 
     let disposed = false
 
+    /**
+     * Messages are handled strictly in arrival order.
+     *
+     * `handle` awaits a REST round trip in the `need-state` and `replaced`
+     * branches, so letting two run at once means the slower one finishes last:
+     * two `replaced` messages in flight would leave whichever load happened to
+     * be slower as the winner, which is not the newer of the two. An op
+     * arriving during a pending `replaced` had the same problem from the other
+     * side — it applied to the pre-load board and was then read straight over.
+     * Chaining costs nothing at this message rate and removes both races.
+     */
+    let inOrder: Promise<void> = Promise.resolve()
+
     const connection = new RoomConnection(currentId, {
       onStatus: (status, detail) => {
         useRealtimeStore.getState().setStatus(status, detail)
         if (status === 'offline' && detail) toast(detail)
       },
-      onMessage: (message) => void handle(message),
+      onMessage: (message) => {
+        // Errors are swallowed rather than allowed to poison the chain: one
+        // message failing must not stop every later message from being handled.
+        inOrder = inOrder.then(() => handle(message)).catch(() => {})
+      },
     })
 
     /**
@@ -42,10 +59,15 @@ export function useRealtime() {
      * client already knows every peer id, so they all reach the same conclusion
      * independently and exactly one of them writes.
      */
-    const shouldAnswer = (): boolean => {
+    const shouldAnswer = (askerId: string): boolean => {
       const { peerId, peers } = useRealtimeStore.getState()
       if (!peerId) return false
-      return [peerId, ...Object.keys(peers)].sort()[0] === peerId
+      // The asker is excluded from its own election. The server announces a
+      // joiner before relaying their request, so by now everyone already counts
+      // them as a peer — and whenever their id happened to sort first, every
+      // responder concluded somebody else would answer and nobody did.
+      const candidates = [peerId, ...Object.keys(peers)].filter((id) => id !== askerId)
+      return candidates.sort()[0] === peerId
     }
 
     async function handle(message: ServerMessage) {
@@ -82,7 +104,7 @@ export function useRealtime() {
           return
 
         case 'need-state': {
-          if (!shouldAnswer()) return
+          if (!shouldAnswer(message.peerId)) return
           try {
             await flushSave(currentId!)
             connection.send({ type: 'replaced' })

@@ -122,10 +122,16 @@ export const api = {
       body: JSON.stringify({ name }),
     }),
 
-  saveBoard: <T>(id: string, name: string, data: T) =>
+  /**
+   * Write the board's contents. `name` is omitted when the caller does not
+   * know it, and the server then leaves the stored title alone: sending a
+   * guess is how a board could get renamed by a client that had simply never
+   * loaded its name.
+   */
+  saveBoard: <T>(id: string, name: string | null, data: T) =>
     request<{ board: BoardSummary }>(`/boards/${id}`, {
       method: 'PUT',
-      body: JSON.stringify({ name, data }),
+      body: JSON.stringify(name === null ? { data } : { name, data }),
     }),
 
   deleteBoard: (id: string) => request<void>(`/boards/${id}`, { method: 'DELETE' }),
@@ -173,6 +179,14 @@ export const api = {
   /**
    * Ask the AI fallback. Only called when the offline parser did not recognise
    * the message — see `runAssistant`.
+   *
+   * `consent` is required by the server, which rejects the request outright
+   * without it and records the grant against the account on the first one it
+   * accepts. Enforcing opt-in in the browser alone is not a consent basis: it
+   * is a checkbox anybody can skip past by calling the endpoint directly, and
+   * it leaves no record that anyone ever agreed to their messages and their
+   * board being sent to an outside provider. Send `true` only when the person
+   * has actually opted in from the panel.
    */
   askAssistant: (body: {
     message: string
@@ -180,6 +194,7 @@ export const api = {
     formationNames: string[]
     kind: string
     activeTeam: string
+    consent: boolean
   }) =>
     request<{ reply: string | null; command: { type: string } & Record<string, unknown> | null }>(
       '/assistant',

@@ -22,16 +22,24 @@ export default function BoardPage() {
   useKeyboard()
   usePlayback()
 
+  // A column, not a stack of floating bars at hand-measured offsets. The top
+  // bar wraps to a second row at narrow widths and the frame strip grows when
+  // frames are captured, so any fixed inset between them was a guess that came
+  // apart: the HUD ended up underneath a wrapped toolbar. Here the middle band
+  // is whatever is left over, and nothing inside it can reach the chrome.
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-paper">
-      <PitchCanvas />
-
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-paper">
       <Toolbar />
-      <DrawingToolbar />
+
+      <div className="relative flex-1 overflow-hidden">
+        <PitchCanvas />
+        <BenchRail side="home" />
+        <BenchRail side="away" />
+        <HUD />
+        <DrawingToolbar />
+      </div>
+
       <FrameStrip />
-      <BenchRail side="home" />
-      <BenchRail side="away" />
-      <HUD />
 
       <Inspector />
       <Assistant />

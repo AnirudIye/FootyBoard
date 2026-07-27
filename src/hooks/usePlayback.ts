@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useBoardStore } from '../store/boardStore'
-
-const SECONDS_PER_FRAME = 1.1
+import { SECONDS_PER_FRAME } from '../lib/frames'
 
 /**
  * Advances the playhead while playing. Runs a rAF clock that moves

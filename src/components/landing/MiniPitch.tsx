@@ -1,13 +1,21 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { animate, svg, stagger } from 'animejs'
 import { getFormation, mirror } from '../../lib/formations'
 import { useReducedMotion } from '../../hooks/useReducedMotion'
+import { SPRING_SOFT } from '../../theme/motion'
 
 const L = 105
 const W = 68
 const HOME = '#b4432e'
 const AWAY = '#2c5b8a'
+
+/**
+ * A marking's slot in the draw-on queue and the length of its own outline, fed
+ * to the `.mini-line` rule in index.css. Rect lengths ignore the 0.8 corner
+ * radius, which is a fraction of a unit at this size.
+ */
+const draw = (i: number, len: number) =>
+  ({ '--i': `${i}`, '--len': `${len}` }) as React.CSSProperties
 
 const HOME_CYCLE = ['4-3-3', '4-2-3-1', '4-4-2', '3-4-3']
 const AWAY_CYCLE = ['4-4-2', '4-3-3', '3-5-2', '4-2-3-1']
@@ -20,11 +28,7 @@ const toXY = (p: { x: number; y: number; n: number }) => ({
 
 function Chip({ x, y, n, color, keeper }: { x: number; y: number; n: number; color: string; keeper: boolean }) {
   return (
-    <motion.g
-      initial={false}
-      animate={{ x, y }}
-      transition={{ type: 'spring', stiffness: 120, damping: 18, mass: 0.7 }}
-    >
+    <motion.g initial={false} animate={{ x, y }} transition={SPRING_SOFT}>
       <circle r={2.5} fill={color} stroke="rgba(255,255,255,0.55)" strokeWidth={0.4} />
       {keeper && <circle r={1.6} fill="none" stroke="#fbf9f5" strokeWidth={0.35} opacity={0.8} />}
       <text
@@ -50,27 +54,10 @@ export default function MiniPitch({
   onCycle?: (codes: { home: string; away: string }) => void
 }) {
   const reduced = useReducedMotion()
-  const ref = useRef<SVGSVGElement>(null)
   const [idx, setIdx] = useState(0)
 
-  // Draw the pitch lines in on mount.
-  useEffect(() => {
-    const el = ref.current
-    if (!el || reduced) return
-    const lines = Array.from(el.querySelectorAll<SVGElement>('.mini-line'))
-    const drawables = svg.createDrawable(lines)
-    const anim = animate(drawables, {
-      draw: ['0 0', '0 1'],
-      duration: 1100,
-      delay: stagger(70),
-      ease: 'inOutQuad',
-    })
-    return () => {
-      anim.pause()
-    }
-  }, [reduced])
-
-  // Cycle formations.
+  // Cycle formations. The markings draw themselves in from CSS, so the only
+  // thing left to schedule here is which shape the chips are heading for.
   useEffect(() => {
     if (reduced) return
     const t = window.setInterval(() => setIdx((i) => i + 1), 3600)
@@ -90,7 +77,6 @@ export default function MiniPitch({
 
   return (
     <svg
-      ref={ref}
       viewBox={`-2 -2 ${L + 4} ${W + 4}`}
       className={className}
       role="img"
@@ -102,9 +88,8 @@ export default function MiniPitch({
         </clipPath>
       </defs>
 
-      {/* Turf with mow stripes */}
+      {/* Turf: the stripes cover it edge to edge, so there is no base beneath. */}
       <g clipPath="url(#mini-clip)">
-        <rect x={0} y={0} width={L} height={W} fill="#2f4a3b" />
         {Array.from({ length: 8 }).map((_, i) => (
           <rect
             key={i}
@@ -117,14 +102,42 @@ export default function MiniPitch({
         ))}
       </g>
 
-      {/* Markings (self-drawing) */}
-      <rect x={0} y={0} width={L} height={W} rx={0.8} {...stroke} />
-      <line x1={L / 2} y1={0} x2={L / 2} y2={W} {...stroke} />
-      <circle cx={L / 2} cy={W / 2} r={9.15} {...stroke} />
-      <rect x={0} y={W / 2 - 20.16} width={16.5} height={40.32} {...stroke} />
-      <rect x={L - 16.5} y={W / 2 - 20.16} width={16.5} height={40.32} {...stroke} />
-      <rect x={0} y={W / 2 - 9.16} width={5.5} height={18.32} {...stroke} />
-      <rect x={L - 5.5} y={W / 2 - 9.16} width={5.5} height={18.32} {...stroke} />
+      {/* Markings, drawn in on mount by the `.mini-line` rule in index.css */}
+      <rect x={0} y={0} width={L} height={W} rx={0.8} {...stroke} style={draw(0, 2 * (L + W))} />
+      <line x1={L / 2} y1={0} x2={L / 2} y2={W} {...stroke} style={draw(1, W)} />
+      <circle cx={L / 2} cy={W / 2} r={9.15} {...stroke} style={draw(2, 2 * Math.PI * 9.15)} />
+      <rect
+        x={0}
+        y={W / 2 - 20.16}
+        width={16.5}
+        height={40.32}
+        {...stroke}
+        style={draw(3, 2 * (16.5 + 40.32))}
+      />
+      <rect
+        x={L - 16.5}
+        y={W / 2 - 20.16}
+        width={16.5}
+        height={40.32}
+        {...stroke}
+        style={draw(4, 2 * (16.5 + 40.32))}
+      />
+      <rect
+        x={0}
+        y={W / 2 - 9.16}
+        width={5.5}
+        height={18.32}
+        {...stroke}
+        style={draw(5, 2 * (5.5 + 18.32))}
+      />
+      <rect
+        x={L - 5.5}
+        y={W / 2 - 9.16}
+        width={5.5}
+        height={18.32}
+        {...stroke}
+        style={draw(6, 2 * (5.5 + 18.32))}
+      />
 
       {/* Chips */}
       {home.map((p, i) => (
