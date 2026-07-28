@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useAuthStore } from '../../store/authStore'
 import { toUserMessage } from '../../lib/errors'
@@ -7,10 +7,25 @@ import { AuthShell, field, submitBtn, FormError } from './AuthShell'
 
 type Mode = 'signup' | 'login'
 
+/**
+ * Where to go once the account exists.
+ *
+ * Only same-origin paths are honoured. `next` arrives in the URL, so anyone can
+ * put anything in it, and sending someone to an absolute URL after they sign in
+ * is an open redirect: a link to our own login page could land them on a
+ * convincing copy of it. A value that does not start with a single `/` is
+ * ignored rather than corrected, and `//host` is rejected too because the
+ * browser reads it as protocol-relative and would leave the site.
+ */
+const safeNext = (raw: string | null): string | null =>
+  raw && raw.startsWith('/') && !raw.startsWith('//') ? raw : null
+
 export default function AuthPage({ mode }: { mode: Mode }) {
   const navigate = useNavigate()
+  const [params] = useSearchParams()
   const signUp = useAuthStore((s) => s.signUp)
   const logIn = useAuthStore((s) => s.logIn)
+  const next = safeNext(params.get('next'))
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -27,7 +42,11 @@ export default function AuthPage({ mode }: { mode: Mode }) {
     try {
       if (isSignup) await signUp(email, password, accepted)
       else await logIn(email, password)
-      navigate('/board')
+      // Both branches honour `next`, not just sign-in. Someone who was read a
+      // code and does not have an account yet goes signup -> board-they-were
+      // -invited-to, rather than signup -> an empty board with their code lost
+      // somewhere behind them.
+      navigate(next ?? '/board', { replace: true })
     } catch (err) {
       setError(toUserMessage(err, 'That did not work. Check the details and try again.'))
     } finally {
@@ -116,8 +135,11 @@ export default function AuthPage({ mode }: { mode: Mode }) {
 
       <p className="mt-5 text-[13px] text-ink-2">
         {isSignup ? 'Already have an account? ' : 'No account yet? '}
+        {/* `next` rides across the switch. Someone who arrived here holding a
+            join code and then realises they need the other form would otherwise
+            lose the code by clicking this link. */}
         <Link
-          to={isSignup ? '/login' : '/signup'}
+          to={`${isSignup ? '/login' : '/signup'}${next ? `?next=${encodeURIComponent(next)}` : ''}`}
           className="text-accent underline underline-offset-2"
         >
           {isSignup ? 'Sign in' : 'Create one'}

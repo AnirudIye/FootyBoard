@@ -171,9 +171,21 @@ export default function Toolbar() {
   return (
     <header className="relative z-20 shrink-0 border-b border-rule bg-surface/95 backdrop-blur-[2px]">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5">
-        <span className="pr-3 mr-1 border-r border-rule font-display text-[15px] font-semibold tracking-[-0.02em]">
+        {/* The wordmark is the way back out. A logo in the top left is the one
+            piece of chrome people already expect to be a link home, and until
+            now this was a bare span, so the board was a room with no marked
+            door. Nothing here is lost by leaving: a signed-in board is already
+            saved, and a guest board was never being kept. */}
+        <Link
+          to="/"
+          aria-label="FootyBoard home"
+          className="pr-3 mr-1 border-r border-rule font-display text-[15px] font-semibold
+            tracking-[-0.02em] transition-colors duration-150 ease-out hover:text-accent
+            focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
+            focus-visible:outline-accent rounded-sm"
+        >
           FootyBoard
-        </span>
+        </Link>
 
         <BoardPicker />
         <SaveStatus />

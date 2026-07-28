@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { toUserMessage } from '../../lib/errors'
@@ -29,6 +29,45 @@ export default function JoinPage() {
   const [code, setCode] = useState(() => clean(params.get('code') ?? ''))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const redeemed = useRef(false)
+
+  const redeem = useCallback(
+    async (value: string) => {
+      setBusy(true)
+      setError(null)
+      try {
+        const { board } = await api.joinWithCode(value)
+        // The board was not ours a moment ago, so the picker has not heard of it.
+        await useBoardsStore.getState().load()
+        useBoardsStore.getState().select(board.id)
+        navigate('/board', { replace: true })
+      } catch (err) {
+        setError(toUserMessage(err, 'That code is not valid. Check it and try again.'))
+        setBusy(false)
+      }
+    },
+    [navigate],
+  )
+
+  /**
+   * Finish the journey the person already started.
+   *
+   * Someone who typed a code, was sent away to make an account, and came back
+   * has said "join this board" once already. Landing them on the same form with
+   * their own code sitting in it, waiting for a second press, reads as though
+   * the first one did not take. So a code that arrived in the URL redeems
+   * itself as soon as there is an account to attach it to.
+   *
+   * The ref, not the busy flag, is what stops this firing twice: a failure sets
+   * `busy` back to false and the effect would otherwise retry a code the server
+   * has already refused, forever.
+   */
+  useEffect(() => {
+    const fromUrl = clean(params.get('code') ?? '')
+    if (!email || redeemed.current || fromUrl.length !== CODE_LENGTH) return
+    redeemed.current = true
+    void redeem(fromUrl)
+  }, [email, params, redeem])
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -45,18 +84,7 @@ export default function JoinPage() {
       return
     }
 
-    setBusy(true)
-    setError(null)
-    try {
-      const { board } = await api.joinWithCode(code)
-      // The board was not ours a moment ago, so the picker has not heard of it.
-      await useBoardsStore.getState().load()
-      useBoardsStore.getState().select(board.id)
-      navigate('/board', { replace: true })
-    } catch (err) {
-      setError(toUserMessage(err, 'That code is not valid. Check it and try again.'))
-      setBusy(false)
-    }
+    await redeem(code)
   }
 
   return (
