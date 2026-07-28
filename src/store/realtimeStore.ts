@@ -11,10 +11,33 @@ import type { Status } from '../lib/realtime/connection'
 
 export interface RemotePeer {
   id: string
+  /**
+   * Whatever the server disclosed about who this is, which on a board with
+   * anonymous guests turned on is not an address at all. Kept because it is
+   * what older readers label a peer from; prefer `displayName`.
+   */
   email: string
+  /**
+   * What to show on screen for this peer, and the only field to render.
+   *
+   * Always populated, and already a name rather than an identity: two things
+   * have happened to it by the time it is here. The relay substitutes a
+   * generated name server-side when the board hides addresses, so this is
+   * "their name in this room" rather than a thing the interface has to decide;
+   * and `shownName` below drops the domain from whatever is left.
+   */
+  displayName: string
   /** Normalized pitch coordinates, or null before they have moved. */
   cursor: { x: number; y: number } | null
   selection: string[]
+}
+
+/** A peer as the relay describes them. `displayName` is optional only so that
+ *  a caller relaying an older message shape still type-checks. */
+interface PeerInfo {
+  id: string
+  email: string
+  displayName?: string
 }
 
 interface RealtimeState {
@@ -39,8 +62,8 @@ interface RealtimeState {
   peers: Record<string, RemotePeer>
 
   setStatus: (status: Status, detail?: string) => void
-  welcome: (peerId: string, role: 'owner' | 'member', locked: boolean, peers: { id: string; email: string }[]) => void
-  peerJoined: (peerId: string, email: string) => void
+  welcome: (peerId: string, role: 'owner' | 'member', locked: boolean, peers: PeerInfo[]) => void
+  peerJoined: (peerId: string, email: string, displayName?: string) => void
   peerLeft: (peerId: string) => void
   setCursor: (peerId: string, x: number, y: number) => void
   setPeerSelection: (peerId: string, ids: string[]) => void
@@ -48,9 +71,28 @@ interface RealtimeState {
   reset: () => void
 }
 
-const blankPeer = (id: string, email: string): RemotePeer => ({
+/**
+ * A cursor label wants a name; the relay sends an identity.
+ *
+ * It discloses one of two things: a generated `Anonymous Quokka` on a board
+ * that hides addresses, or the plain address on one that does not. Only the
+ * second needs anything doing to it, and cutting the domain off it is
+ * presentation rather than privacy — on a board that names people normally the
+ * whole address is on the wire either way, which is known gap 2 in the handoff
+ * and not something a client can decide.
+ *
+ * It happens here, once, because this store is where both readers of a peer
+ * get one. Doing it in the components is what put `anirud@gmail.com` on every
+ * live cursor label the moment PeerLayer preferred `displayName` over splitting
+ * the address for itself. A generated name contains no `@`, so it passes
+ * through untouched.
+ */
+const shownName = (disclosed: string): string => disclosed.split('@')[0]
+
+const blankPeer = (id: string, email: string, displayName?: string): RemotePeer => ({
   id,
   email,
+  displayName: shownName(displayName ?? email),
   cursor: null,
   selection: [],
 })
@@ -74,11 +116,15 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
       // The owner is never locked out by their own lock, so this is only ever
       // true for someone else's board.
       locked: role !== 'owner' && locked,
-      peers: Object.fromEntries(peers.filter((p) => p.id !== peerId).map((p) => [p.id, blankPeer(p.id, p.email)])),
+      peers: Object.fromEntries(
+        peers
+          .filter((p) => p.id !== peerId)
+          .map((p) => [p.id, blankPeer(p.id, p.email, p.displayName)]),
+      ),
     }),
 
-  peerJoined: (peerId, email) =>
-    set((s) => ({ peers: { ...s.peers, [peerId]: blankPeer(peerId, email) } })),
+  peerJoined: (peerId, email, displayName) =>
+    set((s) => ({ peers: { ...s.peers, [peerId]: blankPeer(peerId, email, displayName) } })),
 
   peerLeft: (peerId) =>
     set((s) => {
@@ -129,6 +175,24 @@ export function peerColor(peerId: string): string {
   let hash = 0
   for (let i = 0; i < peerId.length; i++) hash = (hash * 31 + peerId.charCodeAt(i)) | 0
   return `hsl(${Math.abs(hash) % 360} 85% 62%)`
+}
+
+/**
+ * The letter a peer's avatar carries.
+ *
+ * Taken from the **last** word rather than the first, which is the whole
+ * difference between a stack of distinguishable people and a row of identical
+ * 'A's: every generated name is `Anonymous <Animal>`, so the first letter is
+ * the one part of it that is the same for everybody, in the single mode the
+ * feature exists for. The animal is what varies, and it is what the label under
+ * their cursor says too, so the two agree about who is who.
+ *
+ * `displayName` has no domain left on it by the time it reaches here, so a
+ * board that names people normally is unaffected: one word, first letter.
+ */
+export function peerInitial(peer: Pick<RemotePeer, 'displayName'>): string {
+  const last = peer.displayName.trim().split(/\s+/).pop() ?? ''
+  return last[0]?.toUpperCase() ?? '?'
 }
 
 /** Peer count including this client, for the HUD readout. */

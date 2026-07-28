@@ -1,61 +1,141 @@
 import { useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, useScroll, useTransform } from 'framer-motion'
 import ScrollProgress from './ScrollProgress'
 import FloodlitBackdrop from './FloodlitBackdrop'
 import TacticalLoop from './TacticalLoop'
 import MiniPitch from './MiniPitch'
-import { TacticalGlyph } from './TacticalGlyph'
-import type { GlyphName } from './TacticalGlyph'
+import { FeatureDiagram } from './FeatureDiagram'
+import type { DiagramName } from './FeatureDiagram'
 import { Reveal } from './fx/Reveal'
 import { Magnetic } from './fx/Magnetic'
 import { ClickSpark } from './fx/ClickSpark'
+import { SpecularButton } from './fx/SpecularButton'
+import PlasmaWave from './fx/PlasmaWave'
 import { useReducedMotion } from '../../hooks/useReducedMotion'
 import { useAuthStore } from '../../store/authStore'
 
-// Green stand-in for the reference's indigo→purple→amber sweep.
-const HEADLINE_GRADIENT = 'linear-gradient(to left, #0f7a45, #2ae07a, #c9ffe0)'
+// The page's three greens, named once. The signal is the accent token itself;
+// the deep and the pale are the ends of the headline's own ramp.
+const GREEN_DEEP = '#0f7a45'
+const GREEN_SIGNAL = '#2ae07a'
+const GREEN_PALE = '#c9ffe0'
 
-const NAV: { label: string; href: string }[] = [
+// Green stand-in for the reference's indigo→purple→amber sweep.
+const HEADLINE_GRADIENT = `linear-gradient(to left, ${GREEN_DEEP}, ${GREEN_SIGNAL}, ${GREEN_PALE})`
+
+/** Module scope, not an inline literal: PlasmaWave rebuilds its context if the
+ *  array's identity changes, and a fresh array every render would do that. */
+const PLASMA_COLORS: [string, string] = [GREEN_SIGNAL, GREEN_DEEP]
+
+/*
+  What sits between the plasma and the closing headline. Three layers painted
+  in this order, top first, each with exactly one job.
+
+  The pool is centred on the headline rather than on the section, and it is
+  wide (96%) and shallow, because the thing that has to stay legible is one
+  line of type running most of the width. Centring it on the section instead
+  put its weakest edge exactly on the ends of that line, which is where a
+  contrast measurement goes to fail. Pooling over the words and thinning by the
+  time it reaches the button is also the better picture: the ribbons come out
+  brightest where they frame the CTA and are quietest behind the copy.
+
+  The feather hides the section's own top and bottom edges, so the field
+  arrives and leaves instead of being switched on at a border.
+
+  The flat wash underneath both is the floor. It is sized for a plasma pixel
+  that comes out white, which the shader's channel crosstalk can produce at the
+  core of a streak, rather than for the green the field is mostly made of. That
+  is not a hypothetical: the brightest pixel the field puts under this headline
+  measures rgb(229 255 255).
+
+  Measured, so nobody trims it back. Over the headline's own glyph boxes the
+  scrim's three layers combine to a total alpha that bottoms out at 0.646, and
+  --ink on the worst pixel of a live field sampled across 320 frames reads
+  5.98:1. The floor under that is not the shader's to move: force every pixel
+  behind the headline to pure white and the same geometry still reads 5.6:1.
+  This type is 32px to 51px, so the bar is 3.0:1 at AA and 4.5:1 even at AAA.
+  There is real headroom. There is less of it than a desktop check suggests.
+
+  Because the worst case is a viewport around 480 to 570 CSS px, and that is
+  the trap. The radial is sized in percentages of a section whose proportions
+  change with the window: wide, the headline is a small target in the middle of
+  a large pool (alpha 0.75 and 8.6:1 at 1920), and narrow, the same line runs
+  nearly the full width and reaches the pool's weakest edge. Any measurement
+  taken on one screen is a measurement of that screen. Check the small end
+  before changing a number in here.
+*/
+const CLOSING_SCRIM = [
+  'radial-gradient(96% 52% at 50% 36%, rgb(var(--paper) / 0.72), transparent 80%)',
+  'linear-gradient(to bottom, rgb(var(--paper)), transparent 22%, transparent 78%, rgb(var(--paper)))',
+  'rgb(var(--paper) / 0.5)',
+].join(',')
+
+// `to` is a route, `href` an anchor on this page. Join is the only one of the
+// first kind, and it is here because the board's join screen had no way in
+// from the marketing page at all: you could be read a code and have nowhere
+// to type it.
+const NAV: { label: string; href?: string; to?: string }[] = [
   { label: 'Features', href: '#features' },
   { label: 'Demo', href: '#demo' },
   { label: 'Assistant', href: '#assistant' },
+  { label: 'Join by code', to: '/join' },
 ]
 
-const FEATURES: { glyph: GlyphName; tag: string; title: string; body: string }[] = [
+function NavItem({ item, className }: { item: (typeof NAV)[number]; className: string }) {
+  return item.to ? (
+    <Link to={item.to} className={className}>
+      {item.label}
+    </Link>
+  ) : (
+    <a href={item.href} className={className}>
+      {item.label}
+    </a>
+  )
+}
+
+interface Feature {
+  diagram: DiagramName
+  title: string
+  body: string
+}
+
+// Two bands, because there are two jobs and they happen in order: you put a
+// shape down, then you move it. The old grid was six equal cards, which said
+// the six were interchangeable, and they are not: Formations is the one people
+// come for and it leads its band at twice the size.
+const SHAPING: Feature[] = [
   {
-    glyph: 'formation',
-    tag: 'PRESETS',
+    diagram: 'formations',
     title: 'Formations',
     body: 'Ten shapes for eleven-a-side, plus sets for 7-a-side and futsal. Numbers follow the roles, so your 6 sits where a 6 sits. Mid-block and high-line versions of each.',
   },
   {
-    glyph: 'assistant',
-    tag: 'ASSISTANT',
+    diagram: 'assistant',
     title: 'The assistant',
     body: 'Type what you want and the board does it. No account, no network. It reads your words on the machine you are sat at.',
   },
   {
-    glyph: 'frames',
-    tag: 'FRAMES',
+    diagram: 'canvas',
+    title: 'Room to think',
+    body: 'The pitch has edges. The canvas around it does not, so you can park a set piece off to one side and come back to it later.',
+  },
+]
+
+const MOVING: Feature[] = [
+  {
+    diagram: 'frames',
     title: 'Frames',
     body: 'Capture a position. Move people. Capture again. Scrub back through it, or export the whole move as a GIF or a clip.',
   },
   {
-    glyph: 'collab',
-    tag: 'ROOMS',
+    diagram: 'rooms',
     title: 'Rooms',
     body: 'Boards live at a URL. Send it on and someone else is looking at the same pitch.',
   },
   {
-    glyph: 'canvas',
-    tag: 'CANVAS',
-    title: 'Room to think',
-    body: 'The pitch has edges. The canvas around it does not, so you can park a set piece off to one side and come back to it later.',
-  },
-  {
-    glyph: 'share',
-    tag: 'SHARING',
+    diagram: 'sharing',
     title: 'Sharing',
     body: 'The address bar is the share link. Nobody has to sign up to look at what you made.',
   },
@@ -64,23 +144,55 @@ const FEATURES: { glyph: GlyphName; tag: string; title: string; body: string }[]
 // Shapes the board ships with — honest marquee content, not invented clients.
 const SHAPES = ['4-3-3', '4-2-3-1', '3-5-2', '4-4-2', '5-3-2', '4-1-4-1', '3-4-3', '4-3-2-1']
 
-/** The one thing the page is asking for, in the two places it asks. */
+/**
+ * The one thing the page is asking for, in the two places it asks.
+ *
+ * The specular rim is the page's single moment of spectacle, and it is spent
+ * here rather than spread across six cards, because this is the only control
+ * that matters. The focus outline stays even though SpecularButton lights the
+ * whole edge on focus-visible: the rim is WebGL and can decline to exist, and
+ * a focus indicator that depends on a graphics context is not one.
+ */
 function OpenBoardCta() {
   return (
     <Magnetic>
       <ClickSpark>
-        <Link
-          to="/board"
-          className="liquid-glass inline-flex items-center gap-2 rounded-full px-[29px] py-[24px]
-            text-[15px] font-medium leading-none text-foreground transition-colors duration-200
-            hover:bg-[var(--accent-wash)] focus-visible:outline focus-visible:outline-2
-            focus-visible:outline-offset-2 focus-visible:outline-accent"
-        >
-          Open the board
-          <span aria-hidden>→</span>
-        </Link>
+        <SpecularButton>
+          <Link
+            to="/board"
+            className="liquid-glass inline-flex items-center gap-2 rounded-full px-[29px] py-[24px]
+              text-[15px] font-medium leading-none text-foreground transition-colors duration-200
+              hover:bg-[var(--accent-wash)] focus-visible:outline focus-visible:outline-2
+              focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            Open the board
+            <span aria-hidden>→</span>
+          </Link>
+        </SpecularButton>
       </ClickSpark>
     </Magnetic>
+  )
+}
+
+/**
+ * The quiet way in, for whoever was read a code instead of sent a link.
+ *
+ * The ink is /75 rather than /45 because at 12px this has to clear 4.5:1, and
+ * the closing instance sits over the plasma: a bright streak passing under it
+ * took the /45 value down to 1.94:1. The scrim was tuned for the headline,
+ * which is far larger, so this line needs the contrast in the ink itself.
+ */
+function JoinByCodeLink({ className = '' }: { className?: string }) {
+  return (
+    <Link
+      to="/join"
+      className={`font-mono text-[12px] tracking-[0.08em] text-foreground/75 underline-offset-4
+        transition-colors duration-200 hover:text-accent hover:underline focus-visible:outline
+        focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent
+        ${className}`}
+    >
+      Or join with a code
+    </Link>
   )
 }
 
@@ -102,14 +214,13 @@ function Navbar() {
 
         <div className="hidden items-center gap-8 md:flex">
           {NAV.map((item) => (
-            <a
+            <NavItem
               key={item.label}
-              href={item.href}
+              item={item}
               className="text-[14px] text-foreground/90 transition-colors duration-200
-                hover:text-accent"
-            >
-              {item.label}
-            </a>
+                hover:text-accent focus-visible:outline focus-visible:outline-2
+                focus-visible:outline-offset-4 focus-visible:outline-accent"
+            />
           ))}
         </div>
 
@@ -183,6 +294,23 @@ function ShapeMarquee() {
   )
 }
 
+/**
+ * A band's name, sitting on the hairline that separates it from the band
+ * above. This is the section's whole grouping mechanism now, which is why it
+ * is a rule rather than a heading: it draws the line between the two halves
+ * without pretending to be a third level of headline.
+ */
+function BandRule({ children }: { children: ReactNode }) {
+  return (
+    <Reveal className="mb-10 flex items-center gap-5">
+      <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.2em] text-foreground/45">
+        {children}
+      </span>
+      <span className="h-px flex-1 bg-rule" />
+    </Reveal>
+  )
+}
+
 export default function LandingPage() {
   const heroRef = useRef<HTMLElement>(null)
 
@@ -251,8 +379,9 @@ export default function LandingPage() {
                 Two teams, a pitch, and nothing in the way. Set the shape, move it, send the link.
               </p>
 
-              <div className="mt-[25px]">
+              <div className="mt-[25px] flex flex-col items-center gap-[18px]">
                 <OpenBoardCta />
+                <JoinByCodeLink />
               </div>
             </motion.div>
           </div>
@@ -274,24 +403,51 @@ export default function LandingPage() {
               What a coach actually needs, and not much else.
             </Reveal>
 
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {FEATURES.map((f, i) => (
-                <Reveal key={f.tag} delay={i * 0.05}>
-                  <div
-                    className="liquid-glass group h-full rounded-lg p-6 transition-transform
-                      duration-300 hover:-translate-y-1"
-                  >
-                    <div className="mb-4 flex items-center justify-between">
-                      <span className="text-accent transition-transform duration-300 group-hover:-translate-y-0.5">
-                        <TacticalGlyph name={f.glyph} className="h-7 w-7" />
-                      </span>
-                      <span className="font-mono text-[10px] tracking-[0.16em] text-foreground/40">
-                        {f.tag}
-                      </span>
+            {/* Band one. The rule and its label are the only grouping device
+                left; the cards lost their borders because six boxes drawn the
+                same size is the thing that made them look interchangeable. */}
+            <BandRule>Getting a shape down</BandRule>
+
+            <div className="grid gap-x-14 gap-y-14 lg:grid-cols-2">
+              <Reveal>
+                <FeatureDiagram name={SHAPING[0].diagram} className="w-full max-w-[480px]" />
+                <h3 className="mt-8 font-display text-[26px] font-normal leading-tight tracking-[-0.02em]">
+                  {SHAPING[0].title}
+                </h3>
+                <p className="mt-3 max-w-md text-[15px] leading-relaxed text-foreground/60">
+                  {SHAPING[0].body}
+                </p>
+              </Reveal>
+
+              <div className="flex flex-col justify-center gap-11">
+                {SHAPING.slice(1).map((f, i) => (
+                  <Reveal key={f.title} delay={0.05 + i * 0.05}>
+                    {/* Side by side once there is room. Below sm the text
+                        column would be squeezed to about 120px, which is four
+                        words a line. */}
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
+                      <FeatureDiagram name={f.diagram} className="w-[168px] shrink-0" />
+                      <div>
+                        <h3 className="text-[16px] font-semibold tracking-[-0.01em]">{f.title}</h3>
+                        <p className="mt-2 text-[14px] leading-relaxed text-foreground/60">{f.body}</p>
+                      </div>
                     </div>
-                    <h3 className="mb-1.5 text-[16px] font-semibold tracking-[-0.01em]">{f.title}</h3>
-                    <p className="text-[14px] leading-relaxed text-foreground/60">{f.body}</p>
-                  </div>
+                  </Reveal>
+                ))}
+              </div>
+            </div>
+
+            {/* Band two. Three equal moves, so three equal cells. */}
+            <div className="mt-24">
+              <BandRule>And moving it</BandRule>
+            </div>
+
+            <div className="grid gap-x-12 gap-y-14 sm:grid-cols-2 lg:grid-cols-3">
+              {MOVING.map((f, i) => (
+                <Reveal key={f.title} delay={i * 0.05}>
+                  <FeatureDiagram name={f.diagram} className="w-full max-w-[288px]" />
+                  <h3 className="mt-7 text-[16px] font-semibold tracking-[-0.01em]">{f.title}</h3>
+                  <p className="mt-2 max-w-sm text-[14px] leading-relaxed text-foreground/60">{f.body}</p>
                 </Reveal>
               ))}
             </div>
@@ -331,14 +487,24 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* Closing */}
-        <section className="border-t border-rule/60">
-          <div className="mx-auto max-w-6xl px-8 py-24 text-center">
+        {/* Closing. The one WebGL field on the page, and the last screen. */}
+        <section className="relative overflow-hidden border-t border-rule/60">
+          <PlasmaWave
+            className="absolute inset-0"
+            colors={PLASMA_COLORS}
+            speed1={0.04}
+            speed2={0.03}
+            focalLength={0.9}
+          />
+          <div aria-hidden className="absolute inset-0" style={{ background: CLOSING_SCRIM }} />
+
+          <div className="relative mx-auto max-w-6xl px-8 py-32 text-center">
             <Reveal className="mx-auto mb-8 max-w-2xl font-display text-[clamp(2rem,4.6vw,3.2rem)] font-normal leading-[1.04] tracking-[-0.015em]">
               Open a pitch and show the idea.
             </Reveal>
-            <Reveal delay={0.1} className="flex justify-center">
+            <Reveal delay={0.1} className="flex flex-col items-center gap-[18px]">
               <OpenBoardCta />
+              <JoinByCodeLink />
             </Reveal>
           </div>
         </section>
@@ -353,9 +519,7 @@ export default function LandingPage() {
             </div>
             <nav className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 font-mono text-[11px] uppercase tracking-[0.1em] text-foreground/40">
               {NAV.map((item) => (
-                <a key={item.label} href={item.href} className="transition-colors hover:text-accent">
-                  {item.label}
-                </a>
+                <NavItem key={item.label} item={item} className="transition-colors hover:text-accent" />
               ))}
               <Link to="/privacy" className="transition-colors hover:text-accent">
                 Privacy

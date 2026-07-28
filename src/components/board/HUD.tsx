@@ -1,11 +1,18 @@
 import { useBoardStore } from '../../store/boardStore'
 import { useRealtimeStore, useRoomSize } from '../../store/realtimeStore'
+import { useAuthStore } from '../../store/authStore'
 import { MonoReadout } from '../ui/MonoReadout'
 
 /**
  * The room readout replaced a decorative six-character id that was generated on
  * load and meant nothing. It now says whether the socket is actually up and how
  * many people are in here, which is the only thing worth a slot in the HUD.
+ *
+ * A guest has no room at all, so it is not rendered for them rather than
+ * reading OFFLINE, which describes a connection that failed rather than one
+ * that was never attempted. Nothing takes its place: the account menu already
+ * says a guest is not saving, beside the button that fixes it, and this
+ * container is pointer-events-none so a tooltip here could never fire anyway.
  */
 function RoomReadout() {
   const status = useRealtimeStore((s) => s.status)
@@ -44,6 +51,7 @@ export default function HUD() {
   const kind = useBoardStore((s) => s.view.kind)
   const selectionCount = useBoardStore((s) => s.selection.length)
   const locked = useRealtimeStore((s) => s.locked)
+  const signedIn = useAuthStore((s) => s.email)
 
   return (
     <div
@@ -54,7 +62,7 @@ export default function HUD() {
       {lastFormation && <MonoReadout label="SHAPE" value={lastFormation} />}
       <MonoReadout label="PITCH" value={kind === '11' ? '11v11' : kind === '7aside' ? '7v7' : 'futsal'} />
       <MonoReadout label="ZOOM" value={`${Math.round(zoom * 100)}%`} />
-      <RoomReadout />
+      {signedIn && <RoomReadout />}
       {locked && <MonoReadout label="MODE" value="VIEW ONLY" className="text-ink-2" />}
     </div>
   )

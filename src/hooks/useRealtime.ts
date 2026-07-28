@@ -86,7 +86,7 @@ export function useRealtime() {
         }
 
         case 'peer-joined':
-          store.peerJoined(message.peerId, message.email)
+          store.peerJoined(message.peerId, message.email, message.displayName)
           // Introduce ourselves back. Their `welcome` could only see the
           // instance that answered their connection, so this is how a room
           // spread across processes learns it is one room.
@@ -96,7 +96,7 @@ export function useRealtime() {
         case 'peer-present':
           // An answer to someone else's join. Never replied to, or every join
           // would set off an endless round of introductions.
-          store.peerJoined(message.peerId, message.email)
+          store.peerJoined(message.peerId, message.email, message.displayName)
           return
 
         case 'peer-left':

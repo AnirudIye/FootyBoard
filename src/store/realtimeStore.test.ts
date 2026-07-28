@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useRealtimeStore, peerColor } from './realtimeStore'
+import { useRealtimeStore, peerColor, peerInitial } from './realtimeStore'
 
 /**
  * Two questions that are not the same question:
@@ -96,6 +96,34 @@ describe('presence', () => {
     useRealtimeStore.getState().peerJoined('them', 'them@example.com')
     useRealtimeStore.getState().peerJoined('them', 'them@example.com')
     expect(Object.keys(useRealtimeStore.getState().peers)).toHaveLength(1)
+  })
+
+  it('labels a peer by the part of their address in front of the @', () => {
+    // What the relay discloses on a board that names people normally is the
+    // whole address, and a cursor label is not the place for a domain.
+    welcomeAs('owner', false)
+    useRealtimeStore
+      .getState()
+      .peerJoined('them', 'anirud@gmail.com', 'anirud@gmail.com')
+
+    const peer = useRealtimeStore.getState().peers.them
+    expect(peer.displayName).toBe('anirud')
+    expect(peer.email).toBe('anirud@gmail.com')
+  })
+
+  it('leaves a generated name exactly as the relay sent it', () => {
+    welcomeAs('owner', false)
+    useRealtimeStore.getState().peerJoined('them', 'Anonymous Badger', 'Anonymous Badger')
+    expect(useRealtimeStore.getState().peers.them.displayName).toBe('Anonymous Badger')
+  })
+
+  it('takes an avatar initial from the animal, not from "Anonymous"', () => {
+    // The one mode this feature exists for is the one where every name starts
+    // with the same letter, so the first letter is the one that cannot be used.
+    expect(peerInitial({ displayName: 'Anonymous Badger' })).toBe('B')
+    expect(peerInitial({ displayName: 'Anonymous Quokka' })).toBe('Q')
+    expect(peerInitial({ displayName: 'anirud' })).toBe('A')
+    expect(peerInitial({ displayName: '' })).toBe('?')
   })
 
   it('gives a peer the same colour on every client', () => {

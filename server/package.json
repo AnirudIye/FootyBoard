@@ -9,9 +9,9 @@
   "scripts": {
     "db": "node scripts/pg.js start",
     "db:stop": "node scripts/pg.js stop",
-    "dev": "node --watch src/index.js",
-    "start": "node src/index.js",
-    "cluster": "node scripts/cluster.js",
+    "dev": "node --watch --env-file-if-exists=.env src/index.js",
+    "start": "node --env-file-if-exists=.env src/index.js",
+    "cluster": "node --env-file-if-exists=.env scripts/cluster.js",
     "test": "node --test"
   },
   "dependencies": {

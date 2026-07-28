@@ -15,6 +15,7 @@ import SaveStatus from './SaveStatus'
 import ShareDialog from './ShareDialog'
 import PresenceStack from './PresenceStack'
 import { useRealtimeStore } from '../../store/realtimeStore'
+import { useAuthStore } from '../../store/authStore'
 import { toast } from '../../store/toastStore'
 import { toUserMessage } from '../../lib/errors'
 import type { PitchView, PitchKind, Side } from '../../lib/types'
@@ -48,34 +49,52 @@ const TEAMS: Option<Side>[] = [
   { id: 'away', label: 'Away', dot: AWAY_COLOR },
 ]
 
-// Two readings of the same control. `accent` is a mode you are switching the
-// board into; `team` is who you are currently setting up, which is identified
-// by its own colour rather than the accent, so it reads as "who am I editing"
-// rather than as a generic toggle.
-const TONES = {
-  accent: { pill: 'bg-accent', on: 'text-paper', off: 'text-ink-2 hover:text-ink' },
-  team: { pill: 'bg-surface shadow-1', on: 'text-ink', off: 'text-ink-3 hover:text-ink-2' },
-}
+// The tooltips have to name the key the reader's own keyboard has.
+const MOD = /Mac|iPhone|iPad/.test(navigator.userAgent) ? 'Cmd' : 'Ctrl'
 
+// The active option is marked, not filled. A solid accent pill forces its label
+// down to --paper, and near-black-on-green was the one place in the product
+// where "selected" was written in the darkest ink on screen; the accent is a
+// floodlit green, so nothing light enough to read as white survives on it
+// (--ink on --accent measures 1.56:1 against a 4.5:1 floor, and no off-white
+// can fix that). Underlining instead keeps the accent as the thing that marks
+// the position and leaves the label on the group's own dark ground, where
+// --ink reaches 17.33:1.
+//
+// This is also why there is no longer a tone variant. The old `team` tone
+// existed only to opt out of the accent pill, on the grounds that the team you
+// are editing is identified by its own colour rather than by the accent. With
+// no pill to opt out of, the two readings render identically and the dot is
+// still doing that job, so keeping two entries that differ in nothing was
+// keeping a fork open for the next person to make them drift.
 function Segmented<T extends string>({
   options,
   value,
   onChange,
   disabled = false,
-  tone = 'accent',
 }: {
   options: Option<T>[]
   value: T
   onChange: (v: T) => void
   disabled?: boolean
-  tone?: keyof typeof TONES
 }) {
-  // A shared layoutId slides the active pill between options.
+  // A shared layoutId slides the active marker between options.
   const group = useId()
-  const look = TONES[tone]
   return (
+    // `opacity-45` fades the group as one composite, label and bg-sunken
+    // together, so the disabled label is read against a ground that faded with
+    // it: 4.27:1 active, 2.59:1 inactive. Both sit under the 4.5:1 floor and
+    // both are fine, because WCAG 1.4.3 exempts inactive components.
+    //
+    // The figures are written down because the near-miss is easy to make and
+    // has been made: blending the label 45% toward the ground *after* the
+    // ground has already faded charges the text for the opacity twice and
+    // reads 4.18:1 / 2.52:1. Opacity applies to the group once. An element
+    // with `opacity` renders itself and its descendants into one buffer, where
+    // the label is still fully opaque over bg-sunken, and only that buffer is
+    // blended over the header.
     <div
-      className={`inline-flex items-center gap-0.5 rounded border border-rule bg-sunken p-0.5
+      className={`inline-flex flex-wrap items-center gap-0.5 rounded border border-rule bg-sunken p-0.5
         ${disabled ? 'opacity-45' : ''}`}
     >
       {options.map((o) => {
@@ -88,13 +107,17 @@ function Segmented<T extends string>({
             aria-pressed={active}
             className={`relative flex items-center gap-1.5 rounded px-2.5 py-1 text-[12px] font-medium
               transition-colors duration-150 disabled:cursor-not-allowed
-              ${active ? look.on : look.off}`}
+              ${active ? 'text-ink' : 'text-ink-2 hover:text-ink'}`}
           >
             {active && (
+              // No negative z-index here, unlike the pill this replaces: that
+              // one had to sit behind its own label, and an underline never
+              // overlaps one. Left at `auto` it paints above the group's
+              // background, which is the only thing it has to clear.
               <motion.span
                 layoutId={`seg-${group}`}
                 transition={{ type: 'spring', stiffness: 520, damping: 34, mass: 0.6 }}
-                className={`absolute inset-0 -z-10 rounded ${look.pill}`}
+                className="absolute inset-x-1.5 bottom-0 h-[2px] rounded-full bg-accent"
               />
             )}
             {o.dot && (
@@ -125,6 +148,7 @@ export default function Toolbar() {
   const canRedo = useBoardStore((s) => s.history.future.length > 0)
 
   const locked = useRealtimeStore((s) => s.locked)
+  const email = useAuthStore((s) => s.email)
 
   const activeTeam = useBoardStore((s) => s.activeTeam)
   const setActiveTeam = useBoardStore((s) => s.setActiveTeam)
@@ -133,6 +157,17 @@ export default function Toolbar() {
   const [formation, setFormation] = useState(names[0])
   const current = names.includes(formation) ? formation : names[0]
 
+  // Every group in here wraps, and that is load-bearing rather than tidy.
+  // `flex-wrap` on the outer row alone only ever moved whole groups onto new
+  // lines; a group that was itself wider than the viewport simply overflowed,
+  // and because BoardPage clips the whole column nothing looked cut off. At
+  // 375px that put High at x=353 and Apply at x=409, both painted outside the
+  // window with no scrollbar anywhere to reach them, so a phone could not apply
+  // a formation at all. Wrapping rather than scrolling the bar, because every
+  // popover in here (Boards, Pitch options, Saved shapes, Account) is an
+  // absolutely positioned child rather than a portal, and `overflow-x-auto`
+  // computes `overflow-y` to `auto` as well, which would clip all four of them
+  // open downwards at every width. The column layout already expects a tall bar.
   return (
     <header className="relative z-20 shrink-0 border-b border-rule bg-surface/95 backdrop-blur-[2px]">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5">
@@ -155,7 +190,7 @@ export default function Toolbar() {
         <Segmented options={KINDS} value={view.kind} onChange={setPitchKind} disabled={locked} />
 
         {!locked && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <select
               value={current}
               onChange={(e) => setFormation(e.target.value)}
@@ -169,24 +204,37 @@ export default function Toolbar() {
                 </option>
               ))}
             </select>
-            <Segmented options={TEAMS} value={activeTeam} onChange={setActiveTeam} tone="team" />
+            <Segmented options={TEAMS} value={activeTeam} onChange={setActiveTeam} />
             <Segmented options={BLOCKS} value={block} onChange={setBlock} />
-            <Button variant="primary" onClick={() => applyFormation(activeTeam, current, block)}>
+            {/* Accent-washed rather than solid accent: the header's one filled
+                green belongs to the only thing here a guest cannot already do.
+                The `!` is load-bearing. Tailwind emits `bg-surface`, `border-rule`
+                and `text-ink` after their accent counterparts, so an override of
+                equal specificity coming from `className` silently loses however
+                it is ordered in the attribute. */}
+            <Button
+              variant="secondary"
+              className="!border-accent/40 !bg-[var(--accent-wash)] !text-accent hover:!border-accent"
+              onClick={() => applyFormation(activeTeam, current, block)}
+            >
               Apply
             </Button>
           </div>
         )}
 
-        <div className="flex items-center gap-2">
-          <Button onClick={undoAction} disabled={!canUndo || locked}>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={undoAction} disabled={!canUndo || locked} title={`Undo (${MOD} Z)`}>
             Undo
           </Button>
-          <Button onClick={redoAction} disabled={!canRedo || locked}>
+          <Button onClick={redoAction} disabled={!canRedo || locked} title={`Redo (${MOD} Shift Z)`}>
             Redo
           </Button>
           {/* Fitting and exporting are yours regardless — they change nothing. */}
-          <Button onClick={() => boardHandles.fitPitch?.()}>Fit</Button>
+          <Button onClick={() => boardHandles.fitPitch?.()} title="Fit the pitch to the window (F)">
+            Fit
+          </Button>
           <Button
+            title="Export the board as a PNG"
             onClick={async () => {
               try {
                 await boardHandles.exportPng?.()
@@ -200,19 +248,23 @@ export default function Toolbar() {
           </Button>
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           <PresenceStack />
           {/* Sits next to Share because the two are the same job from opposite
-              ends: one hands out a code, the other takes one. */}
-          <Link
-            to="/join"
-            className="rounded border border-rule bg-surface px-3 py-1.5 text-[13px] leading-none
-              text-ink-2 transition-colors duration-150 hover:border-rule-strong hover:text-ink
-              focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
-              focus-visible:outline-accent"
-          >
-            Join by code
-          </Link>
+              ends: one hands out a code, the other takes one. Hidden from a
+              guest for the same reason ShareDialog is: /join only redirects
+              them to /login, so the button's whole outcome is a dead end. */}
+          {email && (
+            <Link
+              to="/join"
+              className="rounded border border-rule bg-surface px-3 py-1.5 text-[13px] leading-none
+                text-ink-2 transition-colors duration-150 hover:border-rule-strong hover:text-ink
+                focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
+                focus-visible:outline-accent"
+            >
+              Join by code
+            </Link>
+          )}
           <ShareDialog />
           <AccountMenu />
           <TokenPalette />

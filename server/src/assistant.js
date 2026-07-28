@@ -18,10 +18,39 @@
 
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models'
 
-// One env var to change if the free tier moves to a different model name.
-const MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash'
+// One env var to change if the free tier moves to a different model name. The
+// default is the rolling alias rather than a pinned version on purpose: this
+// used to be `gemini-2.5-flash`, which Google stopped serving to new keys, and
+// the symptom was a bare 404 rather than anything that reads as a deprecation.
+// An alias moves with the free tier; pin it here only when a specific version
+// is actually wanted.
+const MODEL = process.env.GEMINI_MODEL ?? 'gemini-flash-latest'
 
 export const assistantEnabled = () => Boolean(process.env.GEMINI_API_KEY)
+
+/**
+ * The named pitch areas a player can be sent to.
+ *
+ * Copied by hand from `ZONES` in `src/lib/parser.ts`, because this is a server
+ * module and that is a frontend one. The drift is in the safe direction the
+ * same way the function list is: a zone here that the client does not know maps
+ * to no coordinates and moves nobody, and a zone the client knows but that is
+ * missing here is simply one the AI cannot ask for.
+ */
+const ZONES = [
+  'left-wing',
+  'right-wing',
+  'left-halfspace',
+  'right-halfspace',
+  'center-circle',
+  'edge-of-box',
+  'penalty-spot',
+  'six-yard-box',
+  'left-back',
+  'right-back',
+  'high-line',
+  'deep',
+]
 
 /**
  * Every action the assistant may take, as OpenAPI-shaped declarations.
@@ -88,7 +117,96 @@ const FUNCTIONS = [
     description: 'Describe what is currently on the board. Use when asked what the board shows rather than to change it.',
     parameters: { type: 'OBJECT', properties: {} },
   },
+  {
+    name: 'movePlayer',
+    description:
+      'Move one player to a named area of the pitch. Use when the coach names a shirt number and where they want that player, like "push the 9 out to the left wing" or "drop 6 deeper".',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        side: { type: 'STRING', enum: ['home', 'away'], description: 'Which team. Default to the active team if unstated.' },
+        number: {
+          type: 'INTEGER',
+          description: 'The shirt number printed on the chip. Numbers run per team, so 9 exists on both sides.',
+        },
+        zone: {
+          type: 'STRING',
+          enum: ZONES,
+          description:
+            "Where to put that player. Left and right are that team's own left and right as they attack, so they mean opposite touchlines for the two sides. Use high-line and deep for up or down the pitch through the middle.",
+        },
+      },
+      required: ['side', 'number', 'zone'],
+    },
+  },
+  {
+    name: 'benchPlayer',
+    description: 'Take a player off the pitch and put them on the bench.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        side: { type: 'STRING', enum: ['home', 'away'], description: 'Which team. Default to the active team if unstated.' },
+        number: { type: 'INTEGER', description: 'The shirt number of the player to take off.' },
+      },
+      required: ['side', 'number'],
+    },
+  },
+  {
+    name: 'returnPlayer',
+    description: 'Bring a substitute off the bench and back onto the pitch, at the halfway line in their own half.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        side: { type: 'STRING', enum: ['home', 'away'], description: 'Which team. Default to the active team if unstated.' },
+        number: { type: 'INTEGER', description: 'The shirt number of the substitute to bring on.' },
+      },
+      required: ['side', 'number'],
+    },
+  },
 ]
+
+/**
+ * Take the model's arguments through the declaration that offered them.
+ *
+ * Returns the validated arguments, or null if the call does not fit its own
+ * schema. Checking the function name is only half the boundary this file claims
+ * to be: `movePlayer` with a zone nobody declared is as much a capability we
+ * never offered as a function nobody declared, and unlike a bad name it does not
+ * fail anywhere visible. The client looks the zone up in a table, gets
+ * undefined, and writes NaN coordinates that `JSON.stringify` turns into null,
+ * so the chip is broadcast to every peer and autosaved with no position at all;
+ * on the away side the same input throws inside `mirror` instead, so one team
+ * corrupts silently and the other fails loudly on identical input.
+ *
+ * Only declared keys survive, so an argument the schema never mentioned cannot
+ * ride along into the command either.
+ */
+const checkArgs = (declaration, raw) => {
+  const args = {}
+
+  for (const [key, spec] of Object.entries(declaration.parameters.properties ?? {})) {
+    let value = raw[key]
+    if (value === undefined) continue
+    // Shirt numbers are declared INTEGER and normally come back as JSON numbers,
+    // but ask for one inside a sentence and a model will occasionally answer "9".
+    // The board looks players up with ===, so a string would report no such
+    // player rather than move them, which reads as a bug in the board.
+    if (spec.type === 'INTEGER') value = Number(value)
+
+    const ok = spec.enum
+      ? spec.enum.includes(value)
+      : spec.type === 'INTEGER'
+        ? Number.isInteger(value)
+        : typeof value === 'string'
+    if (!ok) return null
+
+    args[key] = value
+  }
+
+  // A required argument the model left out is the same problem arriving by the
+  // other door: `movePlayer` with no zone reaches the client and moves nobody.
+  return (declaration.parameters.required ?? []).every((key) => args[key] !== undefined) ? args : null
+}
 
 const systemPrompt = (context) =>
   [
@@ -101,6 +219,16 @@ const systemPrompt = (context) =>
     '',
     'Keep replies to one or two sentences. Write like a coach talking to a coach: plain, specific, no preamble.',
     'Never use em dashes. Use a full stop, a comma, or a colon instead.',
+    '',
+    // The board description is deliberately coordinate-free and names no shirt
+    // numbers, so a coach saying "push the striker wide" gives the model nothing
+    // to resolve. The numbering is conventional and the formations honour it, so
+    // stating the convention is enough to turn a role back into a number. When
+    // the guess is wrong the client says which number it could not find rather
+    // than moving somebody else.
+    'Shirt numbers follow the usual convention: 1 keeper, 2 and 3 full-backs, 4 and 5 centre-backs,',
+    '6 holding midfield, 8 central midfield, 10 playmaker, 7 and 11 wide, 9 the striker.',
+    'Substitutes are numbered from 12 up. Translate a role the coach names into that number.',
     '',
     `Formations available on this pitch: ${context.formationNames.join(', ')}.`,
     `Pitch format: ${context.kind}. Active team: ${context.activeTeam}.`,
@@ -168,14 +296,17 @@ export async function askAssistant(message, context) {
     return { reply: text || "I'm not sure what to do with that one.", command: null }
   }
 
-  // Re-checked against the declared list rather than trusted: a name outside it
-  // would reach the client's executor as an unknown command.
-  if (!FUNCTIONS.some((f) => f.name === call.name)) {
+  // Re-checked against the declaration rather than trusted, name and arguments
+  // both: either one outside what we published would reach the client's executor
+  // as something we never offered.
+  const declaration = FUNCTIONS.find((f) => f.name === call.name)
+  const args = declaration && checkArgs(declaration, call.args ?? {})
+  if (!args) {
     return { reply: text || "I can't do that one.", command: null }
   }
 
   return {
     reply: text || null,
-    command: { type: call.name, ...(call.args ?? {}) },
+    command: { type: call.name, ...args },
   }
 }

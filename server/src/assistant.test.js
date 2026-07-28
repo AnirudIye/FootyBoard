@@ -97,16 +97,54 @@ test('only the declared functions are offered', async () => {
   const names = lastRequest.body.tools[0].functionDeclarations.map((f) => f.name).sort()
   assert.deepEqual(names, [
     'addFrame',
+    'benchPlayer',
     'clearDrawings',
     'fit',
+    'movePlayer',
     'play',
     'readBoard',
     'resetBoard',
+    'returnPlayer',
     'setBlock',
     'setFormation',
     'setView',
     'toggleGrid',
   ])
+})
+
+test('every declaration stays inside the OpenAPI subset Gemini accepts', async () => {
+  // A schema Gemini rejects fails the whole call, not just the one function, so
+  // the whole assistant goes down for a typo in a property type.
+  stubGemini([{ text: 'ok' }])
+  await askAssistant('hello', context)
+
+  const allowed = new Set(['STRING', 'INTEGER'])
+  for (const fn of lastRequest.body.tools[0].functionDeclarations) {
+    assert.equal(fn.parameters.type, 'OBJECT', fn.name)
+    for (const [key, prop] of Object.entries(fn.parameters.properties)) {
+      assert.ok(allowed.has(prop.type), `${fn.name}.${key} is ${prop.type}`)
+      if (prop.enum) assert.ok(Array.isArray(prop.enum) && prop.enum.length > 0, `${fn.name}.${key}`)
+    }
+    for (const key of fn.parameters.required ?? []) {
+      assert.ok(key in fn.parameters.properties, `${fn.name} requires undeclared ${key}`)
+    }
+  }
+})
+
+test('a player command carries the shirt number through as a number', async () => {
+  stubGemini([{ functionCall: { name: 'movePlayer', args: { side: 'home', number: 9, zone: 'left-wing' } } }])
+
+  const result = await askAssistant('push the nine out wide left', context)
+  assert.deepEqual(result.command, { type: 'movePlayer', side: 'home', number: 9, zone: 'left-wing' })
+})
+
+test('a shirt number answered as a string is coerced, not passed on', async () => {
+  // The board looks players up with ===, so "9" would report no such player
+  // rather than move him, and that reads as a bug in the board.
+  stubGemini([{ functionCall: { name: 'benchPlayer', args: { side: 'away', number: '4' } } }])
+
+  const result = await askAssistant('take their four off', context)
+  assert.deepEqual(result.command, { type: 'benchPlayer', side: 'away', number: 4 })
 })
 
 test('the key travels in the query string and never in the prompt', async () => {

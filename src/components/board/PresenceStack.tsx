@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useRealtimeStore, peerColor } from '../../store/realtimeStore'
+import { useRealtimeStore, peerColor, peerInitial } from '../../store/realtimeStore'
 
 /**
  * Who else is looking at this board.
@@ -25,12 +25,12 @@ export default function PresenceStack() {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.6 }}
             transition={{ type: 'spring', stiffness: 520, damping: 30, mass: 0.6 }}
-            title={peer.email}
+            title={peer.displayName}
             style={{ background: peerColor(peer.id) }}
             className="grid h-6 w-6 place-items-center rounded-full font-mono text-[10px]
               font-medium text-paper ring-2 ring-[rgb(var(--surface))]"
           >
-            {peer.email[0]?.toUpperCase() ?? '?'}
+            {peerInitial(peer)}
           </motion.span>
         ))}
       </AnimatePresence>
@@ -39,7 +39,7 @@ export default function PresenceStack() {
         <span
           className="grid h-6 w-6 place-items-center rounded-full bg-sunken font-mono text-[10px]
             text-ink-2 ring-2 ring-[rgb(var(--surface))]"
-          title={list.slice(4).map((p) => p.email).join('\n')}
+          title={list.slice(4).map((p) => p.displayName).join('\n')}
         >
           +{list.length - 4}
         </span>

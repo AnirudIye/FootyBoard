@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBoardStore } from '../store/boardStore'
+import { isTypingTarget } from './useKeyboard'
 import { createDrawing, isDragType } from '../lib/drawings'
 import { dist } from '../lib/geometry'
 import type { Drawing, DrawingType } from '../lib/types'
@@ -47,9 +48,29 @@ export function useDrawGesture(pointerNorm: () => Norm) {
     })
   }, [addDrawing, drawStyle])
 
+  // Mirrored during render rather than read from the effect's deps: a pen stroke
+  // changes `draft` on every pointermove, and depending on it would tear the
+  // window listener down and rebuild it that often.
+  const drafting = useRef(false)
+  drafting.current = draft !== null || textDraft !== null
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cancel()
+      // The same guard `useKeyboard` applies, and imported from there rather
+      // than written again, because two copies is two places to forget
+      // `contentEditable`. Without it, arming a tool, editing a player name and
+      // pressing Escape to leave the field disarmed the tool silently: Escape
+      // in a text field means "leave this field", never "put my tool away".
+      // Enter is covered by the same return, or typing a message would close a
+      // polygon behind the panel.
+      if (isTypingTarget(e.target)) return
+
+      if (e.key === 'Escape') {
+        // zonePoly is the one multi-click gesture, so Escape mid-gesture means
+        // "abandon this shape", not "put the tool away". A second one disarms.
+        if (drafting.current) cancel()
+        else useBoardStore.getState().setTool('select')
+      }
       if (e.key === 'Enter') commitPoly()
     }
     window.addEventListener('keydown', onKey)

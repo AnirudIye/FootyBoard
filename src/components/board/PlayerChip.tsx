@@ -88,7 +88,9 @@ export default function PlayerChip({ token, mapping, nx: atX, ny: atY, radius, s
       dragBoundFunc={drag.dragBoundFunc}
       onContextMenu={(e) => {
         e.evt.preventDefault()
-        setSelection([token.id])
+        // Same test as onPointerDown below: inspecting a chip that is already in
+        // the selection must not collapse the group down to that one chip.
+        if (!selected) setSelection([token.id])
         openInspector(token.id, e.evt.clientX, e.evt.clientY)
       }}
       onPointerDown={(e) => {
@@ -100,7 +102,7 @@ export default function PlayerChip({ token, mapping, nx: atX, ny: atY, radius, s
         const { clientX, clientY } = e.evt
         cancelLongPress()
         longPress.current = window.setTimeout(() => {
-          setSelection([token.id])
+          if (!selected) setSelection([token.id])
           openInspector(token.id, clientX, clientY)
         }, 500)
       }}

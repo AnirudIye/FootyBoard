@@ -1,11 +1,12 @@
 import { useBoardStore } from '../../store/boardStore'
 import { useAssistantStore } from '../../store/assistantStore'
-import { parseCommand } from '../../lib/parser'
+import { parseCommand, zonePosition } from '../../lib/parser'
 import type { Command } from '../../lib/parser'
-import { FORMATION_NAMES } from '../../lib/formations'
+import { FORMATION_NAMES, mirror } from '../../lib/formations'
 import { describeBoard } from '../../lib/serializer'
 import { toUserMessage } from '../../lib/errors'
 import { api } from '../../lib/api'
+import type { Side, Token } from '../../lib/types'
 import { boardHandles } from './boardHandles'
 
 interface Outcome {
@@ -14,6 +15,35 @@ interface Outcome {
 }
 
 type Board = ReturnType<typeof useBoardStore.getState>
+
+/**
+ * Find a player by side and shirt number.
+ *
+ * Numbers are per-side, so both halves of the pair are needed to name anyone:
+ * there is a 9 on each team. Nothing guarantees uniqueness within a side either
+ * (the inspector will happily give two players the same number), so this takes
+ * the first, which is the one drawn on top.
+ */
+const playerOn = (s: Board, side: Side, number: number): Token | undefined =>
+  s.tokens.find((t) => t.type === 'player' && t.teamId === side && t.number === number)
+
+const playerBenched = (s: Board, side: Side, number: number): Token | undefined =>
+  s.bench.find((t) => t.type === 'player' && t.teamId === side && t.number === number)
+
+/**
+ * Where a substitute walks on: the halfway line, in their own half.
+ *
+ * Not the centre spot, which is where the ball sits, and not their own box,
+ * where they would arrive underneath the defence. `mirror` is the same half-turn
+ * the formations and the zones take.
+ */
+const SUB_ON = { x: 44, y: 50 }
+// Both branches hand back a fresh object. `mirror` already builds one; the home
+// side has to spread, or every caller shares one mutable module constant and a
+// single careless `at.x +=` moves every future substitution. `zonePosition` in
+// the parser spreads for exactly this reason, and the two sitting one call apart
+// disagreeing is what makes the omission easy to miss.
+const subOnAt = (side: Side) => (side === 'away' ? mirror([SUB_ON])[0] : { ...SUB_ON })
 
 type Runners = {
   [K in Command['type']]?: (command: Extract<Command, { type: K }>, s: Board) => void
@@ -37,6 +67,28 @@ const RUN: Runners = {
   addFrame: (_c, s) => s.addFrame(),
   play: (_c, s) => s.setPlayback({ playing: true, position: 0 }),
   fit: () => boardHandles.fitPitch?.(),
+  movePlayer: (c, s) => {
+    const token = playerOn(s, c.side, c.number)
+    if (!token) return
+    const p = zonePosition(c.zone, c.side)
+    s.moveToken(token.id, p.x, p.y)
+    // `moveToken` is the middle of a drag in ordinary use, so it parks a
+    // snapshot as pending and leaves the history alone until the pointer comes
+    // up. One assistant instruction is a whole gesture, and `commit` is what
+    // closes it: without this the move is not undoable, and peers keep whatever
+    // throttled position happened to be last rather than where it came to rest.
+    s.commit()
+  },
+  benchPlayer: (c, s) => {
+    const token = playerOn(s, c.side, c.number)
+    if (token) s.benchToken(token.id)
+  },
+  returnPlayer: (c, s) => {
+    const sub = playerBenched(s, c.side, c.number)
+    if (!sub) return
+    const at = subOnAt(c.side)
+    s.unbenchToken(sub.id, at.x, at.y)
+  },
 }
 
 /** Which of those change the board, and so leave something to take back. */
@@ -46,6 +98,9 @@ const UNDOABLE = new Set<Command['type']>([
   'clearDrawings',
   'resetBoard',
   'addFrame',
+  'movePlayer',
+  'benchPlayer',
+  'returnPlayer',
 ])
 
 /** Execute a parsed command against the board, with a human reply. */
@@ -73,6 +128,29 @@ function execute(command: Command, fallbackReply: string): Outcome {
 
     case 'readBoard':
       return { reply: describeBoard(s.tokens, s.view), undoable: false }
+
+    // A number nobody is wearing is the one thing that goes wrong often here,
+    // because the AI is working from a description of shapes rather than a team
+    // sheet. Say which number and which side, so the coach can see immediately
+    // whether they mistyped or the player is off the pitch.
+    case 'movePlayer':
+    case 'benchPlayer':
+      if (!playerOn(s, command.side, command.number)) {
+        return {
+          reply: `There is no ${command.number} on the ${command.side} side right now.`,
+          undoable: false,
+        }
+      }
+      break
+
+    case 'returnPlayer':
+      if (!playerBenched(s, command.side, command.number)) {
+        return {
+          reply: `There is no ${command.number} on the ${command.side} bench right now.`,
+          undoable: false,
+        }
+      }
+      break
   }
 
   // The table is keyed by the same discriminant the command carries, which the

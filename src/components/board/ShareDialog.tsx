@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
-import type { BoardMember } from '../../lib/api'
-import { toUserMessage } from '../../lib/errors'
+import type { BoardMember, ShareMeta } from '../../lib/api'
+import { AppError, toUserMessage } from '../../lib/errors'
 import { useAuthStore } from '../../store/authStore'
 import { useBoardsStore } from '../../store/boardsStore'
 import { useRealtimeStore } from '../../store/realtimeStore'
@@ -35,6 +35,37 @@ function expiryLabel(expiresAt: number | null): string {
 // as the toast is up, which is the only window in which Undo can mean anything.
 const UNDO_WINDOW = 4000
 
+/**
+ * The two calls that carry anonymous presence, written here rather than in
+ * `lib/api.ts`.
+ *
+ * They belong beside the rest of the wrapper and should move there. They are
+ * local for now only because this change did not own that file, and a feature
+ * that half exists is worse than one seam with a note on it. Behaviour matches
+ * `request`: the session cookie goes along, and an error the server explained
+ * is re-thrown with its own message so the toast can say something useful.
+ */
+type ShareState = { share: ShareMeta | null; anonymousPresence?: boolean }
+
+async function setAnonymousPresence(boardId: string, anonymous: boolean): Promise<void> {
+  const response = await fetch(`/api/boards/${boardId}/anonymous`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ anonymous }),
+  }).catch(() => {
+    throw new AppError("Can't reach the server. Check your connection and try again.")
+  })
+  if (response.ok) return
+
+  const payload = await response.json().catch(() => null)
+  throw new AppError(
+    payload && typeof payload === 'object' && 'error' in payload
+      ? String((payload as { error: unknown }).error)
+      : 'That did not work. Try again.',
+  )
+}
+
 export default function ShareDialog() {
   const email = useAuthStore((s) => s.email)
   const currentId = useBoardsStore((s) => s.currentId)
@@ -46,6 +77,7 @@ export default function ShareDialog() {
   const [code, setCode] = useState<string | null>(null)
   const [codeExpiresAt, setCodeExpiresAt] = useState<number | null>(null)
   const [members, setMembers] = useState<BoardMember[]>([])
+  const [anonymous, setAnonymous] = useState(false)
   const [busy, setBusy] = useState(false)
 
   // Re-renders on a minute's tick so "expires in 3h 20m" does not sit there
@@ -96,6 +128,9 @@ export default function ShareDialog() {
         // The code comes back every time; the link does not exist to be read.
         setCode(share.share?.code ?? null)
         setCodeExpiresAt(share.share?.codeExpiresAt ?? null)
+        // Anonymity is a property of the board, so it comes back beside the
+        // share rather than inside it: it stands whether or not a link is live.
+        setAnonymous((share as ShareState).anonymousPresence === true)
         setMembers(list.members)
       } catch (err) {
         toast(toUserMessage(err, 'Could not load the sharing settings.'))
@@ -166,7 +201,15 @@ export default function ShareDialog() {
     }
   }
 
-  const setLock = async (next: boolean) => {
+  /**
+   * Instructor mode.
+   *
+   * The same board flag the editing lock always was, renamed to what it is
+   * actually for: one person demonstrating while the room watches. Only the
+   * wording changed here — the endpoint, the relay's enforcement and what a
+   * guest experiences are all exactly as before.
+   */
+  const setInstructorMode = async (next: boolean) => {
     // Applied locally first so the switch responds immediately, then confirmed
     // by the server's own broadcast, which is what every other client acts on.
     useRealtimeStore.getState().setLocked(next)
@@ -176,7 +219,21 @@ export default function ShareDialog() {
     } catch (err) {
       useRealtimeStore.getState().setLocked(!next)
       useBoardsStore.getState().setMembersCanEdit(currentId, next)
-      toast(toUserMessage(err, 'Could not change who can edit.'))
+      toast(toUserMessage(err, 'Could not switch instructor mode.'))
+    }
+  }
+
+  const setAnonymity = async (next: boolean) => {
+    // Optimistic for the same reason the lock is: the switch has to answer the
+    // press. Unlike the lock there is no broadcast to confirm it, because no
+    // client is trusted with this one — the substitution happens in the relay's
+    // own payloads, so the only thing to put right on failure is this switch.
+    setAnonymous(next)
+    try {
+      await setAnonymousPresence(currentId, next)
+    } catch (err) {
+      setAnonymous(!next)
+      toast(toUserMessage(err, 'Could not change how guests are named.'))
     }
   }
 
@@ -308,13 +365,41 @@ export default function ShareDialog() {
           </div>
         )}
 
-        <div className="border-t border-rule pt-3">
-          <Toggle checked={locked} onChange={setLock} label="Lock editing" />
-          <p className="mt-1.5 text-[11px] leading-relaxed text-ink-3">
-            {locked
-              ? 'Only you can move things. Everyone else is watching.'
-              : 'Everyone on this board can move things.'}
+        {/* Both switches are the owner's alone, which the dialog already
+            enforces by not existing for anybody else — the same way every other
+            row here is owner-only. The label says so anyway, because a control
+            that changes what the whole room can do should read as a control
+            over the room rather than as a personal preference.
+
+            It is also on `--ink-2` while the rest of the dialog's micro-copy is
+            on `--ink-3`. Not for contrast: `--ink-3` was lifted to 124 134 127
+            and now measures 4.92:1 on `--surface`, so it clears the floor on
+            its own. This is the one part of the dialog whose copy states a
+            consequence for other people rather than naming a section: who may
+            move things, and who can see whose address. Both are worth reading
+            before the switch is thrown, so they get the brighter ink. */}
+        <div className="flex flex-col gap-3 border-t border-rule pt-3">
+          <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-2">
+            Owner only
           </p>
+
+          <div>
+            <Toggle checked={locked} onChange={setInstructorMode} label="Instructor mode" />
+            <p className="mt-1.5 text-[11px] leading-relaxed text-ink-2">
+              {locked
+                ? 'Only you can move things. Everyone else is watching.'
+                : 'Everyone on this board can move things.'}
+            </p>
+          </div>
+
+          <div>
+            <Toggle checked={anonymous} onChange={setAnonymity} label="Anonymous guests" />
+            <p className="mt-1.5 text-[11px] leading-relaxed text-ink-2">
+              {anonymous
+                ? 'Cursors show a made-up name like Anonymous Quokka. Nobody in the room sees anyone else’s email, including you. You still see real addresses in the list below.'
+                : 'Cursors and the presence stack show everyone’s email address, to everyone on the board.'}
+            </p>
+          </div>
         </div>
 
         <div className="border-t border-rule pt-3">

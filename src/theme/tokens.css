@@ -24,7 +24,19 @@
   /* Ink: the spec's warm off-white (hsl 40 6% 95%) and hero sub (40 6% 82%) */
   --ink: 244 242 239;
   --ink-2: 160 170 163;
-  --ink-3: 112 122 115;
+  /* The micro-label ink, and the one token in this file that has to be argued
+     for. It is the colour of nearly every 10px and 11px label in the product
+     (18 component files), so it is read at the smallest type set here, and it
+     was 112 122 115: 4.17:1 on --surface, 4.46:1 on --paper, both under the
+     4.5:1 AA floor. Lifting it here rather than per label is the only fix that
+     reaches all of them, and the per-label alternative is worse than it looks,
+     because promoting one label to --ink-2 fixes that label by deleting the
+     rank it was expressing. A flat +12 on each channel keeps the 10/3 channel
+     spread, so the HSL hue is unchanged at 138 degrees and only the saturation
+     drops with the added lightness. Clears the floor on every ground it sits
+     on: 4.92:1 on --surface, 5.27:1 on --paper, 5.14:1 on --surface-sunken.
+     Still a clear third step, since --ink-2 reads 7.75:1 on the same ground. */
+  --ink-3: 124 134 127;
   --hero-sub: 214 210 204;
 
   /* Single accent: floodlit pitch green */
@@ -32,6 +44,14 @@
   --accent-hover: 84 236 150;
   --accent-wash: rgba(42, 224, 122, 0.1);
   --accent-glow: rgba(42, 224, 122, 0.32);
+
+  /* Selection ground. The accent itself cannot carry light text: --ink on
+     --accent measures 1.56:1, so "white on green" is not a thing this palette
+     can be asked for, whatever off-white is chosen. This is the accent scaled
+     to 42% of each channel, which holds its hue exactly (R:G:B is unchanged at
+     0.19 : 1 : 0.54) while dropping the luminance far enough that --ink reads
+     on it at 7.03:1. It still shows as a highlight: 2.53:1 against --paper. */
+  --selection: 18 94 51;
 
   /* Teams: still separable on a dark ground, still colour-blind safe */
   --home: 232 92 66;
@@ -71,9 +91,15 @@ body {
   scrollbar-color: rgb(var(--rule-strong)) transparent;
 }
 
+/* Selected text is off-white, like every other piece of text in the product.
+   It used to be --paper on --accent, which measured 11.38:1 and read fine, but
+   it was the one place a selection turned the ink near-black, so dragging over
+   a paragraph inverted it. Forcing `color` rather than leaving it inherited is
+   what makes the ratio below the only one to check: --ink-2 and --ink-3 labels
+   are lifted to --ink for as long as they are selected. */
 ::selection {
-  background: rgb(var(--accent));
-  color: rgb(var(--paper));
+  background: rgb(var(--selection));
+  color: rgb(var(--ink)); /* 7.03:1 */
 }
 
 /* Native dropdown rows need an explicit ground; several browsers ignore the
@@ -96,13 +122,13 @@ option {
   }
 }
 
-/* Contrast. The micro-labels are the reason this block exists: --ink-3 on
-   --paper measures 4.46:1, which is under the 4.5:1 AA floor, and it is the
-   colour of nearly every 10px and 11px label in the product. Asked for more,
-   lift the two secondary inks and the hairline rather than flattening
-   everything to white, so the hierarchy survives the change: the values below
-   take --ink-3 to 9.1:1 and --rule from 1.39:1 to 3.21:1, which is the bar for
-   a line that carries meaning. */
+/* Contrast. The micro-labels are the reason this block exists, but it is no
+   longer where they meet the floor: --ink-3 clears 4.5:1 on its own now, at
+   its declaration above. What is left here is the reader who has asked the OS
+   for more than the floor. Lift the two secondary inks and the hairline rather
+   than flattening everything to white, so the hierarchy survives the change:
+   the values below take --ink-3 to 9.1:1 on --paper and --rule from 1.39:1 to
+   3.21:1, which is the bar for a line that carries meaning. */
 @media (prefers-contrast: more) {
   :root {
     --ink-2: 205 212 207;

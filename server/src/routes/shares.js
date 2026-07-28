@@ -86,12 +86,21 @@ sharesRouter.post('/:id/share', async (req, res) => {
  */
 sharesRouter.get('/:id/share', async (req, res) => {
   if (!(await requireOwner(req, res))) return
-  const row = await get(
-    `SELECT id, code, code_expires_at, created_at FROM board_shares
-      WHERE board_id = $1 AND revoked_at IS NULL
-      ORDER BY created_at DESC LIMIT 1`,
-    req.params.id,
-  )
+  // `anonymousPresence` rides along rather than getting its own endpoint: the
+  // share dialog opens once and needs both, and a second round trip to fill in
+  // one boolean would only make the panel paint in two stages. It sits beside
+  // `share` rather than inside it because it belongs to the board and outlives
+  // any particular link — turning sharing off must not read as turning
+  // anonymity off.
+  const [row, board] = await Promise.all([
+    get(
+      `SELECT id, code, code_expires_at, created_at FROM board_shares
+        WHERE board_id = $1 AND revoked_at IS NULL
+        ORDER BY created_at DESC LIMIT 1`,
+      req.params.id,
+    ),
+    get('SELECT anonymous_presence FROM boards WHERE id = $1', req.params.id),
+  ])
   res.json({
     share: row
       ? {
@@ -104,6 +113,7 @@ sharesRouter.get('/:id/share', async (req, res) => {
           createdAt: row.created_at,
         }
       : null,
+    anonymousPresence: board?.anonymous_presence === true,
   })
 })
 
@@ -194,6 +204,32 @@ sharesRouter.patch('/:id/lock', async (req, res) => {
   await run('UPDATE boards SET members_can_edit = $1 WHERE id = $2', !locked, req.params.id)
   publish(req.params.id, { type: 'lock', locked })
   res.json({ locked })
+})
+
+/**
+ * Anonymous guests.
+ *
+ * A sibling of the lock rather than another field on it, because the two are
+ * different decisions with different blast radii: one withholds editing from
+ * people who are already here, the other changes what the room discloses about
+ * them. Sharing a route would mean either endpoint could silently carry the
+ * other's change, and a client sending a partial body would have to be told
+ * apart from one meaning "leave that alone".
+ *
+ * The broadcast is what makes it take effect on instances this process does not
+ * hold sockets for. It is deliberately server-internal: the relay caches it and
+ * substitutes names in the payloads it builds from then on, so no client ever
+ * has to be trusted to hide anything.
+ */
+sharesRouter.patch('/:id/anonymous', async (req, res) => {
+  if (!(await requireOwner(req, res))) return
+  if (typeof req.body?.anonymous !== 'boolean')
+    throw new BadRequest('Say whether guests are anonymous.', 'anonymous')
+
+  const anonymous = req.body.anonymous
+  await run('UPDATE boards SET anonymous_presence = $1 WHERE id = $2', anonymous, req.params.id)
+  publish(req.params.id, { type: 'anon', anonymous })
+  res.json({ anonymousPresence: anonymous })
 })
 
 /** Shared by both ways in: whoever is asking becomes a member of `share`. */

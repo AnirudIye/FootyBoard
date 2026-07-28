@@ -100,15 +100,33 @@ export type Op = EntityOp | CursorOp | SelectionOp | ResyncOp | LockOp | HereOp
 /** As received: the relay stamps the sender so a client cannot impersonate a peer. */
 export type IncomingOp = Op & { peerId: string }
 
+/**
+ * Somebody else in the room, as the server describes them.
+ *
+ * `displayName` is the field to render, and the only one that should ever be
+ * rendered. `email` is what the server chose to disclose, which on a board with
+ * anonymous guests turned on is **not an address**: the relay substitutes the
+ * same generated name into both, so no client ever receives another guest's
+ * address rather than being trusted not to show it. Reading `displayName` is
+ * what makes that substitution invisible to the interface; reading `email` and
+ * hoping is what would make it a bug the day the two diverge further.
+ *
+ * On the wire it is an identity rather than a label: on a board that names
+ * people normally it is the whole address, exactly as `email` is, because what
+ * to disclose is the server's decision and how much of it to draw is not.
+ * `realtimeStore` is what turns it into something short enough for a cursor,
+ * and components read the store's `RemotePeer`, never this.
+ */
 export interface Peer {
   id: string
   email: string
+  displayName: string
 }
 
 export type ServerMessage =
   | { type: 'welcome'; peerId: string; role: 'owner' | 'member'; locked: boolean; peers: Peer[] }
-  | { type: 'peer-joined'; peerId: string; email: string }
-  | { type: 'peer-present'; peerId: string; email: string }
+  | { type: 'peer-joined'; peerId: string; email: string; displayName: string }
+  | { type: 'peer-present'; peerId: string; email: string; displayName: string }
   | { type: 'peer-left'; peerId: string }
   | IncomingOp
 

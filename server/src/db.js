@@ -137,6 +137,20 @@ async function applySchema(client) {
     ALTER TABLE boards ADD COLUMN IF NOT EXISTS members_can_edit BOOLEAN NOT NULL DEFAULT true;
   `)
 
+  // Whether room presence names people by their address.
+  //
+  // Off by default, because a coaching staff who already know each other are
+  // better served by real names, and turning a working roster into a zoo
+  // without being asked would be a surprise. On, the relay substitutes a
+  // generated name in every presence payload and the address never goes on the
+  // wire — see the substitution in `realtime.js`, which is where the setting
+  // actually means something. Like `members_can_edit` this belongs to the
+  // board rather than to a person: the owner is deciding what this room
+  // discloses, not what any one guest is called everywhere.
+  await client.query(`
+    ALTER TABLE boards ADD COLUMN IF NOT EXISTS anonymous_presence BOOLEAN NOT NULL DEFAULT false;
+  `)
+
   // The short join code, alongside the long link token on the same share row.
   //
   // Stored in plain text, which is deliberate and is the one place this file

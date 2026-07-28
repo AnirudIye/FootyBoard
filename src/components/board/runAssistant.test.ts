@@ -12,10 +12,15 @@ import { api } from '../../lib/api'
 
 const askAssistant = vi.spyOn(api, 'askAssistant')
 
-const lastReply = () => {
+const lastMessage = () => {
   const { messages } = useAssistantStore.getState()
-  return [...messages].reverse().find((m) => m.role === 'assistant')?.text ?? ''
+  return [...messages].reverse().find((m) => m.role === 'assistant') ?? { text: '', undoable: false }
 }
+
+const lastReply = () => lastMessage().text
+
+const homePlayer = (number: number) =>
+  useBoardStore.getState().tokens.find((t) => t.type === 'player' && t.teamId === 'home' && t.number === number)
 
 const settle = () => new Promise((r) => setTimeout(r, 0))
 
@@ -39,6 +44,16 @@ describe('the offline parser comes first', () => {
 
     expect(askAssistant).not.toHaveBeenCalled()
     expect(useBoardStore.getState().lastFormation).toBeTruthy()
+  })
+
+  it('moves one player from a phrasing it knows, still without the network', async () => {
+    useAssistantStore.setState({ aiAvailable: true, aiConsented: true })
+
+    runAssistant('move 9 to the left wing')
+    await settle()
+
+    expect(askAssistant).not.toHaveBeenCalled()
+    expect(homePlayer(9)).toMatchObject({ x: 70, y: 12 })
   })
 
   it('still works with the AI switched off entirely', async () => {
@@ -128,6 +143,117 @@ describe('acting on what comes back', () => {
     expect(() => runAssistant('do something odd')).not.toThrow()
     await settle()
     expect(lastReply().length).toBeGreaterThan(0)
+  })
+
+  it('moves the named player, and only that player', async () => {
+    // "shove" is not a verb the offline parser knows, so this really does travel
+    // through the AI path rather than being answered on the way in.
+    askAssistant.mockResolvedValue({
+      reply: 'Nine is out on the left.',
+      command: { type: 'movePlayer', side: 'home', number: 9, zone: 'left-wing' },
+    })
+    const before = useBoardStore.getState().tokens.map((t) => ({ id: t.id, x: t.x, y: t.y }))
+
+    runAssistant('shove the nine out wide')
+    await settle()
+
+    const nine = homePlayer(9)
+    expect(nine).toBeDefined()
+    expect(nine).toMatchObject({ x: 70, y: 12 })
+
+    const shifted = useBoardStore
+      .getState()
+      .tokens.filter((t) => {
+        const was = before.find((b) => b.id === t.id)
+        return !was || was.x !== t.x || was.y !== t.y
+      })
+      .map((t) => t.id)
+    expect(shifted).toEqual([nine!.id])
+    expect(lastReply()).toBe('Nine is out on the left.')
+  })
+
+  it('leaves the move on the undo stack', async () => {
+    // `moveToken` is the middle of a drag in ordinary use and parks its snapshot
+    // as pending. One assistant instruction is a whole gesture, so it has to be
+    // committed or there is nothing to take back.
+    askAssistant.mockResolvedValue({
+      reply: 'Done.',
+      command: { type: 'movePlayer', side: 'home', number: 9, zone: 'penalty-spot' },
+    })
+
+    runAssistant('shove the nine into the six')
+    await settle()
+
+    expect(useBoardStore.getState().history.past).toHaveLength(1)
+    expect(lastMessage().undoable).toBe(true)
+
+    useBoardStore.getState().undoAction()
+    expect(homePlayer(9)).toMatchObject({ x: 64, y: 50 })
+  })
+
+  it('mirrors the zone for the away team', async () => {
+    askAssistant.mockResolvedValue({
+      reply: 'Done.',
+      command: { type: 'movePlayer', side: 'away', number: 9, zone: 'left-wing' },
+    })
+
+    runAssistant('shove their nine out wide')
+    await settle()
+
+    const nine = useBoardStore
+      .getState()
+      .tokens.find((t) => t.type === 'player' && t.teamId === 'away' && t.number === 9)
+    expect(nine).toMatchObject({ x: 30, y: 88 })
+  })
+
+  it('says which number it could not find, and changes nothing', async () => {
+    askAssistant.mockResolvedValue({
+      reply: 'Moved 14 back.',
+      command: { type: 'movePlayer', side: 'home', number: 14, zone: 'deep' },
+    })
+    const before = JSON.stringify(useBoardStore.getState().tokens)
+
+    runAssistant('sort out the fourteen')
+    await settle()
+
+    expect(lastReply()).toBe('There is no 14 on the home side right now.')
+    expect(lastMessage().undoable).toBeFalsy()
+    expect(JSON.stringify(useBoardStore.getState().tokens)).toBe(before)
+    expect(useBoardStore.getState().history.past).toHaveLength(0)
+  })
+
+  it('benches a number and brings one back on', async () => {
+    askAssistant.mockResolvedValue({
+      reply: 'Off he comes.',
+      command: { type: 'benchPlayer', side: 'home', number: 7 },
+    })
+    runAssistant('hook the seven')
+    await settle()
+
+    expect(homePlayer(7)).toBeUndefined()
+    expect(useBoardStore.getState().bench.some((t) => t.teamId === 'home' && t.number === 7)).toBe(true)
+
+    askAssistant.mockResolvedValue({
+      reply: 'On he goes.',
+      command: { type: 'returnPlayer', side: 'home', number: 7 },
+    })
+    runAssistant('get the seven going again')
+    await settle()
+
+    expect(homePlayer(7)).toMatchObject({ x: 44, y: 50 })
+    expect(useBoardStore.getState().bench.some((t) => t.teamId === 'home' && t.number === 7)).toBe(false)
+  })
+
+  it('says so when the number is not on the bench', async () => {
+    askAssistant.mockResolvedValue({
+      reply: 'On he goes.',
+      command: { type: 'returnPlayer', side: 'home', number: 9 },
+    })
+
+    runAssistant('get the nine going again')
+    await settle()
+
+    expect(lastReply()).toBe('There is no 9 on the home bench right now.')
   })
 
   it('says the assistant is unreachable rather than that it misunderstood', async () => {

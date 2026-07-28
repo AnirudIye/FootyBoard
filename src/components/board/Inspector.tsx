@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useBoardStore, HOME_COLOR, AWAY_COLOR } from '../../store/boardStore'
 import { Button } from '../ui/Button'
@@ -6,7 +6,8 @@ import { Slider } from '../ui/Slider'
 import { useDismiss } from '../ui/useDismiss'
 import type { Side, TokenShape } from '../../lib/types'
 
-const SWATCHES = [HOME_COLOR, AWAY_COLOR, '#3F6B4A', '#6B5B95', '#C08A2E', '#4A4E54', '#F2EDE3']
+// Shared with the bottom bar's context slot, so the two offer the same palette.
+export const SWATCHES = [HOME_COLOR, AWAY_COLOR, '#3F6B4A', '#6B5B95', '#C08A2E', '#4A4E54', '#F2EDE3']
 const ROLES: [TokenShape, string][] = [
   ['outfield', 'Outfield'],
   ['keeper', 'Keeper'],
@@ -15,6 +16,9 @@ const TEAMS: [Side, string, string][] = [
   ['home', 'Home', HOME_COLOR],
   ['away', 'Away', AWAY_COLOR],
 ]
+
+/** Breathing room between the panel and the viewport edge, or its anchor. */
+const MARGIN = 8
 
 export default function Inspector() {
   const inspector = useBoardStore((s) => s.inspector)
@@ -32,9 +36,32 @@ export default function Inspector() {
 
   const isPlayer = token?.type === 'player'
 
-  // Keep the panel on screen when opened near an edge.
-  const left = inspector ? Math.min(inspector.x, window.innerWidth - 260) : 0
-  const top = inspector ? Math.min(inspector.y, window.innerHeight - 300) : 0
+  // The panel's own box, measured after it renders. A player's panel is 380px
+  // tall and a ball's is 205, so every number here used to be a guess: the
+  // launcher passed a top computed from an assumed 320 and the clamp below
+  // assumed 300, which is how a panel opened from the bottom bar ended up
+  // covering the button that opened it. `offsetHeight`, not a client rect,
+  // because the entrance animation scales the panel to 0.97 and a rect taken
+  // during it reads 368 for a panel that is really 380.
+  const [panel, setPanel] = useState({ w: 236, h: 0 })
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (el) setPanel({ w: el.offsetWidth, h: el.offsetHeight })
+  }, [inspector, isPlayer])
+
+  // Open below the anchor, flip above it when there is no room below. That one
+  // rule serves both callers: a chip right-clicked mid-pitch wants the panel
+  // under the pointer, and the bottom bar's Edit button, which is always within
+  // a panel's height of the bottom edge, wants it clear of the pill it sits in.
+  // The flip leaves the same margin it keeps from a viewport edge, so the panel
+  // does not end up flush against whatever opened it.
+  const fitsBelow = inspector ? inspector.y + panel.h + MARGIN <= window.innerHeight : true
+  const left = inspector
+    ? Math.max(MARGIN, Math.min(inspector.x, window.innerWidth - panel.w - MARGIN))
+    : 0
+  const top = inspector
+    ? Math.max(MARGIN, fitsBelow ? inspector.y : inspector.y - panel.h - MARGIN)
+    : 0
 
   return (
     <AnimatePresence>

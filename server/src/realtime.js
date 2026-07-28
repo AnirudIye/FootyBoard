@@ -2,6 +2,7 @@ import { WebSocketServer } from 'ws'
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
 import { accessFor } from './access.js'
+import { get } from './db.js'
 import { userForToken, readCookie, COOKIE_NAME } from './auth.js'
 import { isAllowedOrigin } from './env.js'
 
@@ -54,6 +55,20 @@ const SERVER_ONLY = new Set([
  */
 const ALLOWED_WHEN_LOCKED = new Set(['cursor', 'sel', 'need-state', 'replaced', 'here'])
 
+/**
+ * Control messages that stop here rather than reaching a browser.
+ *
+ * `deliverLocally` is the one funnel every server-originated message goes
+ * through, so this is the only place the distinction can be made. A client's
+ * message handler has a `default` arm that treats anything it does not
+ * recognise as a board operation, which means shipping it internal bookkeeping
+ * is not merely wasteful — it is handed to code that will try to apply it to
+ * the board. Neither of these has anything a client could do with it: `evict`
+ * is acted on here by closing the socket, and `anon` only corrects this
+ * instance's cache.
+ */
+const INTERNAL_ONLY = new Set(['evict', 'anon'])
+
 /** boardId -> set of sockets on THIS instance. */
 const rooms = new Map()
 
@@ -66,6 +81,102 @@ const rooms = new Map()
  * corrected by the same broadcast that updates every client.
  */
 const membersCanEdit = new Map()
+
+/**
+ * boardId -> whether presence hides addresses, cached exactly like the lock.
+ *
+ * Read once when a room opens and corrected by the same NOTIFY bus, so every
+ * instance answers the same way without asking the database on each join.
+ */
+const anonymousPresence = new Map()
+
+/**
+ * Names to hand out when a board hides addresses, the way Google Docs does it.
+ *
+ * A fixed list in code rather than a table: nothing here is worth a migration,
+ * the set never needs to differ per install, and having it in one array is what
+ * lets every instance derive the same name for the same person without
+ * coordinating. Thirty is comfortably more than any room this product expects,
+ * which keeps collisions rare enough that probing almost never runs.
+ */
+const ANONYMOUS_ANIMALS = [
+  'Aardvark', 'Badger', 'Capybara', 'Dingo', 'Echidna', 'Fennec', 'Gecko',
+  'Heron', 'Ibex', 'Jackal', 'Kudu', 'Lemur', 'Marmot', 'Narwhal', 'Ocelot',
+  'Pangolin', 'Quokka', 'Raccoon', 'Serval', 'Tapir', 'Uakari', 'Vicuna',
+  'Wombat', 'Xerus', 'Yak', 'Zebu', 'Bonobo', 'Coati', 'Dhole', 'Eland',
+]
+
+/**
+ * FNV-1a, 32-bit. Not a security hash and not asked to be one.
+ *
+ * All it has to do is scatter two ids across thirty buckets identically on
+ * every instance and on every reconnect, which is the whole reason the name is
+ * derived rather than assigned: no instance has to remember anything, and two
+ * processes seeing the same person reach the same animal on their own.
+ */
+function hash32(text) {
+  let h = 2166136261
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return h >>> 0
+}
+
+/**
+ * The animal this person keeps for as long as this room lives.
+ *
+ * Stable by derivation: the same user on the same board hashes to the same
+ * starting index, so leaving and coming back gets the same name rather than
+ * reading as a new arrival. Their own other sockets are excluded from the taken
+ * set for the same reason — one person in two tabs is one person.
+ *
+ * Collisions are resolved by walking the list, which can only see the sockets
+ * this instance holds. Across a cluster two different people can therefore end
+ * up sharing an animal. That is a cosmetic duplicate rather than a leak, and
+ * the alternative is a room-wide allocation table with a consensus problem
+ * attached, which is a great deal of machinery for "two people are both called
+ * Anonymous Badger".
+ */
+function anonymousNameFor(boardId, userId) {
+  const taken = new Set()
+  for (const socket of rooms.get(boardId) ?? []) {
+    if (socket.userId !== userId && socket.anonName) taken.add(socket.anonName)
+  }
+
+  const start = hash32(`${userId}:${boardId}`) % ANONYMOUS_ANIMALS.length
+  for (let step = 0; step < ANONYMOUS_ANIMALS.length; step++) {
+    const name = `Anonymous ${ANONYMOUS_ANIMALS[(start + step) % ANONYMOUS_ANIMALS.length]}`
+    if (!taken.has(name)) return name
+  }
+  // More people in this room than there are animals. Duplicating is the only
+  // option left, and is better than refusing the connection.
+  return `Anonymous ${ANONYMOUS_ANIMALS[start]}`
+}
+
+/**
+ * What the room is told to call somebody, and the point of the whole feature.
+ *
+ * The substitution happens here, in the payload, rather than anywhere near a
+ * client. Sending the address and asking the browser to hide it would leave it
+ * on the wire and in every peer's memory, which is exactly the gap this closes:
+ * on an anonymous board nobody's client ever receives another guest's address,
+ * the owner's included. The owner still sees real addresses in the members
+ * list, which is REST, owner-scoped, and a different question — "who has access
+ * to my board" is theirs to know; "who is that cursor" is not the room's.
+ *
+ * `email` carries the same generated name rather than being dropped, because it
+ * is the field every existing reader labels a peer from. Leaving it out would
+ * mean an unlabelled cursor rather than an anonymous one, and the guarantee
+ * that matters is that no address travels — not that a field goes missing.
+ *
+ * Evaluated per message rather than frozen at join, so flipping the setting
+ * takes effect on the next introduction without anyone reconnecting.
+ */
+function identity(socket) {
+  const name = anonymousPresence.get(socket.boardId) ? socket.anonName : socket.userEmail
+  return { email: name, displayName: name }
+}
 
 /** Set by attachRealtime, so HTTP routes can push control messages onto the bus. */
 let publishFn = null
@@ -83,6 +194,7 @@ export function publish(boardId, message) {
 function deliverLocally(boardId, message, exceptSocket) {
   const room = rooms.get(boardId)
   if (!room) return
+  if (INTERNAL_ONLY.has(message?.type)) return
   const text = JSON.stringify(message)
   for (const socket of room) {
     if (socket !== exceptSocket && socket.readyState === socket.OPEN) socket.send(text)
@@ -91,7 +203,7 @@ function deliverLocally(boardId, message, exceptSocket) {
 
 /** Everyone currently in the room, as far as this instance can see locally. */
 const localPresence = (boardId) =>
-  [...(rooms.get(boardId) ?? [])].map((s) => ({ id: s.peerId, email: s.userEmail }))
+  [...(rooms.get(boardId) ?? [])].map((s) => ({ id: s.peerId, ...identity(s) }))
 
 /**
  * Server-originated messages that change this instance's own state, applied
@@ -104,6 +216,13 @@ function applyControl(boardId, message) {
     // sockets for this board has nothing to enforce, and the next socket to
     // arrive seeds itself from the row the route has already written.
     if (rooms.has(boardId)) membersCanEdit.set(boardId, !message.locked)
+    return
+  }
+  if (message?.type === 'anon') {
+    // Same reasoning as the lock: only worth caching where the room exists, and
+    // the next socket to arrive on an instance without one reads the row it has
+    // just been written.
+    if (rooms.has(boardId)) anonymousPresence.set(boardId, message.anonymous === true)
     return
   }
   if (message?.type === 'evict') {
@@ -231,9 +350,10 @@ export async function attachRealtime(httpServer) {
       if (!room?.delete(socket)) return
       if (room.size === 0) {
         rooms.delete(boardId)
-        // Drop the cached flag with the room, so a board whose lock changed
-        // while nobody was connected is read fresh next time.
+        // Drop the cached flags with the room, so a board whose lock or
+        // anonymity changed while nobody was connected is read fresh next time.
         membersCanEdit.delete(boardId)
+        anonymousPresence.delete(boardId)
       }
       broadcast(boardId, { type: 'peer-left', peerId: socket.peerId }, socket)
     })
@@ -258,6 +378,22 @@ export async function attachRealtime(httpServer) {
       const access = await accessFor(boardId, user.id)
       if (!access.role) return socket.close(4403, 'That board is not shared with you.')
 
+      /**
+       * Read once per room, not once per socket.
+       *
+       * `accessFor` cannot supply this: it is the one place every access
+       * decision is made and adding a display concern to it would put a column
+       * nothing authorizes on into the query every request already runs. So the
+       * relay asks for its own, and only when this instance has no room open
+       * for the board yet. Deliberately before the `readyState` check below, so
+       * the last thing that happens before a socket joins is still the check
+       * that it has not already gone.
+       */
+      if (!anonymousPresence.has(boardId)) {
+        const row = await get('SELECT anonymous_presence FROM boards WHERE id = $1', boardId)
+        anonymousPresence.set(boardId, row?.anonymous_presence === true)
+      }
+
       // Nobody who has already gone joins a room. The `close` handler above
       // cannot take this socket back out if it goes in after that event has
       // fired, so the check is here rather than left to be tidied up later.
@@ -276,6 +412,12 @@ export async function attachRealtime(httpServer) {
       }
       room.add(socket)
 
+      // Assigned unconditionally, even on a board that names people normally,
+      // so that switching the setting on mid-session has a name ready rather
+      // than having to invent one at broadcast time. It is derived, so this
+      // costs a hash.
+      socket.anonName = anonymousNameFor(boardId, user.id)
+
       // Seed the cache from the row we just read, so the first op does not have
       // to go back to the database for something we already know.
       if (!membersCanEdit.has(boardId)) membersCanEdit.set(boardId, access.membersCanEdit)
@@ -289,7 +431,7 @@ export async function attachRealtime(httpServer) {
           peers: localPresence(boardId),
         }),
       )
-      broadcast(boardId, { type: 'peer-joined', peerId: socket.peerId, email: user.email }, socket)
+      broadcast(boardId, { type: 'peer-joined', peerId: socket.peerId, ...identity(socket) }, socket)
 
       onMessage = (raw) => {
         if (raw.length > MAX_PAYLOAD) return
@@ -324,12 +466,14 @@ export async function attachRealtime(httpServer) {
          * does not itself look like a join and trigger another round.
          *
          * Identity is stamped here rather than taken from the message, so a
-         * client cannot introduce itself as somebody else.
+         * client cannot introduce itself as somebody else — and on an anonymous
+         * board it cannot introduce itself as *itself*, either, because the name
+         * the room hears is the one the server substitutes.
          */
         if (op.type === 'here') {
           broadcast(
             boardId,
-            { type: 'peer-present', peerId: socket.peerId, email: socket.userEmail },
+            { type: 'peer-present', peerId: socket.peerId, ...identity(socket) },
             socket,
           )
           return
