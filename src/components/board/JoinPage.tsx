@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { toUserMessage } from '../../lib/errors'
@@ -23,7 +23,6 @@ const clean = (raw: string) =>
 
 export default function JoinPage() {
   const email = useAuthStore((s) => s.email)
-  const ready = useAuthStore((s) => s.ready)
   const navigate = useNavigate()
   const [params] = useSearchParams()
 
@@ -31,18 +30,20 @@ export default function JoinPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // A code in the URL is a convenience, not a credential — it still has to be
-  // redeemed, and the person still has to be signed in.
-  useEffect(() => {
-    if (ready && !email) {
-      const next = encodeURIComponent(`/join${code ? `?code=${code}` : ''}`)
-      navigate(`/login?next=${next}`, { replace: true })
-    }
-  }, [ready, email, code, navigate])
-
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (code.length !== CODE_LENGTH || busy) return
+
+    // Signing in is still required to redeem, because a code grants access to a
+    // real board and membership has to attach to an account. It is just no
+    // longer required to SEE the box: someone read out a code and told to go
+    // and type it should land on the thing they were told to type it into, not
+    // on a signup form. The code rides along in `next` so it survives the trip
+    // and they never type it twice.
+    if (!email) {
+      navigate(`/login?next=${encodeURIComponent(`/join?code=${code}`)}`)
+      return
+    }
 
     setBusy(true)
     setError(null)
@@ -87,6 +88,13 @@ export default function JoinPage() {
         {error && (
           <p role="alert" className="text-[12px] leading-relaxed text-accent">
             {error}
+          </p>
+        )}
+
+        {!email && (
+          <p className="text-[12px] leading-relaxed text-ink-2">
+            You will be asked to sign in before you join. Your code is kept, so you will not
+            need to type it again.
           </p>
         )}
 
