@@ -19,7 +19,18 @@
  * Colour comes from Tailwind's token classes rather than literals: chalk is
  * `currentColor` inherited from the root `<svg>`, anything the diagram is
  * actually about is wrapped in `text-accent`, and the second person in "Rooms"
- * is `text-away`, the same blue the away team wears two sections down.
+ * is `text-away`.
+ *
+ * **That last claim used to end "the same blue the away team wears two sections
+ * down", and it was false the whole time it was written down.** `text-away`
+ * resolved to a bright sky blue while the away team was painted a dark navy,
+ * because the token and the board's own constant were two separate
+ * declarations that had never been compared. It is true now, and true by
+ * construction rather than by inspection: both ends read
+ * `src/theme/teamColors.ts`, and a test fails on a second spelling of either
+ * colour anywhere under `src/`, which is why this paragraph describes them and
+ * does not name them. The cursor here is therefore the navy the away side has
+ * always actually worn.
  *
  * Static on purpose. `.mini-line`'s draw-on fires on mount, and these mount
  * with the page rather than when they are scrolled to, so a draw-on would have

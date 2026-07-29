@@ -108,6 +108,54 @@ describe('emitting local edits', () => {
   })
 })
 
+/**
+ * Deferring the *history* push must not defer anything else.
+ *
+ * `updateToken(..., defer)` holds one snapshot open in `_pending` so a run of
+ * keystrokes is one undo step. Ops carry outcomes and the originator is the
+ * only client that saves, so both of those still have to happen per keystroke:
+ * a peer that only heard the final value would show a stale name for as long as
+ * somebody kept typing, and a save that waited on the undo step would lose
+ * everything typed before the tab was closed.
+ */
+describe('an edit that arrives a character at a time', () => {
+  it('broadcasts every keystroke, and is still one undo step', () => {
+    const id = firstPlayer().id
+    for (const label of ['K', 'Ka', 'Kan']) {
+      useBoardStore.getState().updateToken(id, { label }, true)
+    }
+
+    expect(opsOfType('patch')).toHaveLength(3)
+    expect(sent.at(-1)!.op).toMatchObject({
+      type: 'patch',
+      entity: 'token',
+      id,
+      patch: { label: 'Kan' },
+    })
+    // Unthrottled, like every other patch: three keystrokes, three ops.
+    expect(sent.every((s) => s.key === undefined)).toBe(true)
+
+    expect(useBoardStore.getState().history.past).toHaveLength(0)
+    useBoardStore.getState().commit()
+    expect(useBoardStore.getState().history.past).toHaveLength(1)
+  })
+
+  it('sends no resting-position op when the run ends, since nothing moved', () => {
+    useBoardStore.getState().updateToken(firstPlayer().id, { label: 'K' }, true)
+    useBoardStore.getState().commit()
+    expect(finals).toHaveLength(0)
+  })
+
+  it('still pushes immediately when the caller is not deferring', () => {
+    const id = firstPlayer().id
+    useBoardStore.getState().updateToken(id, { color: '#123456' })
+    useBoardStore.getState().updateToken(id, { rotation: 90 })
+
+    expect(useBoardStore.getState().history.past).toHaveLength(2)
+    expect(opsOfType('patch')).toHaveLength(2)
+  })
+})
+
 describe('echo suppression', () => {
   it('emits nothing while applying a peer’s op', () => {
     const id = firstPlayer().id

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useBoardsStore } from '../../store/boardsStore'
-import { useBoardStore } from '../../store/boardStore'
+import { useBoardStore, defaultPersistedBoard } from '../../store/boardStore'
 import { useAuthStore } from '../../store/authStore'
 import { Button } from '../ui/Button'
 import { Popover } from '../ui/Popover'
@@ -43,9 +43,18 @@ export default function BoardPicker() {
   const onCreate = () =>
     guard(async () => {
       // A new board starts from the default setup, not a copy of the open one.
-      useBoardStore.getState().initDefaultBoard()
-      const snapshot = useBoardStore.getState().getPersistable()
-      await create(`Board ${boards.length + 1}`, snapshot)
+      //
+      // Built, sent, and only then shown. Resetting the store first looked
+      // equivalent and was not: the reset fires the autosave subscription,
+      // which schedules a write against the board still open, and nothing
+      // cancels that timer because cancellation hangs off the current board
+      // changing, which only happens once the create succeeds. So a create that
+      // failed, or merely took longer than the debounce, left a `PUT` of a
+      // blank default board landing on the row holding the coach's actual work.
+      // The open board is not touched until there is a new one to move to.
+      const snapshot = defaultPersistedBoard()
+      const newId = await create(`Board ${boards.length + 1}`, snapshot)
+      useBoardStore.getState().initDefaultBoard(newId)
       toast('New board started.')
     }, 'The board could not be created.')
 

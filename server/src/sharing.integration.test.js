@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { WebSocket } from 'ws'
 import { migrate, run, get, closePool } from './db.js'
 import { createSession, COOKIE_NAME } from './auth.js'
+import { testBoard } from './testBoard.js'
 
 /**
  * Sharing, end to end, across two API instances.
@@ -156,7 +157,7 @@ before(async () => {
   const created = await json(
     await call(A, '/boards', owner.cookie, {
       method: 'POST',
-      body: JSON.stringify({ name: 'Shared board', data: { version: 1 } }),
+      body: JSON.stringify({ name: 'Shared board', data: testBoard() }),
     }),
   )
   assert.equal(created.status, 201)
@@ -582,7 +583,7 @@ test('locking the board stops a member editing, on the instance they are not on'
   const save = await json(
     await call(B, `/boards/${boardId}`, collaborator.cookie, {
       method: 'PUT',
-      body: JSON.stringify({ name: 'Shared board', data: { version: 1, sneaky: true } }),
+      body: JSON.stringify({ name: 'Shared board', data: testBoard({ sneaky: true }) }),
     }),
   )
   assert.equal(save.status, 403)
@@ -591,7 +592,7 @@ test('locking the board stops a member editing, on the instance they are not on'
   const ownerSave = await json(
     await call(A, `/boards/${boardId}`, owner.cookie, {
       method: 'PUT',
-      body: JSON.stringify({ name: 'Shared board', data: { version: 1 } }),
+      body: JSON.stringify({ name: 'Shared board', data: testBoard() }),
     }),
   )
   assert.equal(ownerSave.status, 200)

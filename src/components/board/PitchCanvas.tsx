@@ -6,6 +6,7 @@ import { computeMapping } from './pitchMapping'
 import { usePanZoom } from '../../hooks/usePanZoom'
 import { useAnimatedMapping } from '../../hooks/useAnimatedMapping'
 import { useDrawGesture } from '../../hooks/useDrawGesture'
+import { useWindowPointerUp } from '../../hooks/useWindowPointerUp'
 import { isZone, isText, isMark } from '../../lib/drawings'
 import PitchLayer from './PitchLayer'
 import TokenLayer, { playerHidden, shownX } from './TokenLayer'
@@ -133,6 +134,22 @@ export default function PitchCanvas() {
     setSelection(m.additive ? Array.from(new Set([...selection, ...hit])) : hit)
   }
 
+  // The one place a gesture ends, listened for on the window rather than on the
+  // stage. See `useWindowPointerUp` for why the stage cannot see a release over
+  // a bench rail, the toolbar or the frame strip. A release over the canvas
+  // bubbles to the window too, so this is the whole of it and the stage carries
+  // no `onPointerUp` of its own: two handlers would commit one drawing twice,
+  // since React has not re-rendered between them and both would still be
+  // holding the same draft.
+  useWindowPointerUp(() => {
+    pz.onPointerUp()
+    if (!locked && draw.onPointerUp()) return
+    if (marquee) {
+      finishMarquee(marquee)
+      setMarquee(null)
+    }
+  })
+
   const ready = size.w > 0 && size.h > 0
   const cursor = pz.panning ? 'grabbing' : draw.drawing ? 'crosshair' : 'default'
 
@@ -190,14 +207,6 @@ export default function PitchCanvas() {
               w: Math.abs(p.x - from.x),
               h: Math.abs(p.y - from.y),
             })
-          }}
-          onPointerUp={() => {
-            pz.onPointerUp()
-            if (!locked && draw.onPointerUp()) return
-            if (marquee) {
-              finishMarquee(marquee)
-              setMarquee(null)
-            }
           }}
         >
           <Layer listening={false}>

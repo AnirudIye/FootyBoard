@@ -49,7 +49,11 @@ export interface ConnectionHandlers {
  */
 const FATAL: Record<number, string> = {
   4400: 'No board was specified for this room.',
-  4401: 'Sign in to collaborate on this board.',
+  // The room is only opened for somebody who is signed in, so this is almost
+  // always a session that has ended underneath an open tab rather than one that
+  // never existed: a password reset elsewhere, a sign-out, or the thirty days
+  // running out. Saying "sign in" alone read as though nothing had changed.
+  4401: 'Your session has ended. Sign in again to collaborate on this board.',
   4403: 'This board is no longer shared with you.',
 }
 

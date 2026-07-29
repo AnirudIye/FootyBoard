@@ -42,6 +42,13 @@ export default function PrivacyPolicy() {
             from the hash.
           </li>
           <li>
+            <strong className="text-ink">Your security question and a hash of its answer</strong>.
+            Which question you chose is stored plainly, because it is not a secret. The answer is
+            hashed exactly the way your password is, with its own random per-account salt, and
+            cannot be recovered from the hash. It is used for one thing: proving it is you when you
+            have forgotten your password.
+          </li>
+          <li>
             <strong className="text-ink">Your boards</strong>: player positions, drawings,
             animation frames, and view settings. These are encrypted before they are stored. The
             board's <em>name</em> is not, which is a deliberate trade covered below.
@@ -164,7 +171,7 @@ export default function PrivacyPolicy() {
       <Clause heading="Retention">
         <p>
           Your account and boards are kept until you delete them. Expired sessions are cleared
-          automatically, as are password reset links nobody followed. Deletion is immediate and
+          automatically, as are password reset requests nobody completed. Deletion is immediate and
           there is no backup to restore from, so treat it as final.
         </p>
       </Clause>
@@ -176,10 +183,9 @@ export default function PrivacyPolicy() {
           hosting arrangement in use.
         </p>
         <p>
-          Two other parties can receive data, and only in the narrow cases described above: Google,
-          if you turned the online assistant on, and whichever service this instance is configured
-          to send email through, which receives your address in order to deliver a password reset
-          link. Both may process it outside your country.
+          One other party can receive data, and only in the narrow case described above: Google, if
+          you turned the online assistant on. It may process it outside your country. Nothing here
+          sends email, so no mail provider receives your address.
         </p>
       </Clause>
 
@@ -205,16 +211,25 @@ export default function PrivacyPolicy() {
           you own. Put nothing in a board's title that you would not want read.
         </p>
         <p>
-          If you forget your password you can reset it by email. The link is stored only as a hash,
-          expires in 30 minutes, and works exactly once. Completing a reset signs out every session
-          on the account, so a session somebody else took cannot outlive the password changed to
-          stop it.
+          If you forget your password, your security question is what proves the account is yours.
+          Answering it correctly issues a one-time reset token that is stored only as a hash and
+          expires in 15 minutes. Wrong answers are limited: five lock the address for 15 minutes,
+          and repeated attempts from one network are cut off sooner. Completing a reset signs out
+          every session on the account, so a session somebody else took cannot outlive the password
+          changed to stop it.
         </p>
         <p>
-          What we do not have: two-factor authentication, and any way to sign out other devices
-          short of resetting your password. Sessions last 30 days. Beyond HTTPS in transit and the
-          encryption described above, treat a FootyBoard account as protecting tactical work rather
-          than sensitive personal information.
+          Be plain about the trade this makes. A question whose answer somebody close to you could
+          guess is a weaker secret than a password, and the limits above are what stand between the
+          two. Choose a question whose answer is not on your public profile, and treat the answer as
+          another password rather than as a fact about you.
+        </p>
+        <p>
+          What we do not have: two-factor authentication. Sessions last 30 days. Changing your
+          password signs out every other session on the account, which is the way to end one you
+          think somebody else is holding. Beyond HTTPS in transit and the encryption described
+          above, treat a FootyBoard account as protecting tactical work rather than sensitive
+          personal information.
         </p>
       </Clause>
 

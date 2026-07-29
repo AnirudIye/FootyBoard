@@ -25,14 +25,15 @@ export default function TermsOfService() {
       <Clause heading="Your account">
         <p>
           Creating an account allows your boards to be saved and retrieved. You are responsible for
-          maintaining the confidentiality of your password and for all activity that occurs under
-          your account.
+          maintaining the confidentiality of your password and of your security question's answer,
+          and for all activity that occurs under your account.
         </p>
         <p>
-          If you forget your password, you may request a reset link by email. That link expires
-          after a short period and may be used only once. Completing a reset signs out all existing
-          sessions for the account. Deleting your account removes its boards immediately, and no
-          backup is retained from which they could be restored.
+          If you forget your password, answering your security question lets you set a new one.
+          Repeated wrong answers lock the account temporarily. Completing a reset signs out all
+          existing sessions for the account, as does changing your password while signed in.
+          Deleting your account removes its boards immediately, and no backup is retained from which
+          they could be restored.
         </p>
       </Clause>
 

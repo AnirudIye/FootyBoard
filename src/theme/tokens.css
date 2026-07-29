@@ -53,9 +53,36 @@
      on it at 7.03:1. It still shows as a highlight: 2.53:1 against --paper. */
   --selection: 18 94 51;
 
-  /* Teams: still separable on a dark ground, still colour-blind safe */
-  --home: 232 92 66;
-  --away: 82 154 224;
+  /* The save indicator's alarm, and the one colour in this file that is not
+     about a team. "Not saved" and "Not saving" borrowed --home, so the
+     legibility of the two states a coach must not miss was a side effect of a
+     team's identity: two values with nothing in common, held together by one
+     name. Splitting them is what lets the team pair move without darkening the
+     alarm, and it is the reason this token exists rather than a wish to have
+     more tokens. The value is exactly what --home was, so the indicator looks
+     the same as it did to the pixel.
+     5.71:1 on --paper and 5.33:1 on --surface, and --surface is the one that
+     decides because the toolbar this sits in is bg-surface/95. Both clear the
+     4.5:1 floor, which the 10px label needs and the dot beside it does not. */
+  --alert: 232 92 66;
+
+  /* Teams: defined once, in src/theme/teamColors.ts, and written onto :root
+     from there rather than declared here.
+     The board paints its chips onto a canvas, and a canvas cannot read a custom
+     property, so one end has to hold the pair and hand it to the other. A
+     stylesheet cannot hand anything to Konva, so the module holds it and
+     main.tsx calls applyTeamTokens() before the first render. The Tailwind
+     `home` and `away` utilities are untouched and still read rgb(var(--home)),
+     opacity modifiers included.
+     They were declared here as well until 2026-07-29, at the two brighter
+     values --alert has kept, while the store painted the muted pair the chips
+     have always actually worn. Two pairs, each commented as colour-blind safe
+     by somebody who did not know the other existed, rendering one scroll apart
+     on the landing page. See the module for which pair won and why, and note
+     that neither value may be written down here again: a test walks the tree
+     and fails on any second spelling, comments included, since a comment
+     naming a colour is exactly how the landing page came to assert a match
+     that did not exist. */
 
   /* Varied radii, not one uniform value */
   --r-sm: 3px;

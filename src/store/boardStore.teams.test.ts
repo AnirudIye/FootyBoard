@@ -1,8 +1,42 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { useBoardStore, HOME_COLOR, AWAY_COLOR } from './boardStore'
+import type { PitchKind, Side } from '../lib/types'
 
 const home = () => useBoardStore.getState().tokens.filter((t) => t.teamId === 'home')
 const away = () => useBoardStore.getState().tokens.filter((t) => t.teamId === 'away')
+
+const SIDES: Side[] = ['home', 'away']
+const onPitch = (side: Side) =>
+  useBoardStore.getState().tokens.filter((t) => t.type === 'player' && t.teamId === side)
+const onBench = (side: Side) => useBoardStore.getState().bench.filter((t) => t.teamId === side)
+
+const SQUAD_SIZE: Record<PitchKind, number> = { '11': 11, '7aside': 7, futsal: 5 }
+
+/**
+ * What has to be true of a team after any format switch: a full side, no shirt
+ * number worn twice anywhere in the squad, and exactly one keeper, numbered 1,
+ * further from the opponent's goal than anyone else on the team.
+ */
+function expectCoherentSquad(side: Side, kind: PitchKind) {
+  const pitch = onPitch(side)
+  expect(pitch, `${side} squad size in ${kind}`).toHaveLength(SQUAD_SIZE[kind])
+
+  // Pitch and bench together, because the collision was across the two: each
+  // set was internally plausible and the union was not.
+  const numbers = [...pitch, ...onBench(side)].map((t) => t.number)
+  expect(numbers.includes(undefined), `${side} has an unnumbered player in ${kind}`).toBe(false)
+  expect(new Set(numbers).size, `${side} shirt numbers in ${kind}: ${numbers.join(',')}`).toBe(
+    numbers.length,
+  )
+
+  const keepers = pitch.filter((t) => t.shape === 'keeper')
+  expect(keepers, `${side} keepers in ${kind}`).toHaveLength(1)
+  expect(keepers[0].number).toBe(1)
+  const outfield = pitch.filter((t) => t.shape !== 'keeper').map((t) => t.x)
+  // Home attacks to the right, away to the left, so "in goal" is the far end.
+  if (side === 'home') expect(keepers[0].x).toBeLessThan(Math.min(...outfield))
+  else expect(keepers[0].x).toBeGreaterThan(Math.max(...outfield))
+}
 
 describe('active team', () => {
   beforeEach(() => useBoardStore.getState().initDefaultBoard())
@@ -85,6 +119,62 @@ describe('setPitchKind', () => {
     useBoardStore.getState().undoAction()
     expect(useBoardStore.getState().view.kind).toBe('11')
     expect(home()).toHaveLength(11)
+  })
+})
+
+/**
+ * Resizing a squad used to renumber the players who stayed on into the new
+ * format's positional set without noticing that the players being sent off
+ * were carrying some of those same numbers to the bench. Both sets looked
+ * right on their own and the total was unchanged, so every count-based check
+ * passed while three numbers existed twice and three existed nowhere.
+ */
+describe('setPitchKind numbering', () => {
+  beforeEach(() => useBoardStore.getState().initDefaultBoard())
+
+  const TRANSITIONS: [PitchKind, PitchKind][] = [
+    ['11', '7aside'],
+    ['11', 'futsal'],
+    ['7aside', 'futsal'],
+    ['7aside', '11'],
+    ['futsal', '11'],
+    ['futsal', '7aside'],
+  ]
+
+  for (const [from, to] of TRANSITIONS) {
+    it(`leaves a coherent squad going ${from} to ${to}`, () => {
+      if (from !== '11') useBoardStore.getState().setPitchKind(from)
+      for (const side of SIDES) expectCoherentSquad(side, from)
+
+      useBoardStore.getState().setPitchKind(to)
+      for (const side of SIDES) expectCoherentSquad(side, to)
+    })
+  }
+
+  it('stays coherent through 11 to 7 to futsal and back to 11', () => {
+    for (const kind of ['7aside', 'futsal', '11'] as PitchKind[]) {
+      useBoardStore.getState().setPitchKind(kind)
+      for (const side of SIDES) expectCoherentSquad(side, kind)
+    }
+  })
+
+  it('keeps every player through a format switch rather than losing any', () => {
+    const total = () => useBoardStore.getState().tokens.filter((t) => t.type === 'player').length +
+      useBoardStore.getState().bench.length
+    const before = total()
+    for (const kind of ['7aside', 'futsal', '11'] as PitchKind[]) {
+      useBoardStore.getState().setPitchKind(kind)
+      expect(total()).toBe(before)
+    }
+  })
+
+  it('brings a substitute on without putting two of the same number on the pitch', () => {
+    useBoardStore.getState().setPitchKind('7aside')
+    const sub = onBench('home')[0]
+    useBoardStore.getState().unbenchToken(sub.id, 66, 50)
+
+    const numbers = onPitch('home').map((t) => t.number)
+    expect(new Set(numbers).size).toBe(numbers.length)
   })
 })
 

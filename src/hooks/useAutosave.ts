@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { useBoardStore } from '../store/boardStore'
+import { useBoardStore, defaultPersistedBoard } from '../store/boardStore'
 import { useAuthStore } from '../store/authStore'
 import { useBoardsStore } from '../store/boardsStore'
 import { loadBoard, flushSave } from '../lib/boardSync'
@@ -52,6 +52,13 @@ export function useAutosave() {
   // Guards the save subscription against writing a board that is still loading.
   const loadedId = useRef<string | null>(null)
 
+  // Boards this version has already failed to read. Falling back to another
+  // board is only safe if it cannot land on a second unreadable one: two of
+  // them in the list and "open something else" is a loop, each turn of it a
+  // request. Every failure adds an id and every candidate is drawn from what is
+  // left, so there are at most as many hops as there are boards.
+  const unreadable = useRef<Set<string>>(new Set())
+
   // 1. Signing in loads the board list; signing out clears it.
   useEffect(() => {
     if (!ready) return
@@ -71,8 +78,10 @@ export function useAutosave() {
         const id = await boards.load()
         if (cancelled || id) return
         // A brand new account has nothing yet, so give it something to open.
-        useBoardStore.getState().initDefaultBoard()
-        await boards.create('My board', useBoardStore.getState().getPersistable())
+        // Built rather than reset-and-read for the same reason the picker does
+        // it that way: nothing touches the open board until the new one exists.
+        const newId = await boards.create('My board', defaultPersistedBoard())
+        useBoardStore.getState().initDefaultBoard(newId)
       } catch (err) {
         if (!cancelled) toast(toUserMessage(err, 'Your boards could not be loaded.'))
       }
@@ -94,15 +103,62 @@ export function useAutosave() {
       try {
         const ok = await loadBoard(currentId, 'open')
         if (cancelled) return
+
         // A board from an older version, or one that arrived damaged, is not
-        // worth crashing over — start clean and say so.
+        // worth crashing over.
+        //
+        // What must not happen is the stand-in being written back: the stored
+        // record is unreadable by this version, not worthless, and a blank
+        // board saved over it turns "we could not parse this" into "this is
+        // gone" without anybody touching anything. So the stand-in carries no
+        // board id and every write is refused.
+        //
+        // That is safe and, on its own, was still a dead end. A coach can work
+        // on a refused board all afternoon: the toast saying so lasts four
+        // seconds and the indicator read "Ready" for the rest of the session.
+        // So prefer to move them somewhere that does save, which is what a
+        // board id the server has never heard of already does, and only fall
+        // back to the stand-in when there is nowhere to move them to.
         if (!ok) {
+          unreadable.current.add(currentId)
+          const boards = useBoardsStore.getState()
+          const other = boards.boards.find((b) => !unreadable.current.has(b.id))
+
+          if (other) {
+            // Nothing is loaded over the top and nothing is blanked: `loadBoard`
+            // left the store exactly as it found it, so selecting another board
+            // simply loads that one instead. `loadedId` stays unset, which is
+            // this effect's own signal that no board is open yet.
+            boards.select(other.id)
+            toast(
+              `That board could not be opened, so "${other.name}" is open instead. Your saved copy is untouched.`,
+            )
+            return
+          }
+
+          // Nowhere to go. Say plainly that the copy on the server is being left
+          // alone, because a coach looking at an empty pitch under their board's
+          // name has every reason to assume the opposite, and leave the
+          // indicator saying it for as long as it is true.
           useBoardStore.getState().initDefaultBoard()
-          toast('That board could not be opened, so a fresh one is ready.')
+          boards.setSaveState('blocked')
+          toast('That board could not be opened. Your saved copy is untouched, and this blank one is not being saved.')
+        } else if (useBoardsStore.getState().saveState === 'blocked') {
+          // The condition has stopped being true: this board opened, so this
+          // board saves. Only `blocked` is cleared, because every other state
+          // describes a write rather than the board.
+          useBoardsStore.getState().setSaveState('idle')
         }
+
         loadedId.current = currentId
       } catch (err) {
-        if (!cancelled) toast(toUserMessage(err, 'That board could not be opened.'))
+        if (cancelled) return
+        // Never opened, so `loadedId` is never set for it and every write is
+        // refused just as surely as above. The reason differs and the standing
+        // truth does not, so the indicator says the same thing rather than
+        // resting on "Ready" over a board that is going nowhere.
+        toast(toUserMessage(err, 'That board could not be opened.'))
+        useBoardsStore.getState().setSaveState('blocked')
       }
     })()
 
@@ -141,8 +197,11 @@ export function useAutosave() {
         // The same write the realtime hook performs, not a second copy of it:
         // two implementations of "save this board" meant every change to what
         // saving means had to be made twice, and once was missed.
-        await flushSave(currentId)
-        warned = false
+        //
+        // A refused write is not a failed one. `flushSave` answers false when
+        // the store is not holding this board, so there is nothing here that
+        // belongs in it and nothing to tell anybody about.
+        if (await flushSave(currentId)) warned = false
       } catch (err) {
         // flushSave has already set the indicator, and it stays until a save
         // succeeds. The toast fires once, so a dropped server does not

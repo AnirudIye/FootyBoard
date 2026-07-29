@@ -35,15 +35,29 @@ export function useTokenTransition(tokens: Token[], epoch: number): Record<strin
   const displayRef = useRef<Record<string, Pt>>({})
   const fromRef = useRef<Record<string, Pt>>({})
   const animatingRef = useRef(false)
+  // The epoch the effect below has already started a glide for. Written from
+  // the effect and never from the render body, because StrictMode renders twice
+  // and a second pass would find its own bookkeeping already done and undo the
+  // hold on the line below.
+  const seenEpochRef = useRef(epoch)
+
+  // The render a formation, an undo or a redo lands on is already carrying the
+  // destination: tokens and the epoch change in the same commit. Adopting them
+  // here is what made the glide run from the destination to the destination, so
+  // hold the previous positions for that one render and let the effect travel
+  // from them. Under reduced motion there is no travel to protect and arriving
+  // instantly is the answer that was asked for.
+  const arriving = !reduced && epoch !== 0 && epoch !== seenEpochRef.current
 
   // While idle the display follows the store exactly.
-  if (!animatingRef.current) {
+  if (!animatingRef.current && !arriving) {
     const next: Record<string, Pt> = {}
     for (const t of tokens) next[t.id] = { x: t.x, y: t.y }
     displayRef.current = next
   }
 
   useEffect(() => {
+    seenEpochRef.current = epoch
     // Epoch 0 is the board as it opened: there is nowhere to travel from.
     if (epoch === 0) return
     if (reduced) return

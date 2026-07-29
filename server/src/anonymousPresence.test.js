@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { WebSocket } from 'ws'
 import { migrate, run, closePool } from './db.js'
 import { createSession, COOKIE_NAME } from './auth.js'
+import { testBoard } from './testBoard.js'
 
 /**
  * Anonymous presence, across two API instances.
@@ -159,7 +160,7 @@ before(async () => {
   const created = await json(
     await call(A, '/boards', owner.cookie, {
       method: 'POST',
-      body: JSON.stringify({ name: 'Session', data: { version: 1 } }),
+      body: JSON.stringify({ name: 'Session', data: testBoard() }),
     }),
   )
   assert.equal(created.status, 201)

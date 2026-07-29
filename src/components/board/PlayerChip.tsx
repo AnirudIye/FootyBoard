@@ -46,9 +46,36 @@ interface Props {
   selected: boolean
 }
 
+interface Pt {
+  x: number
+  y: number
+}
+
+/**
+ * One step of a chip drag, in board coordinates.
+ *
+ * A selection travels as one delta and the chip under the pointer is part of
+ * that set. Handing the rest to `moveTokens` and the dragged chip separately to
+ * `moveToken` is what used to destroy the shape at a touchline: `moveTokens`
+ * clamps the delta once against the bounding box of the tokens it is given,
+ * `moveToken` clamps a single chip against its own position, and two clamps
+ * stop at two different moments. Dragging a back four at x = 8, 18, 28, 38 by
+ * the chip at 38 left them on 0, 0, 10, 20, with the dragged chip stacked on
+ * the leftmost defender, and dragging back out did not restore the spacing.
+ *
+ * Exported for the same reason `playerHidden` is: the rule is worth asserting
+ * without a canvas to render it on.
+ */
+export function dragChip(tokenId: string, to: Pt, from: Pt, grouped: boolean): void {
+  const st = useBoardStore.getState()
+  if (grouped && st.selection.length > 1) {
+    st.moveTokens(st.selection, to.x - from.x, to.y - from.y)
+  } else {
+    st.moveToken(tokenId, to.x, to.y)
+  }
+}
+
 export default function PlayerChip({ token, mapping, nx: atX, ny: atY, radius, selected }: Props) {
-  const moveToken = useBoardStore((s) => s.moveToken)
-  const moveTokens = useBoardStore((s) => s.moveTokens)
   const commit = useBoardStore((s) => s.commit)
   const setSelection = useBoardStore((s) => s.setSelection)
   const toggleSelection = useBoardStore((s) => s.toggleSelection)
@@ -117,20 +144,8 @@ export default function PlayerChip({ token, mapping, nx: atX, ny: atY, radius, s
       }}
       onDragMove={(e) => {
         const n = mapping.toNorm(e.target.x(), e.target.y())
-        const sel = useBoardStore.getState().selection
-        if (selected && sel.length > 1) {
-          const dx = n.x - dragStart.current.x
-          const dy = n.y - dragStart.current.y
-          dragStart.current = { x: n.x, y: n.y }
-          moveTokens(
-            sel.filter((id) => id !== token.id),
-            dx,
-            dy,
-          )
-          moveToken(token.id, n.x, n.y)
-        } else {
-          moveToken(token.id, n.x, n.y)
-        }
+        dragChip(token.id, n, dragStart.current, selected)
+        dragStart.current = { x: n.x, y: n.y }
       }}
       onDragEnd={() => {
         commit()

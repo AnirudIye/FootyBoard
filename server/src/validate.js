@@ -1,3 +1,5 @@
+import { isPersistedBoard } from '../../src/lib/boardSchema.js'
+
 /**
  * Server-side input validation.
  *
@@ -5,6 +7,12 @@
  * a convenience, not a control — anyone can post straight to the API. Every
  * request is validated again here, and nothing reaches SQL except as a bound
  * parameter.
+ *
+ * One import crosses into the frontend tree, deliberately: `boardSchema.js` is
+ * the single definition of what a board payload is, and both ends have to agree
+ * about that or the server writes rows the client cannot open. It is plain
+ * JavaScript for exactly this reason. See the note in that file, and note the
+ * coupling it creates: `server/` no longer runs from a copy of itself alone.
  */
 
 export class BadRequest extends Error {
@@ -74,9 +82,27 @@ export function validateBoardName(raw) {
 /**
  * Boards are stored as JSON text. We re-serialise what was sent rather than
  * trusting the raw string, so only well-formed JSON of a sane size is written.
+ *
+ * **And only an actual board.** This used to check presence and size and
+ * nothing else, so `POST /api/boards` with a body of `{"v":1}` answered 201 and
+ * wrote the row. The client then refused to open it, because `isPersistedBoard`
+ * runs on read and is a real check: six rows in the dev database are exactly
+ * that, and the whole "That board could not be opened" path exists to cope with
+ * what this endpoint let through.
+ *
+ * The guard is imported rather than written out again, and that is the point of
+ * the fix rather than an implementation detail. "Is this loadable?" and "is this
+ * storable?" are one question, and while each end answered it separately the
+ * server could go on accepting rows the client would refuse. Two copies would
+ * also make the dangerous direction possible: a server check that drifted
+ * *stricter* than the client's own serialiser refuses every save the real app
+ * makes, which is far worse than the rows it prevents. One function cannot
+ * drift either way.
  */
 export function validateBoardData(value) {
   if (value === undefined || value === null) throw new BadRequest('The board is missing.', 'data')
+  if (!isPersistedBoard(value))
+    throw new BadRequest('That board is not in a format this version can save.', 'data')
   // Whatever this is, it came back out of express.json(), so it is already a
   // JSON value: nothing here can be circular, and nothing can serialise to
   // undefined once null has been turned away above.

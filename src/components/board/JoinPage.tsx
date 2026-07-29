@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { toUserMessage } from '../../lib/errors'
+import { CODE_LENGTH, cleanCode as clean, joinPath } from '../../lib/joinCode'
 import { useAuthStore } from '../../store/authStore'
 import { useBoardsStore } from '../../store/boardsStore'
 import { AuthShell } from '../auth/AuthShell'
@@ -15,11 +16,6 @@ import { Button } from '../ui/Button'
  * ABCDEF", and the thing they land on should be that box and almost nothing
  * else.
  */
-
-const CODE_LENGTH = 6
-/** Matches the server's alphabet — no I or O, no digits. */
-const clean = (raw: string) =>
-  raw.toUpperCase().replace(/[^A-HJ-NP-Z]/g, '').slice(0, CODE_LENGTH)
 
 export default function JoinPage() {
   const email = useAuthStore((s) => s.email)
@@ -80,7 +76,7 @@ export default function JoinPage() {
     // on a signup form. The code rides along in `next` so it survives the trip
     // and they never type it twice.
     if (!email) {
-      navigate(`/login?next=${encodeURIComponent(`/join?code=${code}`)}`)
+      navigate(`/login?next=${encodeURIComponent(joinPath(code))}`)
       return
     }
 

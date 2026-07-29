@@ -7,6 +7,9 @@
     "types": ["vite/client"],
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
+    /* `src/lib/boardSchema.js` is plain JavaScript so the API can import it too;
+       see the note at the top of that file. */
+    "allowJs": true,
 
     /* Bundler mode */
     "moduleResolution": "bundler",

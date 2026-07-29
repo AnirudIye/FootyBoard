@@ -7,7 +7,13 @@ interface AuthState {
   /** True once the server has been asked who we are, so the UI can wait. */
   ready: boolean
   restore: () => Promise<void>
-  signUp: (email: string, password: string, acceptedTerms: boolean) => Promise<void>
+  signUp: (
+    email: string,
+    password: string,
+    acceptedTerms: boolean,
+    securityQuestionId: string,
+    securityAnswer: string,
+  ) => Promise<void>
   logIn: (email: string, password: string) => Promise<void>
   logOut: () => Promise<void>
   deleteAccount: () => Promise<void>
@@ -31,8 +37,14 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
-  signUp: async (email, password, acceptedTerms) => {
-    const { user } = await api.signUp(email, password, acceptedTerms)
+  signUp: async (email, password, acceptedTerms, securityQuestionId, securityAnswer) => {
+    const { user } = await api.signUp(
+      email,
+      password,
+      acceptedTerms,
+      securityQuestionId,
+      securityAnswer,
+    )
     set({ email: user.email, ready: true })
   },
 

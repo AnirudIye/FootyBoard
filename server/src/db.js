@@ -151,6 +151,26 @@ async function applySchema(client) {
     ALTER TABLE boards ADD COLUMN IF NOT EXISTS anonymous_presence BOOLEAN NOT NULL DEFAULT false;
   `)
 
+  // The security question, which is what proves identity when a password is
+  // forgotten. There is no reset email any more, so these three columns are the
+  // whole authenticator for recovery.
+  //
+  // The id is not a secret and is stored plain: knowing which question someone
+  // picked tells you nothing. The answer is stored exactly the way the password
+  // is, as an scrypt digest with its own per-user salt, and is compared in
+  // constant time. Nothing reads it back.
+  //
+  // All three are nullable, because rows predating this have no answer to store
+  // and backfilling one would mean inventing a secret on someone's behalf. The
+  // consequence is deliberate and is written down in `handoff.md`: those
+  // accounts cannot recover until they set a question, and recovery for them
+  // fails through exactly the same generic path a wrong answer takes.
+  await client.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS security_question_id TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS security_answer_hash TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS security_answer_salt TEXT;
+  `)
+
   // The short join code, alongside the long link token on the same share row.
   //
   // Stored in plain text, which is deliberate and is the one place this file
@@ -267,10 +287,10 @@ export async function transaction(fn) {
   }
 }
 
-export async function purgeExpiredSessions() {
-  const { changes } = await run('DELETE FROM sessions WHERE expires_at <= $1', Date.now())
-  return changes
-}
+// `purgeExpiredSessions` used to sit here, beside the other two sweeps. It is
+// in `sessions.js` now, because deleting a session row is only half of ending a
+// session and this file has no business knowing about the other half. See the
+// rule at the top of that file.
 
 /** Comfortably longer than the longest window any limiter uses (one hour). */
 const ALLOWANCE_RETENTION_MS = 24 * 60 * 60 * 1000

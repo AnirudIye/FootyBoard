@@ -30,9 +30,14 @@ In production, skip step 1 and point `DATABASE_URL` at a managed Postgres.
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/api/health` | liveness |
-| POST | `/api/auth/signup` | `{ email, password, acceptedTerms }` — sets session cookie |
+| GET | `/api/auth/security-questions` | the canonical list; the client's dropdown is built from it |
+| POST | `/api/auth/signup` | `{ email, password, acceptedTerms, securityQuestionId, securityAnswer }` — sets session cookie |
 | POST | `/api/auth/login` | `{ email, password }` |
-| POST | `/api/auth/logout` | clears the session |
+| POST | `/api/auth/password` | `{ currentPassword, password, securityQuestionId, securityAnswer }` — signs out every other session |
+| POST | `/api/auth/forgot` | `{ email }` -> `{ question }`; every address gets one, so this cannot enumerate accounts |
+| POST | `/api/auth/forgot/verify` | `{ email, answer }` -> `{ token }`; rate limited per address and per IP, failures only |
+| POST | `/api/auth/reset` | `{ token, password }`; single use, destroys every session and closes its rooms |
+| POST | `/api/auth/logout` | clears the session and closes its rooms |
 | GET | `/api/auth/me` | current user, or 401 |
 | DELETE | `/api/auth/me` | deletes the account; sessions and boards cascade |
 | GET | `/api/boards?limit&cursor` | keyset page of the caller's boards |
@@ -134,6 +139,17 @@ Consent enforced only by the panel that asks for it is not enforced.
 (`Secure` in production). Only the SHA-256 of a token is stored, so a leaked
 database yields no usable cookies, and any session can be revoked by deleting
 one row.
+
+**Deleting the row is only half of revoking it.** REST reads the row on every
+request, so the next call is refused at once; a WebSocket is authorized once,
+during the handshake, and never again, so it carries on relaying edits in both
+directions until the tab closes. Every path that deletes from `sessions` goes
+through `src/sessions.js`, which publishes an `evict-session` control message on
+the same LISTEN/NOTIFY bus the rest of the cluster runs on, and every instance
+closes the matching sockets in every room it holds. Evictions are matched on the
+session, not on the user, so signing out of one browser does not close another,
+and changing a password does not close the replacement session it just minted.
+`src/sessionRevocation.test.js` holds this across two instances.
 
 **Login responses do not leak account existence**: a wrong password and an
 unknown address both return `Incorrect email or password.`

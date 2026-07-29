@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import pg from 'pg'
 import { accessFor } from './access.js'
 import { get } from './db.js'
-import { userForToken, readCookie, COOKIE_NAME } from './auth.js'
+import { sessionForToken, readCookie, COOKIE_NAME } from './auth.js'
 import { isAllowedOrigin } from './env.js'
 
 /**
@@ -32,16 +32,17 @@ const LISTENER_RETRY_MS = 2000
 /**
  * Messages a client is never allowed to send.
  *
- * `lock` and `evict` originate on the server. Without this a member could
- * broadcast `lock: false` and every peer's UI would unlock — the server would
- * still drop their edits, so nothing would actually be written, but the
- * interface would be lying about who is allowed to do what. The presence
- * messages are here for the same reason: only the server decides who is in a
- * room.
+ * `lock`, `evict` and `evict-session` originate on the server. Without this a
+ * member could broadcast `lock: false` and every peer's UI would unlock — the
+ * server would still drop their edits, so nothing would actually be written,
+ * but the interface would be lying about who is allowed to do what. The
+ * presence messages are here for the same reason: only the server decides who
+ * is in a room.
  */
 const SERVER_ONLY = new Set([
   'lock',
   'evict',
+  'evict-session',
   'welcome',
   'peer-joined',
   'peer-left',
@@ -63,11 +64,11 @@ const ALLOWED_WHEN_LOCKED = new Set(['cursor', 'sel', 'need-state', 'replaced', 
  * message handler has a `default` arm that treats anything it does not
  * recognise as a board operation, which means shipping it internal bookkeeping
  * is not merely wasteful — it is handed to code that will try to apply it to
- * the board. Neither of these has anything a client could do with it: `evict`
- * is acted on here by closing the socket, and `anon` only corrects this
- * instance's cache.
+ * the board. None of these has anything a client could do with it: `evict` and
+ * `evict-session` are acted on here by closing the socket, and `anon` only
+ * corrects this instance's cache.
  */
-const INTERNAL_ONLY = new Set(['evict', 'anon'])
+const INTERNAL_ONLY = new Set(['evict', 'evict-session', 'anon'])
 
 /** boardId -> set of sockets on THIS instance. */
 const rooms = new Map()
@@ -191,6 +192,43 @@ export function publish(boardId, message) {
   publishFn?.(boardId, message)
 }
 
+/**
+ * How many session ids ride in one eviction message.
+ *
+ * `broadcast` refuses a payload over `MAX_PAYLOAD` and returns, because an op
+ * that will not fit is a bug rather than something to truncate. An *eviction*
+ * that will not fit is a different thing entirely: it would be a revoked
+ * session quietly keeping its socket. So the list is cut into pieces that
+ * cannot reach the cap rather than handed over and hoped for. A hundred uuids
+ * is under 4 kB, wrapper included.
+ */
+const EVICT_CHUNK = 100
+
+/**
+ * Close every socket authenticated by one of these sessions, on every instance.
+ *
+ * This is the socket half of destroying a session, and it exists because the
+ * REST half is not enough on its own. A socket is authorized once, during the
+ * handshake, and never re-checked: deleting the row stops the next request and
+ * does nothing at all to a connection that is already open. Password recovery
+ * destroys every session precisely so that somebody who believes another person
+ * is in their account can throw them out, and without this the one thing that
+ * survived it was the live room, still relaying that person's edits in both
+ * directions.
+ *
+ * Not board-scoped, unlike `evict`. A session is an account-wide credential and
+ * the process holding its socket almost certainly is not the one that served
+ * the request, so the message is published with no board and every instance
+ * sweeps every room it holds. `deliverLocally` finds no room for a null board
+ * and `INTERNAL_ONLY` lists the type, so no client is ever handed it.
+ */
+export function closeSessionSockets(sessionIds) {
+  const ids = [...new Set(sessionIds)].filter(Boolean)
+  for (let at = 0; at < ids.length; at += EVICT_CHUNK) {
+    publishFn?.(null, { type: 'evict-session', sessionIds: ids.slice(at, at + EVICT_CHUNK) })
+  }
+}
+
 function deliverLocally(boardId, message, exceptSocket) {
   const room = rooms.get(boardId)
   if (!room) return
@@ -209,25 +247,47 @@ const localPresence = (boardId) =>
  * Server-originated messages that change this instance's own state, applied
  * wherever the message arrives — locally on publish, or off the bus from
  * another instance. Both paths run this, so the two never drift.
+ *
+ * Both cached flags are recorded only where the room actually exists, and that
+ * is safe **only because the join path reads them after `room.add`**. An
+ * instance holding no sockets for this board has nothing to enforce, and the
+ * next socket to arrive opens the room first and then reads the row this route
+ * has already written. Move that read back in front of the join and this
+ * refusal silently becomes a lost update: the change lands nowhere, and the
+ * joiner seeds the value it saw before the change was made.
  */
 function applyControl(boardId, message) {
   if (message?.type === 'lock') {
-    // Only worth caching where the room actually exists. An instance holding no
-    // sockets for this board has nothing to enforce, and the next socket to
-    // arrive seeds itself from the row the route has already written.
     if (rooms.has(boardId)) membersCanEdit.set(boardId, !message.locked)
     return
   }
   if (message?.type === 'anon') {
-    // Same reasoning as the lock: only worth caching where the room exists, and
-    // the next socket to arrive on an instance without one reads the row it has
-    // just been written.
     if (rooms.has(boardId)) anonymousPresence.set(boardId, message.anonymous === true)
     return
   }
   if (message?.type === 'evict') {
     for (const socket of rooms.get(boardId) ?? []) {
       if (socket.userId === message.userId) socket.close(4403, 'That board is no longer shared with you.')
+    }
+    return
+  }
+  /**
+   * A session was destroyed, so everything it authenticated goes with it.
+   *
+   * Every room on this instance rather than one, because the message carries no
+   * board: a session is not scoped to one, and the person being thrown out may
+   * be sitting in several. Matched on the session rather than on the user, so
+   * that the one path which destroys every session and immediately mints a
+   * replacement — changing a password while signed in — does not throw out the
+   * browser it just handed a live cookie to.
+   */
+  if (message?.type === 'evict-session') {
+    const revoked = new Set(message.sessionIds ?? [])
+    if (revoked.size === 0) return
+    for (const room of rooms.values()) {
+      for (const socket of room) {
+        if (revoked.has(socket.sessionId)) socket.close(4401, 'That session has ended.')
+      }
     }
   }
 }
@@ -366,9 +426,13 @@ export async function attachRealtime(httpServer) {
     })
 
     try {
-      // Same cookie as the REST API — a socket is not a way around auth.
-      const user = await userForToken(readCookie(req.headers.cookie, COOKIE_NAME))
-      if (!user) return socket.close(4401, 'Sign in to collaborate.')
+      // Same cookie as the REST API — a socket is not a way around auth. The
+      // session, not just the user: this connection is only as alive as the row
+      // that let it in, and `closeSessionSockets` above needs to be able to
+      // find it by that row when the row is deleted.
+      const session = await sessionForToken(readCookie(req.headers.cookie, COOKIE_NAME))
+      if (!session) return socket.close(4401, 'Sign in to collaborate.')
+      const user = session.user
 
       const boardId = new URL(req.url, 'http://localhost').searchParams.get('board')
       if (!boardId) return socket.close(4400, 'No board specified.')
@@ -378,29 +442,18 @@ export async function attachRealtime(httpServer) {
       const access = await accessFor(boardId, user.id)
       if (!access.role) return socket.close(4403, 'That board is not shared with you.')
 
-      /**
-       * Read once per room, not once per socket.
-       *
-       * `accessFor` cannot supply this: it is the one place every access
-       * decision is made and adding a display concern to it would put a column
-       * nothing authorizes on into the query every request already runs. So the
-       * relay asks for its own, and only when this instance has no room open
-       * for the board yet. Deliberately before the `readyState` check below, so
-       * the last thing that happens before a socket joins is still the check
-       * that it has not already gone.
-       */
-      if (!anonymousPresence.has(boardId)) {
-        const row = await get('SELECT anonymous_presence FROM boards WHERE id = $1', boardId)
-        anonymousPresence.set(boardId, row?.anonymous_presence === true)
-      }
-
       // Nobody who has already gone joins a room. The `close` handler above
       // cannot take this socket back out if it goes in after that event has
-      // fired, so the check is here rather than left to be tidied up later.
+      // fired, so the check is here rather than left to be tidied up later —
+      // and **nothing may `await` between this line and `room.add` below**, or
+      // the socket can die in the gap and be added to a room it can never
+      // leave. That requirement is why the flags are read after the join
+      // rather than before it.
       if (socket.readyState !== socket.OPEN) return
 
       socket.peerId = randomUUID()
       socket.userId = user.id
+      socket.sessionId = session.id
       socket.userEmail = user.email
       socket.boardId = boardId
       socket.role = access.role
@@ -418,9 +471,56 @@ export async function attachRealtime(httpServer) {
       // costs a hash.
       socket.anonName = anonymousNameFor(boardId, user.id)
 
-      // Seed the cache from the row we just read, so the first op does not have
-      // to go back to the database for something we already know.
-      if (!membersCanEdit.has(boardId)) membersCanEdit.set(boardId, access.membersCanEdit)
+      /**
+       * Both cached flags, read once per room, and only once the room exists.
+       *
+       * Three things about the position of this read are load-bearing.
+       *
+       * **It is after `room.add`.** A read taken before the room existed can
+       * only ever seed a stale value, because `applyControl` records a `lock`
+       * or `anon` broadcast only where `rooms.has(boardId)` — so a change made
+       * in the window between reading and joining is refused by this instance
+       * and then overwritten by the older value the joiner carried in. That is
+       * how a lock the owner had just thrown ended up cached as unlocked for
+       * the life of the room: every member served here was told `locked: false`
+       * in `welcome`, their ops passed the relay's check below, and `PUT`
+       * correctly refused to save any of it.
+       *
+       * **It is after the `readyState` check, not before it.** Nothing writes
+       * to either cache for a socket that never joined. Writing first and
+       * checking afterwards left a permanent entry for a board with no room on
+       * this instance, which `applyControl` then refused to correct and every
+       * later joiner trusted instead of reading the row — an anonymous board
+       * quietly serving real addresses again.
+       *
+       * **Neither value is overwritten if something already knows better.** A
+       * `lock` or `anon` that arrived while this read was in flight is newer
+       * than the row it returns, and the room existed by then, so it was
+       * recorded. Seeding only what is missing is what stops this read putting
+       * the older answer back.
+       *
+       * `accessFor` cannot supply either: it is the one place every access
+       * decision is made, its answer predates the room, and adding a display
+       * concern to it would put a column nothing authorizes on into the query
+       * every request already runs.
+       */
+      if (!membersCanEdit.has(boardId) || !anonymousPresence.has(boardId)) {
+        const row = await get(
+          'SELECT members_can_edit, anonymous_presence FROM boards WHERE id = $1',
+          boardId,
+        )
+        // Reading is an `await`, and this socket may have gone during it. The
+        // `close` handler has already taken it out and dropped the room's
+        // cached flags with it, so seeding them now would recreate exactly the
+        // orphan this ordering exists to prevent.
+        if (rooms.get(boardId)?.has(socket) !== true) return
+        if (!membersCanEdit.has(boardId)) {
+          membersCanEdit.set(boardId, row?.members_can_edit === true)
+        }
+        if (!anonymousPresence.has(boardId)) {
+          anonymousPresence.set(boardId, row?.anonymous_presence === true)
+        }
+      }
 
       socket.send(
         JSON.stringify({
@@ -525,10 +625,16 @@ export async function attachRealtime(httpServer) {
      * happen, arrived at from the other direction. Buffering these until the
      * bus returns is a bigger design than this; knowing it happened is not
      * optional either way.
+     *
+     * `evict-session` is the one message here where losing it costs more than
+     * convergence: the instance that handled the request has already closed its
+     * own sockets, and every other instance keeps serving a session that no
+     * longer exists until it happens to disconnect. It carries no board, hence
+     * the `n/a`, and it is worth grepping for on its own.
      */
     if (!listener) {
       console.error(
-        `Op not published: the notification bus is down, so only this instance saw it (board ${boardId}, ${message?.type}).`,
+        `Not published: the notification bus is down, so only this instance saw it (${message?.type}, board ${boardId ?? 'n/a'}).`,
       )
       return
     }

@@ -1,14 +1,26 @@
 import { useState } from 'react'
-import { Link, useSearchParams, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { api } from '../../lib/api'
 import { toUserMessage } from '../../lib/errors'
 import { AuthShell, field, submitBtn, FormError } from './AuthShell'
 
+/**
+ * Step three of recovery: the new password.
+ *
+ * The token arrives in history state, put there by `ForgotPasswordPage` after
+ * the security question was answered correctly. It used to arrive as `?token=`
+ * because it came out of an email, and it no longer does: a credential in a
+ * query string is written into the address bar, the browser history and the
+ * `Referer` of anything the page goes on to load. History state survives a
+ * reload of this entry, which is the only thing the query string was buying.
+ */
 export default function ResetPasswordPage() {
-  const [params] = useSearchParams()
   const navigate = useNavigate()
-  const token = params.get('token') ?? ''
+  const { state } = useLocation()
+  const token = typeof (state as { token?: unknown } | null)?.token === 'string'
+    ? (state as { token: string }).token
+    : ''
 
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -26,7 +38,7 @@ export default function ResetPasswordPage() {
       await api.resetPassword(token, password)
       setDone(true)
     } catch (err) {
-      setError(toUserMessage(err, 'That reset link did not work. Request a new one.'))
+      setError(toUserMessage(err, 'That reset did not go through. Answer your question again.'))
     } finally {
       setBusy(false)
     }
@@ -34,13 +46,14 @@ export default function ResetPasswordPage() {
 
   if (!token) {
     return (
-      <AuthShell title="That link is incomplete">
+      <AuthShell title="Start from the beginning">
         <p className="mt-2 text-[14px] leading-relaxed text-ink-2">
-          The reset link is missing its token. It may have been cut short by your email client.
+          This page is the last step of a password reset, and there is nothing here to finish.
+          Answer your security question first.
         </p>
         <p className="mt-6 text-[13px]">
           <Link to="/forgot" className="text-accent underline underline-offset-2">
-            Request a new link
+            Reset your password
           </Link>
         </p>
       </AuthShell>
@@ -68,7 +81,8 @@ export default function ResetPasswordPage() {
   return (
     <AuthShell title="Choose a new password">
       <p className="mt-2 text-[14px] leading-relaxed text-ink-2">
-        Pick something at least 8 characters long. This link works once.
+        Pick something at least 8 characters long. This works once, and signs out anywhere else
+        that is already signed in to the account.
       </p>
 
       <form onSubmit={onSubmit} className="mt-7 space-y-4">

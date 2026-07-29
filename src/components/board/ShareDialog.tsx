@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
-import type { BoardMember, ShareMeta } from '../../lib/api'
-import { AppError, toUserMessage } from '../../lib/errors'
+import type { BoardMember } from '../../lib/api'
+import { toUserMessage } from '../../lib/errors'
 import { useAuthStore } from '../../store/authStore'
 import { useBoardsStore } from '../../store/boardsStore'
 import { useRealtimeStore } from '../../store/realtimeStore'
@@ -18,9 +18,12 @@ import { relativeTime } from './relativeTime'
  * let in, and the one thing that concerns them (whether they may edit) shows in
  * the HUD instead.
  *
- * The link is only ever readable at the moment it is created. The server stores
- * a hash, so there is no "show me the link again" to build; regenerating is the
- * honest alternative, and it revokes the previous one.
+ * The server stores only a hash of the link, so `POST /share` is the one and
+ * only time its plaintext exists outside the browser that asked for it. That
+ * makes every value here a copy of something the server owns, and the link, the
+ * lock and anonymity all follow the same rule: show what the server last said,
+ * and let the server retire it. Nothing is seeded from a mirror that no reply
+ * updates, and nothing is kept once the server stops vouching for it.
  */
 /** How long the code has left, in the terms someone about to read it out cares
  *  about. */
@@ -35,35 +38,25 @@ function expiryLabel(expiresAt: number | null): string {
 // as the toast is up, which is the only window in which Undo can mean anything.
 const UNDO_WINDOW = 4000
 
+// Long enough to read the question and mean the second press, short enough that
+// a button left armed is not still armed the next time anyone looks at it.
+const ROTATE_CONFIRM_WINDOW = 6000
+
 /**
- * The two calls that carry anonymous presence, written here rather than in
- * `lib/api.ts`.
+ * What the server last said about one board's share.
  *
- * They belong beside the rest of the wrapper and should move there. They are
- * local for now only because this change did not own that file, and a feature
- * that half exists is worse than one seam with a note on it. Behaviour matches
- * `request`: the session cookie goes along, and an error the server explained
- * is re-thrown with its own message so the toast can say something useful.
+ * One value rather than three loose fields, and it carries the board it was
+ * read for. The panel outlives the board: it is mounted for the life of the
+ * toolbar, so without the board id here, opening it on a second board shows the
+ * first board's code, and the first board's link, until the read comes back.
+ * Anything that does not name the open board is not shown at all.
  */
-type ShareState = { share: ShareMeta | null; anonymousPresence?: boolean }
-
-async function setAnonymousPresence(boardId: string, anonymous: boolean): Promise<void> {
-  const response = await fetch(`/api/boards/${boardId}/anonymous`, {
-    method: 'PATCH',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ anonymous }),
-  }).catch(() => {
-    throw new AppError("Can't reach the server. Check your connection and try again.")
-  })
-  if (response.ok) return
-
-  const payload = await response.json().catch(() => null)
-  throw new AppError(
-    payload && typeof payload === 'object' && 'error' in payload
-      ? String((payload as { error: unknown }).error)
-      : 'That did not work. Try again.',
-  )
+interface ShareFacts {
+  boardId: string
+  /** Null when sharing is off. Changes when the share is rotated. */
+  shareId: string | null
+  code: string | null
+  codeExpiresAt: number | null
 }
 
 export default function ShareDialog() {
@@ -73,12 +66,12 @@ export default function ShareDialog() {
   const role = useRealtimeStore((s) => s.role)
 
   const [open, setOpen] = useState(false)
-  const [link, setLink] = useState<string | null>(null)
-  const [code, setCode] = useState<string | null>(null)
-  const [codeExpiresAt, setCodeExpiresAt] = useState<number | null>(null)
+  const [facts, setFacts] = useState<ShareFacts | null>(null)
+  const [link, setLink] = useState<{ shareId: string; url: string } | null>(null)
   const [members, setMembers] = useState<BoardMember[]>([])
   const [anonymous, setAnonymous] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [confirmRotate, setConfirmRotate] = useState(false)
 
   // Re-renders on a minute's tick so "expires in 3h 20m" does not sit there
   // going stale while the panel is open.
@@ -88,6 +81,27 @@ export default function ShareDialog() {
     const t = window.setInterval(() => setNow(Date.now()), 30_000)
     return () => window.clearInterval(t)
   }, [open])
+
+  // Nothing read for another board is shown against this one.
+  const live = facts && facts.boardId === currentId ? facts : null
+  const code = live?.code ?? null
+  const codeExpiresAt = live?.codeExpiresAt ?? null
+
+  /**
+   * The link, for exactly as long as it is still the live one.
+   *
+   * The plaintext token exists in one place outside the server, and this is it,
+   * from the moment `POST /share` answers. It used to be thrown away every time
+   * the panel was reopened — an ordinary thing to do, since reading the code out
+   * and then coming back for the link is the flow the panel is laid out for —
+   * and the only route back to a working link was rotating, which revokes the
+   * one somebody may already be holding. So it is kept, and the server decides
+   * when it stops counting rather than the panel guessing: `shareId` is re-read
+   * on every open, so a share revoked or rotated in another tab retires this
+   * copy without anything having to tell it. A reload still loses it, which is
+   * correct and is what the copy below says.
+   */
+  const linkUrl = link && live && link.shareId === live.shareId ? link.url : null
 
   const expired = codeExpiresAt !== null && codeExpiresAt <= Date.now()
 
@@ -125,12 +139,18 @@ export default function ShareDialog() {
           api.getShare(currentId),
           api.listMembers(currentId),
         ])
-        // The code comes back every time; the link does not exist to be read.
-        setCode(share.share?.code ?? null)
-        setCodeExpiresAt(share.share?.codeExpiresAt ?? null)
+        // The code comes back every time; the token does not exist to be read.
+        // `id` does, and it is what says whether the link held above is still
+        // the live one.
+        setFacts({
+          boardId: currentId,
+          shareId: share.share?.id ?? null,
+          code: share.share?.code ?? null,
+          codeExpiresAt: share.share?.codeExpiresAt ?? null,
+        })
         // Anonymity is a property of the board, so it comes back beside the
         // share rather than inside it: it stands whether or not a link is live.
-        setAnonymous((share as ShareState).anonymousPresence === true)
+        setAnonymous(share.anonymousPresence)
         setMembers(list.members)
       } catch (err) {
         toast(toUserMessage(err, 'Could not load the sharing settings.'))
@@ -138,26 +158,48 @@ export default function ShareDialog() {
         setBusy(false)
       }
     })()
-    setLink(null)
   }, [open, currentId])
+
+  // An armed "are you sure" forgets itself, so a rotation cannot be one stray
+  // press away minutes later or the next time the panel is opened.
+  useEffect(() => {
+    if (!confirmRotate) return
+    if (!open) return setConfirmRotate(false)
+    const t = window.setTimeout(() => setConfirmRotate(false), ROTATE_CONFIRM_WINDOW)
+    return () => window.clearTimeout(t)
+  }, [confirmRotate, open])
 
   if (!email || !currentId || !isOwner) return null
 
   const shareUrl = (token: string) =>
     `${window.location.origin}/board?board=${currentId}&share=${encodeURIComponent(token)}`
 
+  /**
+   * Create or rotate the link.
+   *
+   * The reply is the only time the token is ever legible, so both halves of it
+   * are put into state together and nothing between here and the render is
+   * allowed to drop either. `share.id` goes with the link rather than being
+   * discarded, because it is what later reads compare against to decide whether
+   * this copy is still the live one.
+   */
   const createShare = async () => {
     setBusy(true)
     try {
       const { share } = await api.createShare(currentId)
-      setLink(shareUrl(share.token))
+      setLink({ shareId: share.id, url: shareUrl(share.token) })
       const replaced = code !== null
-      setCode(share.code)
-      setCodeExpiresAt(share.codeExpiresAt)
+      setFacts({
+        boardId: currentId,
+        shareId: share.id,
+        code: share.code,
+        codeExpiresAt: share.codeExpiresAt,
+      })
       toast(replaced ? 'New code and link ready. The old ones no longer work.' : 'Sharing is on.')
     } catch (err) {
       toast(toUserMessage(err, 'Could not turn on sharing.'))
     } finally {
+      setConfirmRotate(false)
       setBusy(false)
     }
   }
@@ -166,8 +208,14 @@ export default function ShareDialog() {
     setBusy(true)
     try {
       const { share } = await api.refreshCode(currentId)
-      setCode(share.code)
-      setCodeExpiresAt(share.codeExpiresAt)
+      // Same share, new code, so the link held above is untouched: that is the
+      // whole reason this is a separate endpoint from rotating.
+      setFacts({
+        boardId: currentId,
+        shareId: share.id,
+        code: share.code,
+        codeExpiresAt: share.codeExpiresAt,
+      })
       toast('New code ready. The link still works.')
     } catch (err) {
       toast(toUserMessage(err, 'Could not get a new code.'))
@@ -190,8 +238,7 @@ export default function ShareDialog() {
     setBusy(true)
     try {
       await api.revokeShare(currentId)
-      setCode(null)
-      setCodeExpiresAt(null)
+      setFacts({ boardId: currentId, shareId: null, code: null, codeExpiresAt: null })
       setLink(null)
       toast('Sharing off. People already on the board still have access.')
     } catch (err) {
@@ -210,12 +257,17 @@ export default function ShareDialog() {
    * guest experiences are all exactly as before.
    */
   const setInstructorMode = async (next: boolean) => {
-    // Applied locally first so the switch responds immediately, then confirmed
-    // by the server's own broadcast, which is what every other client acts on.
+    // Applied optimistically so the switch answers the press, then settled on
+    // what the reply says the board is rather than on what was asked for. Both
+    // go into the stores the switch reads through, never into a copy beside
+    // them: `boardLocked` for a connected client and the board list's
+    // `membersCanEdit` for one that is not.
     useRealtimeStore.getState().setLocked(next)
     useBoardsStore.getState().setMembersCanEdit(currentId, !next)
     try {
-      await api.setBoardLock(currentId, next)
+      const { locked } = await api.setBoardLock(currentId, next)
+      useRealtimeStore.getState().setLocked(locked)
+      useBoardsStore.getState().setMembersCanEdit(currentId, !locked)
     } catch (err) {
       useRealtimeStore.getState().setLocked(!next)
       useBoardsStore.getState().setMembersCanEdit(currentId, next)
@@ -227,10 +279,13 @@ export default function ShareDialog() {
     // Optimistic for the same reason the lock is: the switch has to answer the
     // press. Unlike the lock there is no broadcast to confirm it, because no
     // client is trusted with this one — the substitution happens in the relay's
-    // own payloads, so the only thing to put right on failure is this switch.
+    // own payloads. So the reply is the only confirmation there is, and it is
+    // what the switch settles on; assuming the write landed the way it was
+    // asked for is the same latching this panel is not allowed to do.
     setAnonymous(next)
     try {
-      await setAnonymousPresence(currentId, next)
+      const { anonymousPresence } = await api.setAnonymousPresence(currentId, next)
+      setAnonymous(anonymousPresence)
     } catch (err) {
       setAnonymous(!next)
       toast(toUserMessage(err, 'Could not change how guests are named.'))
@@ -307,25 +362,26 @@ export default function ShareDialog() {
               )}
             </div>
 
-            {link ? (
+            {linkUrl ? (
               <div className="flex flex-col gap-2">
                 <input
                   readOnly
-                  value={link}
+                  value={linkUrl}
                   onFocus={(e) => e.currentTarget.select()}
                   className="w-full rounded border border-rule bg-sunken px-2 py-1.5 font-mono text-[11px] text-ink
                     focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                 />
-                <Button onClick={() => copy(link, 'Link')}>Copy link</Button>
+                <Button onClick={() => copy(linkUrl, 'Link')}>Copy link</Button>
                 <p className="text-[11px] leading-relaxed text-ink-3">
-                  Copy the link now. It is stored hashed, so it cannot be shown again. The
-                  code above can.
+                  Copy the link before you reload. The server keeps only a hash of it, so this
+                  tab is the last place it exists. The code above can always be read again.
                 </p>
               </div>
             ) : (
               <p className="text-[11px] leading-relaxed text-ink-3">
-                The link was only shown when it was created. Generate a new pair below if you
-                need it. The current code will stop working.
+                The link was only shown when it was created, and this tab no longer has it.
+                Issuing a new one below is the way back, and it stops the old link working for
+                anyone still holding it.
               </p>
             )}
           </>
@@ -343,15 +399,21 @@ export default function ShareDialog() {
             <Button onClick={refreshCode} disabled={busy} variant={expired ? 'primary' : 'secondary'}>
               New code
             </Button>
+            {/* The one control here that takes something away from people who
+                are not in the room: whoever is holding the current link loses
+                it, and there is no list of who that is. So it asks first, in
+                the button itself rather than behind a dialog, and the question
+                expires on its own. Turning sharing on for the first time is the
+                same call and is not gated, because there is nothing to break. */}
             <div className="flex gap-4">
               <button
-                onClick={createShare}
+                onClick={() => (confirmRotate ? void createShare() : setConfirmRotate(true))}
                 disabled={busy}
-                className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3
-                  transition-colors hover:text-accent disabled:opacity-50"
+                className={`font-mono text-[10px] uppercase tracking-[0.1em] transition-colors
+                  disabled:opacity-50 ${confirmRotate ? 'text-accent' : 'text-ink-3 hover:text-accent'}`}
                 title="Issues a new code and a new link. Any link already sent out stops working."
               >
-                New link too
+                {confirmRotate ? 'Yes, break the old link' : 'New link too'}
               </button>
               <button
                 onClick={revoke}

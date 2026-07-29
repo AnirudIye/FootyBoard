@@ -47,6 +47,20 @@ export interface ApiUser {
   createdAt: string
 }
 
+/**
+ * One of the predefined security questions.
+ *
+ * The list is **not** written down here. It is fetched from
+ * `/auth/security-questions`, which is the same array the server validates a
+ * submitted id against, so the dropdown and the check behind it cannot disagree
+ * about what exists. Copying the questions into the client would be a second
+ * source of truth for something that has exactly one.
+ */
+export interface SecurityQuestion {
+  id: string
+  label: string
+}
+
 export type BoardRole = 'owner' | 'member'
 
 export interface BoardSummary {
@@ -75,10 +89,26 @@ export interface BoardMember {
 }
 
 export const api = {
-  signUp: (email: string, password: string, acceptedTerms: boolean) =>
+  /** The question list the signup and recovery dropdowns are built from. */
+  securityQuestions: () =>
+    request<{ questions: SecurityQuestion[] }>('/auth/security-questions'),
+
+  signUp: (
+    email: string,
+    password: string,
+    acceptedTerms: boolean,
+    securityQuestionId: string,
+    securityAnswer: string,
+  ) =>
     request<{ user: ApiUser }>('/auth/signup', {
       method: 'POST',
-      body: JSON.stringify({ email, password, acceptedTerms }),
+      body: JSON.stringify({
+        email,
+        password,
+        acceptedTerms,
+        securityQuestionId,
+        securityAnswer,
+      }),
     }),
 
   logIn: (email: string, password: string) =>
@@ -89,9 +119,46 @@ export const api = {
 
   logOut: () => request<void>('/auth/logout', { method: 'POST' }),
 
-  requestPasswordReset: (email: string) =>
-    request<{ ok: true }>('/auth/forgot', { method: 'POST', body: JSON.stringify({ email }) }),
+  /**
+   * Change the password while signed in. The security question goes with it,
+   * because that is the only way back in if this new password is forgotten and
+   * the old answer may be years stale.
+   *
+   * Every other session is signed out server-side; this one is replaced, so the
+   * browser making the change stays signed in.
+   */
+  changePassword: (
+    currentPassword: string,
+    password: string,
+    securityQuestionId: string,
+    securityAnswer: string,
+  ) =>
+    request<{ ok: true }>('/auth/password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, password, securityQuestionId, securityAnswer }),
+    }),
 
+  /**
+   * Step one of recovery: which question guards this address.
+   *
+   * Every address gets one back, including addresses with no account, so this
+   * cannot be used to find out who is registered. An answer to a question that
+   * was never anybody's simply fails at the next step.
+   */
+  startPasswordRecovery: (email: string) =>
+    request<{ question: SecurityQuestion }>('/auth/forgot', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+
+  /** Step two: the answer, in exchange for a short-lived single-use token. */
+  verifySecurityAnswer: (email: string, answer: string) =>
+    request<{ token: string; expiresInMinutes: number }>('/auth/forgot/verify', {
+      method: 'POST',
+      body: JSON.stringify({ email, answer }),
+    }),
+
+  /** Step three. The token works once and signs every session out. */
   resetPassword: (token: string, password: string) =>
     request<{ ok: true }>('/auth/reset', {
       method: 'POST',
@@ -142,8 +209,19 @@ export const api = {
       method: 'POST',
     }),
 
+  /**
+   * Whether a link is live, what the join code is, and how guests are named.
+   *
+   * The token is never in this answer: it is stored hashed and exists in the
+   * clear only in the reply to `createShare`. `anonymousPresence` sits beside
+   * `share` rather than inside it because it belongs to the board and outlives
+   * any particular link, so turning sharing off does not read as turning
+   * anonymity off.
+   */
   getShare: (boardId: string) =>
-    request<{ share: ShareMeta | null }>(`/boards/${boardId}/share`),
+    request<{ share: ShareMeta | null; anonymousPresence: boolean }>(
+      `/boards/${boardId}/share`,
+    ),
 
   /** A fresh code on the existing share. Leaves the link, and members, alone. */
   refreshCode: (boardId: string) =>
@@ -165,6 +243,24 @@ export const api = {
     request<{ locked: boolean }>(`/boards/${boardId}/lock`, {
       method: 'PATCH',
       body: JSON.stringify({ locked }),
+    }),
+
+  /**
+   * Whether guests are named by a generated animal instead of their address.
+   *
+   * A sibling of the lock rather than a field on it, because the two have
+   * different blast radii and a shared route would let either one silently
+   * carry the other's change. The answer echoes what the board now says, which
+   * is what the switch should show.
+   *
+   * Note the path. `sharesRouter` is mounted at `/api/boards`; only redeeming
+   * lives under `/api/shares`, and probing that prefix answers "No such
+   * endpoint", which reads exactly like a route that was never added.
+   */
+  setAnonymousPresence: (boardId: string, anonymous: boolean) =>
+    request<{ anonymousPresence: boolean }>(`/boards/${boardId}/anonymous`, {
+      method: 'PATCH',
+      body: JSON.stringify({ anonymous }),
     }),
 
   redeemShare: (token: string) =>

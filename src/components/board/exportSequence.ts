@@ -183,22 +183,39 @@ async function exportWebm(
   const outName = filename.replace(/\.\w+$/, `.${ext}`)
 
   const done = new Promise<void>((resolve) => {
-    rec.onstop = () => {
-      download(new Blob(chunks, { type: mimeType }), outName)
-      resolve()
-    }
+    rec.onstop = () => resolve()
   })
 
   rec.start()
   const start = performance.now()
-  // Walk the sequence in real time, awaiting each paint so the recorder gets
-  // the frame it is being shown rather than the one before it.
-  for (;;) {
-    const t = Math.min(1, (performance.now() - start) / durationMs)
-    await paintFrame(stage, crop, t * (frameCount - 1), ctx, w, h)
-    if (t >= 1) break
+  try {
+    // Walk the sequence in real time, awaiting each paint so the recorder gets
+    // the frame it is being shown rather than the one before it.
+    for (;;) {
+      const t = Math.min(1, (performance.now() - start) / durationMs)
+      await paintFrame(stage, crop, t * (frameCount - 1), ctx, w, h)
+      if (t >= 1) break
+    }
+  } finally {
+    // Three things have to come back whether or not the walk finished, and only
+    // one of them was ever conditional on failure.
+    //
+    // `MediaRecorder.stop()` does not stop the tracks feeding it, so the
+    // capture stream kept pulling frames off the canvas for the life of the
+    // page after *every* export, the successful ones included.
+    //
+    // The other two are the failure path: a paint that throws (`toCanvas`
+    // raising, or the stage going away because the board was navigated off)
+    // used to leave the recorder in `recording` for good and the board frozen
+    // at whatever position the export had scrubbed to, with nothing saying why.
+    if (rec.state !== 'inactive') rec.stop()
+    for (const track of stream.getTracks()) track.stop()
+    useBoardStore.getState().setPlayback({ position: restore })
   }
-  rec.stop()
-  useBoardStore.getState().setPlayback({ position: restore })
+  // Downloading only after the loop completed, rather than from `onstop`: the
+  // teardown above stops the recorder on the failure path too, and handing
+  // somebody a truncated video of an export that just failed is worse than
+  // handing them nothing.
   await done
+  download(new Blob(chunks, { type: mimeType }), outName)
 }

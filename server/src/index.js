@@ -1,11 +1,7 @@
 import express from 'express'
 import { createServer } from 'node:http'
-import {
-  migrate,
-  purgeExpiredSessions,
-  purgeStaleAllowances,
-  closePool,
-} from './db.js'
+import { migrate, purgeStaleAllowances, closePool } from './db.js'
+import { purgeExpiredSessions } from './sessions.js'
 import { initEncryption } from './crypto.js'
 import { userForToken, readCookie, COOKIE_NAME } from './auth.js'
 import { attachRealtime } from './realtime.js'

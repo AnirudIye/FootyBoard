@@ -35,8 +35,12 @@ export async function verifyPassword(password, salt, expectedHex) {
  * Sessions are opaque random tokens. Only their SHA-256 is stored, so a stolen
  * database still does not yield usable cookies, and a session can be revoked
  * by deleting one row.
+ *
+ * Exported because `sessions.js` ends a session by the same digest, and two
+ * copies of "how a token becomes a row" is exactly how a revocation ends up
+ * deleting nothing.
  */
-const tokenDigest = (token) => createHash('sha256').update(token).digest('hex')
+export const tokenDigest = (token) => createHash('sha256').update(token).digest('hex')
 
 export async function createSession(userId) {
   const token = randomBytes(32).toString('base64url')
@@ -52,26 +56,37 @@ export async function createSession(userId) {
   return token
 }
 
-/** Resolves a cookie token to its user, or null. One indexed join, not two queries. */
-export async function userForToken(token) {
+/**
+ * Resolves a cookie token to the session row *and* its user, or null. One
+ * indexed join, not two queries.
+ *
+ * The session's own id is what a WebSocket needs and a request handler does
+ * not. A socket is authenticated once, at the handshake, and never again, so
+ * the only way it can be closed when that session is destroyed is if it
+ * remembers which session let it in. Every other caller goes through
+ * `userForToken` below and gets the shape it always got, which keeps the id out
+ * of `GET /api/auth/me` rather than trusting each route to strip it.
+ */
+export async function sessionForToken(token) {
   if (!token) return null
   const row = await get(
-    `SELECT u.id, u.email, u.created_at
+    `SELECT s.id AS session_id, u.id, u.email, u.created_at
        FROM sessions s
        JOIN users u ON u.id = s.user_id
       WHERE s.token_hash = $1 AND s.expires_at > $2`,
     tokenDigest(token),
     Date.now(),
   )
+  if (!row) return null
   // Same shape the routes return, so callers never see raw column names.
-  return row ? { id: row.id, email: row.email, createdAt: row.created_at } : null
+  return {
+    id: row.session_id,
+    user: { id: row.id, email: row.email, createdAt: row.created_at },
+  }
 }
 
-export async function destroySession(token) {
-  if (!token) return 0
-  const { changes } = await run('DELETE FROM sessions WHERE token_hash = $1', tokenDigest(token))
-  return changes
-}
+/** Resolves a cookie token to its user, or null. */
+export const userForToken = async (token) => (await sessionForToken(token))?.user ?? null
 
 export const COOKIE_NAME = 'sb_session'
 

@@ -3,11 +3,13 @@ import { motion } from 'framer-motion'
 import { getFormation, mirror } from '../../lib/formations'
 import { useReducedMotion } from '../../hooks/useReducedMotion'
 import { SPRING_SOFT } from '../../theme/motion'
+// The chips here are the same two teams the board paints, so they take the same
+// two values. This file used to keep its own lowercase copy of the pair, which
+// is a third spelling of a colour that may only have one.
+import { HOME_COLOR, AWAY_COLOR } from '../../theme/teamColors'
 
 const L = 105
 const W = 68
-const HOME = '#b4432e'
-const AWAY = '#2c5b8a'
 
 /**
  * A marking's slot in the draw-on queue and the length of its own outline, fed
@@ -141,10 +143,10 @@ export default function MiniPitch({
 
       {/* Chips */}
       {home.map((p, i) => (
-        <Chip key={`h${i}`} x={p.x} y={p.y} n={p.n} color={HOME} keeper={p.n === 1} />
+        <Chip key={`h${i}`} x={p.x} y={p.y} n={p.n} color={HOME_COLOR} keeper={p.n === 1} />
       ))}
       {away.map((p, i) => (
-        <Chip key={`a${i}`} x={p.x} y={p.y} n={p.n} color={AWAY} keeper={p.n === 1} />
+        <Chip key={`a${i}`} x={p.x} y={p.y} n={p.n} color={AWAY_COLOR} keeper={p.n === 1} />
       ))}
     </svg>
   )

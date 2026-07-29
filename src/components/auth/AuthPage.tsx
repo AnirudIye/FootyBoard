@@ -3,7 +3,9 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useAuthStore } from '../../store/authStore'
 import { toUserMessage } from '../../lib/errors'
+import { codeInNext } from '../../lib/joinCode'
 import { AuthShell, field, submitBtn, FormError } from './AuthShell'
+import SecurityQuestionFields, { useSecurityQuestions } from './SecurityQuestionFields'
 
 type Mode = 'signup' | 'login'
 
@@ -20,6 +22,8 @@ type Mode = 'signup' | 'login'
 const safeNext = (raw: string | null): string | null =>
   raw && raw.startsWith('/') && !raw.startsWith('//') ? raw : null
 
+const guestLink = 'underline underline-offset-2 transition-colors hover:text-accent'
+
 export default function AuthPage({ mode }: { mode: Mode }) {
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -30,17 +34,40 @@ export default function AuthPage({ mode }: { mode: Mode }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [accepted, setAccepted] = useState(false)
+  const [questionId, setQuestionId] = useState('')
+  const [answer, setAnswer] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   const isSignup = mode === 'signup'
+  const { questions, failed } = useSecurityQuestions()
+
+  /**
+   * What the guest door costs from here, and what it may keep.
+   *
+   * Somebody who reached this page from `next` is holding something a guest
+   * account cannot use: membership of a shared board attaches to a person, not
+   * to a browser, so there is no version of "continue as a guest" that also
+   * joins. The link stays, because refusing somebody a way into the tool is
+   * worse than telling them what this way in does not do, but it must not
+   * quietly throw away what they typed on the way past.
+   *
+   * A join code can travel, so it does. A share token cannot: it is a
+   * credential rather than something read off a screen, `useShareLink` strips
+   * it from the address bar for exactly that reason, and sending a guest back
+   * to `/board?share=…` would bounce them straight back here anyway. That case
+   * gets the sentence and no carry.
+   */
+  const pendingCode = codeInNext(next)
+  const sharedNext = pendingCode !== null || (next?.startsWith('/board?') ?? false)
+  const guestTo = pendingCode ? `/board?join=${pendingCode}` : '/board'
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
     setBusy(true)
     try {
-      if (isSignup) await signUp(email, password, accepted)
+      if (isSignup) await signUp(email, password, accepted, questionId, answer)
       else await logIn(email, password)
       // Both branches honour `next`, not just sign-in. Someone who was read a
       // code and does not have an account yet goes signup -> board-they-were
@@ -95,6 +122,20 @@ export default function AuthPage({ mode }: { mode: Mode }) {
           />
         </label>
 
+        {/* The only way back in if this password is forgotten, so it is set
+            here rather than offered later. There is no reset email to fall
+            back on. */}
+        {isSignup && (
+          <SecurityQuestionFields
+            questions={questions}
+            failed={failed}
+            questionId={questionId}
+            onQuestionId={setQuestionId}
+            answer={answer}
+            onAnswer={setAnswer}
+          />
+        )}
+
         {isSignup && (
           <label className="flex cursor-pointer items-start gap-2.5 pt-1">
             <input
@@ -147,16 +188,29 @@ export default function AuthPage({ mode }: { mode: Mode }) {
       </p>
 
       <p className="mt-8 border-t border-rule pt-4 text-[12px] leading-relaxed text-ink-3">
-        Your password is hashed before it is stored, and never kept in readable form. If you forget
-        it, a reset link can be sent to this address.
+        Your password is hashed before it is stored, and never kept in readable form. So is the
+        answer to your security question, which is what proves it is you if you forget the password.
       </p>
 
-      <p className="mt-4 text-[12px] text-ink-3">
-        <Link to="/board" className="underline underline-offset-2 transition-colors hover:text-accent">
-          Continue as a guest
-        </Link>{' '}
-        for a full board that is never saved.
-      </p>
+      {sharedNext ? (
+        <p className="mt-4 text-[12px] leading-relaxed text-ink-3">
+          Joining a shared board needs an account, because access is given to a person rather than
+          to a browser.{' '}
+          <Link to={guestTo} className={guestLink}>
+            Continue as a guest
+          </Link>{' '}
+          and you get a board of your own instead, which is never saved, and you do not join the one
+          you were opening.
+          {pendingCode && ' Your code comes with you, so you can still join once you have an account.'}
+        </p>
+      ) : (
+        <p className="mt-4 text-[12px] text-ink-3">
+          <Link to="/board" className={guestLink}>
+            Continue as a guest
+          </Link>{' '}
+          for a full board that is never saved.
+        </p>
+      )}
     </AuthShell>
   )
 }

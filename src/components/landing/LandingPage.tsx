@@ -13,6 +13,7 @@ import { Magnetic } from './fx/Magnetic'
 import { ClickSpark } from './fx/ClickSpark'
 import { SpecularButton } from './fx/SpecularButton'
 import PlasmaWave from './fx/PlasmaWave'
+import DotField from './fx/DotField'
 import { useReducedMotion } from '../../hooks/useReducedMotion'
 import { useAuthStore } from '../../store/authStore'
 
@@ -28,6 +29,23 @@ const HEADLINE_GRADIENT = `linear-gradient(to left, ${GREEN_DEEP}, ${GREEN_SIGNA
 /** Module scope, not an inline literal: PlasmaWave rebuilds its context if the
  *  array's identity changes, and a fresh array every render would do that. */
 const PLASMA_COLORS: [string, string] = [GREEN_SIGNAL, GREEN_DEEP]
+
+/* The dot field behind the features, and the only place on this page where the
+   accent is texture rather than signal. So it is one hue at two alphas, not two
+   greens: `--accent` thinning along the diagonal. Both ends being the same
+   colour is what keeps the section reading as one dim surface instead of as a
+   gradient with an opinion, and the section already has a signal green in the
+   eyebrow label and in the diagrams.
+
+   Tuned down from 0.28/0.07. The number that decides this is not the copy,
+   which wins easily, but the faintest thing in a FeatureDiagram: the dashed
+   accent guides at 0.45 opacity, which measure 2.99:1 against --paper. At 0.28
+   the brightest dot inside the content column measured 1.73:1, so a 3.5px disc
+   was within 1.7x of the 1.5px line it sits behind, in the same hue. At 0.22 it
+   measures 1.48:1, which is a 2.0x margin there, 3.3x to the diagram's base
+   ink, and 4.5x to the body copy, while still reading as a clear texture. */
+const DOTS_FROM = 'rgba(42, 224, 122, 0.22)'
+const DOTS_TO = 'rgba(42, 224, 122, 0.06)'
 
 /*
   What sits between the plasma and the closing headline. Three layers painted
@@ -390,8 +408,31 @@ export default function LandingPage() {
         </section>
 
         {/* Features */}
-        <section id="features" className="border-t border-rule/60 bg-paper/80 backdrop-blur-sm">
-          <div className="mx-auto max-w-6xl px-8 py-24">
+        <section
+          id="features"
+          className="relative border-t border-rule/60 bg-paper/80 backdrop-blur-sm"
+        >
+          {/* Above the section's own translucent paint, below its content.
+              Both stacking positions are explicit and positive: a negative
+              z-index against an element that carries a backdrop-filter puts
+              the layer behind the blur rather than in front of it. */}
+          <div aria-hidden className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+            <DotField
+              glow={false}
+              gradientFrom={DOTS_FROM}
+              gradientTo={DOTS_TO}
+              dotRadius={3.5}
+              dotSpacing={23}
+              cursorRadius={400}
+              cursorForce={0.39}
+              bulgeOnly
+              bulgeStrength={51}
+              sparkle
+              waveAmplitude={14}
+            />
+          </div>
+
+          <div className="relative z-10 mx-auto max-w-6xl px-8 py-24">
             <Reveal className="mb-3 font-mono text-[12px] uppercase tracking-[0.18em] text-accent">
               What it does
             </Reveal>
@@ -529,7 +570,7 @@ export default function LandingPage() {
               </Link>
             </nav>
             <span className="font-mono text-[11px] tracking-[0.08em] text-foreground/40">
-              RUNS OFFLINE · © 2026
+              © 2026
             </span>
           </div>
         </footer>

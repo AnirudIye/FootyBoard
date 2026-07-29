@@ -12,8 +12,8 @@
  * schema below *is* the capability boundary: the AI can ask for a formation or
  * a view change, and there is no shape in which it can ask for anything else.
  *
- * Called over HTTP with `fetch` rather than through an SDK, matching how
- * `mailer.js` talks to Resend — one dependency-free function, no build step.
+ * Called over HTTP with `fetch` rather than through an SDK: one
+ * dependency-free function, no build step.
  */
 
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models'

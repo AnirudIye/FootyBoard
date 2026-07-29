@@ -19,6 +19,20 @@ const ACCOUNT_LOCKOUT_MS = 15 * 60 * 1000
 const MAX_IP_ATTEMPTS = 30
 const IP_WINDOW_MS = 10 * 60 * 1000
 
+/**
+ * The same two shapes again for the security answer, on their own keys.
+ *
+ * Their own keys because the two must not be able to lock each other out: a
+ * stranger working through the questions on an address should not be able to
+ * shut its owner out of signing in, and someone mistyping their password should
+ * not lose their way back in when they give up and go to recover the account.
+ */
+const MAX_ANSWER_ATTEMPTS = 5
+const ANSWER_LOCKOUT_MS = 15 * 60 * 1000
+
+const MAX_ANSWER_IP_ATTEMPTS = 20
+const ANSWER_IP_WINDOW_MS = 10 * 60 * 1000
+
 const MIN_GAP_MS = 500
 
 /**
@@ -168,6 +182,73 @@ export async function recordFailure({ email, ip }) {
 
 export const clearFailures = ({ email }) =>
   run('DELETE FROM login_attempts WHERE key = $1', `account:${email}`)
+
+/** Both allowances guarding a security answer, keyed the way login's are. */
+export const answerKey = (email) => addressKey('answer', email)
+const answerIpKey = (ip) => `answer-ip:${ip}`
+
+/**
+ * Whether this address or network may try a security answer right now.
+ *
+ * Checked *before* the answer is compared, and this is the half that does the
+ * work. `consume` on its own would not do: charging only the failures, as the
+ * join code does and as this must, means a correct answer never touches the
+ * counter, so a limiter that only ran on the failure path would refuse the
+ * wrong guesses and wave the right one through. The guesser would be paying
+ * nothing for the only attempt they care about. Reading first is what makes a
+ * spent allowance actually stop the next attempt being evaluated at all.
+ */
+export async function assertMayAnswer({ email, ip }) {
+  const account = await readRecord(answerKey(email))
+  if (account && Number(account.locked_until) > Date.now()) {
+    const wait = secondsUntil(Number(account.locked_until))
+    throw new TooManyRequests(
+      `Too many incorrect answers. Try again in ${Math.ceil(wait / 60)} minutes.`,
+      wait,
+    )
+  }
+
+  const perIp = await readRecord(answerIpKey(ip))
+  if (perIp && Number(perIp.locked_until) > Date.now()) {
+    throw new TooManyRequests(
+      'Too many attempts from this network. Try again shortly.',
+      secondsUntil(Number(perIp.locked_until)),
+    )
+  }
+}
+
+/**
+ * Charge a wrong answer to both allowances.
+ *
+ * Failures only, for the reason the join code gives: an allowance that a
+ * success also spends punishes the case it exists to serve. Someone guessing
+ * produces nothing but failures, so counting those alone leaves the guessing
+ * protection exactly as strict.
+ *
+ * `hold: false` on both, matching `recordFailure`: nothing reaches here while a
+ * lock is held, because `assertMayAnswer` has already turned it away, and a
+ * served lockout has to start the count over rather than carry it forward, or
+ * one wrong answer every fifteen minutes would hold an address shut for good.
+ */
+export async function recordAnswerFailure({ email, ip }) {
+  const now = Date.now()
+
+  await bump(answerKey(email), {
+    now,
+    staleAfterMs: NEVER_STALE_MS,
+    max: MAX_ANSWER_ATTEMPTS,
+    lockoutMs: ANSWER_LOCKOUT_MS,
+    hold: false,
+  })
+
+  await bump(answerIpKey(ip), {
+    now,
+    staleAfterMs: ANSWER_IP_WINDOW_MS,
+    max: MAX_ANSWER_IP_ATTEMPTS,
+    lockoutMs: ANSWER_IP_WINDOW_MS,
+    hold: false,
+  })
+}
 
 /**
  * Generic limiter for non-auth routes, keyed however the caller likes.

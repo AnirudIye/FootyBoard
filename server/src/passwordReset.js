@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
 import { run, transaction } from './db.js'
 import { hashPassword } from './auth.js'
+import { destroyAllSessions } from './sessions.js'
 
 /**
  * Password reset tokens.
@@ -10,11 +11,28 @@ import { hashPassword } from './auth.js'
  *     cannot be used to reset anyone's password;
  *   - it expires quickly and works exactly once;
  *   - using one invalidates every other outstanding token for that account;
- *   - and completing a reset destroys every existing session, so an attacker
- *     who was already signed in is thrown out rather than keeping access.
+ *   - and completing a reset destroys every existing session **and closes the
+ *     sockets they were holding**, so an attacker who was already signed in is
+ *     thrown out rather than keeping access. Deleting the rows alone was not
+ *     that: a room is authorized once at the handshake, so the revoked session
+ *     kept sending and receiving edits while every REST call it made answered
+ *     401. `sessions.js` owns both halves now.
+ *
+ * A token is now issued by answering a security question rather than by
+ * receiving an email, and is handed straight back in that response. None of the
+ * above changes; what changes is how long it needs to live.
  */
 
-export const RESET_TTL_MS = 30 * 60 * 1000
+/**
+ * Fifteen minutes, down from thirty.
+ *
+ * The old figure was sized for a mail round trip: a queue, a spam folder, and
+ * somebody getting to their inbox. Nothing is in the way now, the token is in
+ * the response to the answer that earned it, and the page that receives it is
+ * the next thing on screen. A window is a window whether or not anyone is
+ * using it, so it should be no longer than the step actually takes.
+ */
+export const RESET_TTL_MS = 15 * 60 * 1000
 export const RESET_TTL_MINUTES = RESET_TTL_MS / 60000
 
 const digest = (token) => createHash('sha256').update(token).digest('hex')
@@ -37,13 +55,18 @@ export async function createResetToken(userId) {
  * Consumes a token and sets the new password. Everything happens in one
  * transaction: if any step fails the token is not burned and the old password
  * still stands, rather than leaving the account half-changed.
+ *
+ * The transaction is `destroyAllSessions`', which is what makes signing
+ * everyone out inseparable from the change rather than a statement at the end
+ * that could be dropped. The eviction it publishes lands after the commit.
+ * Returns the account's id, or null, exactly as it always did.
  */
 export async function consumeResetToken(token, newPassword) {
   // Derived before the claim below, so the transaction is not held open across
   // scrypt. It also costs an invalid token the same work as a valid one.
   const { hash, salt } = await hashPassword(newPassword)
 
-  return transaction(async (client) => {
+  return destroyAllSessions(async (client) => {
     /**
      * The claim *is* the check.
      *
@@ -75,10 +98,11 @@ export async function consumeResetToken(token, newPassword) {
     await client.query('DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NULL', [
       row.user_id,
     ])
-    // Signing everyone out is the point: a stolen session must not survive the
-    // password that was changed to stop it.
-    await client.query('DELETE FROM sessions WHERE user_id = $1', [row.user_id])
 
+    // Returning the id is what signs everyone out: `destroyAllSessions` deletes
+    // every session for it in this same transaction and closes the sockets they
+    // were holding once it commits. A stolen session must not survive the
+    // password that was changed to stop it, and the room is where it used to.
     return row.user_id
   })
 }

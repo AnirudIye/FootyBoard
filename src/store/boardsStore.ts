@@ -4,8 +4,16 @@ import type { BoardSummary } from '../lib/api'
 
 const LAST_OPENED_KEY = 'soccerboard.lastBoard'
 
-/** What the last write to the server did, so the UI never hides a failure. */
-export type SaveState = 'idle' | 'saving' | 'saved' | 'offline'
+/**
+ * What the last write to the server did, so the UI never hides a failure.
+ *
+ * `blocked` is the odd one out: it is not the result of a write, it is the
+ * absence of one. The open board could not be opened at all, so nothing done to
+ * what is on screen will ever be written anywhere, and that condition lasts
+ * until a board is opened successfully rather than until the next attempt. A
+ * toast says it once and then fades; this is what keeps saying it.
+ */
+export type SaveState = 'idle' | 'saving' | 'saved' | 'offline' | 'blocked'
 
 interface BoardsState {
   boards: BoardSummary[]

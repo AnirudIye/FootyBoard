@@ -1,9 +1,10 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useBoardStore, HOME_COLOR, AWAY_COLOR } from '../../store/boardStore'
 import { Button } from '../ui/Button'
 import { Slider } from '../ui/Slider'
 import { useDismiss } from '../ui/useDismiss'
+import { clamp } from '../../lib/math'
 import type { Side, TokenShape } from '../../lib/types'
 
 // Shared with the bottom bar's context slot, so the two offer the same palette.
@@ -24,6 +25,7 @@ export default function Inspector() {
   const inspector = useBoardStore((s) => s.inspector)
   const tokens = useBoardStore((s) => s.tokens)
   const updateToken = useBoardStore((s) => s.updateToken)
+  const commit = useBoardStore((s) => s.commit)
   const switchPlayerTeam = useBoardStore((s) => s.switchPlayerTeam)
   const setSelection = useBoardStore((s) => s.setSelection)
   const deleteSelection = useBoardStore((s) => s.deleteSelection)
@@ -33,6 +35,13 @@ export default function Inspector() {
   const token = inspector ? tokens.find((t) => t.id === inspector.tokenId) : undefined
 
   useDismiss(ref, inspector !== null, closeInspector)
+
+  // A run of keystrokes is one undo step, closed by `commit`. Blur closes it in
+  // the ordinary case, but Escape and the chip being deleted both take the
+  // panel away without the browser blurring anything, and a run left open is a
+  // rename the next edit's snapshot swallows. `commit` is a no-op with nothing
+  // pending, so closing it here as well costs nothing.
+  useEffect(() => () => commit(), [inspector, commit])
 
   const isPlayer = token?.type === 'player'
 
@@ -98,7 +107,17 @@ export default function Inspector() {
                     min={1}
                     max={99}
                     value={token.number ?? ''}
-                    onChange={(e) => updateToken(token.id, { number: Number(e.target.value) })}
+                    // An empty field is somebody part-way through retyping a
+                    // number, not the number nought. `Number('')` is 0, so
+                    // clearing it put a 0 on the chip, sent that to the room
+                    // and saved it. `min`/`max` are hints to the browser's own
+                    // stepper and React enforces neither, so the clamp is here.
+                    onChange={(e) => {
+                      const n = Number(e.target.value)
+                      if (e.target.value === '' || !Number.isFinite(n)) return
+                      updateToken(token.id, { number: clamp(Math.round(n), 1, 99) }, true)
+                    }}
+                    onBlur={commit}
                     className="w-full rounded border border-rule bg-paper px-2 py-1 font-mono text-[13px]
                       focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                   />
@@ -109,7 +128,8 @@ export default function Inspector() {
                     type="text"
                     value={token.label ?? ''}
                     placeholder="optional"
-                    onChange={(e) => updateToken(token.id, { label: e.target.value })}
+                    onChange={(e) => updateToken(token.id, { label: e.target.value }, true)}
+                    onBlur={commit}
                     className="w-full rounded border border-rule bg-paper px-2 py-1 text-[13px]
                       focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                   />

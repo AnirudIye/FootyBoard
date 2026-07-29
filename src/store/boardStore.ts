@@ -21,6 +21,7 @@ import { captureFrame } from '../lib/frames'
 import type { History } from '../lib/history'
 import { createHistory, push, undo, redo } from '../lib/history'
 import { id } from '../lib/id'
+import { HOME_COLOR, AWAY_COLOR } from '../theme/teamColors'
 import { emit, emitFinal, emitReplaced, runAsRemote } from '../lib/realtime/bridge'
 import { applyOp } from '../lib/realtime/apply'
 import type { EntityOp } from '../lib/realtime/protocol'
@@ -38,9 +39,16 @@ export type ToolMode =
   | 'zonePoly'
   | 'text'
 
-// Muted, colour-blind-safe team pair. Deliberately not neon.
-export const HOME_COLOR = '#B4432E'
-export const AWAY_COLOR = '#2C5B8A'
+/**
+ * The muted, colour-blind-safe team pair. Defined in `src/theme/teamColors.ts`
+ * and re-exported here so the store's callers did not have to move, the way
+ * `persistence.ts` re-exports the shared board schema.
+ *
+ * The same two values reach CSS as `--home` and `--away`. They are not written
+ * in this file, and must not be: the module is the only place either colour is
+ * spelled, and a test fails on a second copy anywhere under `src/`.
+ */
+export { HOME_COLOR, AWAY_COLOR }
 
 const defaultView: ViewSettings = {
   view: 'fullH',
@@ -78,6 +86,23 @@ export interface Playback {
 }
 
 interface BoardState extends BoardData {
+  /**
+   * Which saved board the contents in this store belong to, or null when they
+   * belong to no board at all: a guest's board, the blank one that stands in
+   * when a saved board cannot be read, and the moment before a newly created
+   * board has an id.
+   *
+   * The save path asserts against this, so a write can never be attributed to
+   * a board the store is no longer showing. That was not a hypothetical: a
+   * debounced save is scheduled against whatever board was open when the edit
+   * happened, and anything that swaps the contents underneath it without
+   * changing that id turns the next write into a `PUT` of the wrong board's
+   * data over the right board's row. There is no version history behind that
+   * row, so it is not recoverable.
+   */
+  boardId: string | null
+  /** Records which saved board these contents came from. */
+  setBoardId: (boardId: string | null) => void
   selection: string[]
   tool: ToolMode
   history: History<PersistedBoard>
@@ -98,7 +123,15 @@ interface BoardState extends BoardData {
   closeInspector: () => void
 
   // lifecycle
-  initDefaultBoard: () => void
+  /**
+   * Throw the open board away and start from the default setup.
+   *
+   * The id defaults to null rather than being left as it was, because the
+   * contents really do stop being that board's the moment this runs, and the
+   * safe direction for the save guard is "belongs to nothing". Pass an id only
+   * when these contents have genuinely just been written to that board.
+   */
+  initDefaultBoard: (boardId?: string | null) => void
   resetBoardAction: () => void
   loadPersisted: (data: PersistedBoard) => void
   getPersistable: () => PersistedBoard
@@ -111,7 +144,15 @@ interface BoardState extends BoardData {
   // tokens
   moveToken: (tokenId: string, x: number, y: number) => void
   moveTokens: (ids: string[], dx: number, dy: number) => void
-  updateToken: (tokenId: string, patch: Partial<Token>) => void
+  /**
+   * Patch one token.
+   *
+   * `defer` holds the undo step open in `_pending` instead of pushing one, for
+   * edits that arrive a character at a time. The caller ends the run with
+   * `commit()`, exactly as a drag does. It changes nothing about what is
+   * broadcast or saved.
+   */
+  updateToken: (tokenId: string, patch: Partial<Token>, defer?: boolean) => void
   addToken: (token: Omit<Token, 'id'>) => string
   duplicateSelection: () => void
   deleteSelection: () => void
@@ -238,6 +279,20 @@ function buildDefaultData(): BoardData {
   }
 }
 
+/**
+ * A fresh board's contents, built without touching the open one.
+ *
+ * Creating a board needs a snapshot to send, and the obvious way to get one was
+ * to reset the store and read it back. That is a mutation of the board the user
+ * is still looking at, made before the new board exists, and if the create then
+ * failed the open board had already been replaced by a blank one that autosave
+ * duly wrote over the real thing. Build the payload here instead and leave the
+ * store alone until there is somewhere for it to go.
+ */
+export function defaultPersistedBoard(): PersistedBoard {
+  return { version: SCHEMA_VERSION, ...buildDefaultData() }
+}
+
 // Assign an ordered list of positions to a team's player tokens in order. When
 // the slots carry shirt numbers (a preset formation), the number and keeper
 // shape travel with the slot, so applying a shape also numbers the roles
@@ -256,6 +311,41 @@ function assignPositions(tokens: Token[], side: Side, positions: (Pos & { n?: nu
 }
 
 /**
+ * Settle a team's substitutes onto numbers nobody on the pitch is wearing.
+ *
+ * The pitch is the fixed half of this. Shirt numbers are positional and travel
+ * with the slot, so a squad that has just been fitted to a formation is already
+ * wearing that formation's numbers and cannot be asked to wear anything else.
+ * The bench is therefore what gives way, and it gives way as little as it can:
+ * a substitute keeps their own number unless the pitch has claimed it, and only
+ * then takes the lowest number nobody on that team holds.
+ *
+ * Without this, resizing a squad collided the two sets. Going from 11-a-side to
+ * 7-a-side puts the 7-a-side numbers (1, 2, 3, 7, 8, 9, 11) on the seven who
+ * stay while the four sent off carry 7, 9, 10 and 11 to the bench, so three
+ * numbers existed twice and 4, 5 and 6 existed nowhere. The count still came to
+ * sixteen, which is why nothing counting players noticed, and "bring on number
+ * 9" then put two number 9s on the pitch.
+ */
+function renumberBench(tokens: Token[], bench: Token[], side: Side): Token[] {
+  const taken = new Set<number>()
+  for (const t of tokens) {
+    if (t.type === 'player' && t.teamId === side && t.number !== undefined) taken.add(t.number)
+  }
+  return bench.map((t) => {
+    if (t.teamId !== side) return t
+    if (t.number !== undefined && !taken.has(t.number)) {
+      taken.add(t.number)
+      return t
+    }
+    let n = 1
+    while (taken.has(n)) n++
+    taken.add(n)
+    return { ...t, number: n }
+  })
+}
+
+/**
  * Keep the playhead inside the sequence. Anything that removes frames — a
  * delete, an undo, a reset, loading another board — can otherwise leave it
  * pointing past the end, which reads as a frame that no longer exists.
@@ -270,6 +360,8 @@ function clampPlayhead(playback: Playback, frameCount: number): Playback {
 
 export const useBoardStore = create<BoardState>((set, get) => ({
   ...buildDefaultData(),
+  boardId: null,
+  setBoardId: (boardId) => set({ boardId }),
   selection: [],
   tool: 'select',
   history: createHistory<PersistedBoard>(),
@@ -360,9 +452,10 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   openInspector: (tokenId, x, y) => set({ inspector: { tokenId, x, y } }),
   closeInspector: () => set({ inspector: null }),
 
-  initDefaultBoard: () =>
+  initDefaultBoard: (boardId = null) =>
     set((s) => ({
       ...buildDefaultData(),
+      boardId,
       selection: [],
       tool: 'select',
       history: createHistory<PersistedBoard>(),
@@ -522,12 +615,24 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     emit({ type: 'bulk', tokens: bulkFor(get().tokens, idset) }, 'group')
   },
 
-  updateToken: (tokenId, patch) => {
-    const before = get()._snapshot()
+  updateToken: (tokenId, patch, defer = false) => {
+    const before = defer ? null : get()._snapshot()
+    // Typing is a gesture, so it is held the way a drag is held: one snapshot
+    // parked in `_pending` at the first keystroke, and `commit()` on blur
+    // turning the whole run into a single undo step. Pushing per keystroke
+    // spent one of the 50 history slots and one `structuredClone` of the entire
+    // board per character, and made undo walk a rename back letter by letter.
+    //
+    // Only the *history* push is deferred. The `set` and the `emit` below run
+    // on every call either way, which is what keeps this invisible to the rest
+    // of the system: peers still receive a patch per keystroke, and autosave
+    // still fires for the originator, because it watches the token array's
+    // identity and not the history.
+    if (defer && !get()._pending) set({ _pending: get()._snapshot() })
     set((s) => ({
       tokens: s.tokens.map((t) => (t.id === tokenId ? { ...t, ...patch } : t)),
     }))
-    get()._pushPast(before)
+    if (before) get()._pushPast(before)
     emit({ type: 'patch', entity: 'token', id: tokenId, patch })
   },
 
@@ -718,6 +823,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           if (!p) return t
           return { ...t, x: p.x, y: p.y, number: p.n, shape: p.n === 1 ? 'keeper' : 'outfield' }
         })
+
+        // The pitch has just taken this format's positional numbers, so anyone
+        // on the bench still wearing one of them is now a duplicate. Settle
+        // them before the next side is considered.
+        bench = renumberBench(tokens, bench, side)
       }
 
       return {

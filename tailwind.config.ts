@@ -19,6 +19,8 @@ export default {
         'accent-hover': 'rgb(var(--accent-hover) / <alpha-value>)',
         home: 'rgb(var(--home) / <alpha-value>)',
         away: 'rgb(var(--away) / <alpha-value>)',
+        // The save indicator's alarm. Not a team, despite having been --home.
+        alert: 'rgb(var(--alert) / <alpha-value>)',
       },
       fontFamily: {
         sans: ['"Geist Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
