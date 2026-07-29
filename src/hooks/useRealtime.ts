@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { RoomConnection } from '../lib/realtime/connection'
 import { registerSinks, clearSinks, emit } from '../lib/realtime/bridge'
 import type { EntityOp, Op, ServerMessage } from '../lib/realtime/protocol'
-import { loadBoard, flushSave } from '../lib/boardSync'
+import { loadBoard, flushSave, rereadFailed } from '../lib/boardSync'
 import { useBoardStore } from '../store/boardStore'
 import { useBoardsStore } from '../store/boardsStore'
 import { useAuthStore } from '../store/authStore'
@@ -98,43 +98,10 @@ export function useRealtime() {
      */
     const holdsThisBoard = (): boolean => useBoardStore.getState().boardId === currentId
 
-    /**
-     * A re-read that came back unreadable.
-     *
-     * `loadBoard` answers false when the row fails `isPersistedBoard`, and it
-     * deliberately leaves the store exactly as it found it. That is right, and
-     * on its own it is silent: the board on screen is now whatever this client
-     * had before the peer replaced it, nobody else has those contents, and
-     * every whole-board change in a room comes through here. Undo, redo, reset
-     * and changing format are all past the payload cap, so the originator saves
-     * and broadcasts `replaced` and everyone else re-reads. Throwing the answer
-     * away meant one client in the room quietly stopped matching it, with the
-     * indicator still reading "Saved".
-     *
-     * Three things, and the first is what makes the other two true.
-     *
-     * 1. **Let go of the board.** The row now holds something this version
-     *    cannot parse, written by whoever broadcast the change, so saving what
-     *    is on screen over it is rule 1 of "a board that cannot be opened"
-     *    reached from the other direction: it would turn "we could not read
-     *    this" into "this is gone", over a *newer* board than ours. Clearing
-     *    the id is the guard `flushSave` already carries, not a second one.
-     * 2. **Say so, and keep saying it.** `blocked` is the standing condition
-     *    that already means "no write is possible at all here", it is what a
-     *    fatal room close and an unopenable board both set, and it renders as
-     *    "Not saving". Naming this differently would be a second word for one
-     *    condition. It ends when a board opens successfully, which for this
-     *    board means a later re-read that parses.
-     * 3. **Stop describing this board to the room**, which falls out of 1: see
-     *    the sinks below.
-     */
-    const rereadFailed = (): void => {
-      useBoardStore.getState().setBoardId(null)
-      useBoardsStore.getState().setSaveState('blocked')
-      toast(
-        'This board changed and could not be read, so what is on screen is out of date and is not being saved. Your saved copy is untouched.',
-      )
-    }
+    // `rereadFailed` used to be written out here. It lives in `boardSync.ts`
+    // now, because a refused write's catch-up read is a third way into the same
+    // dead end and three copies of one rule is how this repo keeps shipping a
+    // fix that only landed in two of the places it belonged.
 
     async function handle(message: ServerMessage) {
       if (disposed) return
@@ -173,11 +140,18 @@ export function useRealtime() {
           if (!shouldAnswer(message.peerId)) return
           try {
             // Only claim to have written when the write happened. `flushSave`
-            // refuses when the store is not holding this board, and telling
-            // peers to re-read on the back of a refusal points them at
+            // refuses when the store is not holding this board, or when the
+            // board has been replaced since these contents were read, and
+            // telling peers to re-read on the back of a refusal points them at
             // whatever the server already had, which is not what we were
             // elected to give them.
-            if (await flushSave(currentId!)) connection.send({ type: 'replaced' })
+            //
+            // `replacing`, because this write is announced as `replaced` and
+            // every peer re-reads on it. The flag and the broadcast are one
+            // decision: the generation has to move for the peers whose base this
+            // supersedes, and it must not move for a write nobody is told about.
+            if (await flushSave(currentId!, { replacing: true }))
+              connection.send({ type: 'replaced' })
           } catch {
             // The joiner keeps whatever it loaded; it is at worst slightly
             // stale, and the next op will correct the part that matters.
@@ -274,8 +248,15 @@ export function useRealtime() {
       sendReplaced: () => {
         // Save first, then tell peers to read: announcing before the write
         // lands would have them re-read the state we are replacing. A refused
-        // write is the same case, so it announces nothing either.
-        void flushSave(currentId)
+        // write is the same case, so it announces nothing either — and a
+        // refusal here means somebody else replaced the board first, so this
+        // client has already taken theirs on and has nothing left to announce.
+        //
+        // `replacing`, which is what moves the board's generation and so
+        // supersedes every peer's base. It is true here for exactly the reason
+        // the branch exists: this is undo, redo, reset or a format change,
+        // rewriting everything at once.
+        void flushSave(currentId, { replacing: true })
           .then((saved) => {
             if (saved) connection.send({ type: 'replaced' })
           })

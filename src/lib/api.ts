@@ -1,4 +1,4 @@
-import { AppError } from './errors'
+import { AppError, ConflictError } from './errors'
 
 /**
  * Thin wrapper over the API.
@@ -35,6 +35,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       payload && typeof payload === 'object' && 'error' in payload
         ? String((payload as { error: unknown }).error)
         : 'That did not work. Try again.'
+
+    // A write refused because the board moved on. Given its own type so the save
+    // path can tell it from every other explained failure without reading prose:
+    // it is the one 4xx here that is answered by re-reading rather than by
+    // showing somebody a message.
+    if (response.status === 409) {
+      const generation = (payload as { generation?: unknown } | null)?.generation
+      throw new ConflictError(message, typeof generation === 'number' ? generation : 0)
+    }
+
     throw new AppError(message)
   }
 
@@ -174,8 +184,14 @@ export const api = {
       `/boards?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
     ),
 
+  /**
+   * The board's contents, and the state of it they are. `generation` is the base
+   * every later write to this board has to carry, so it is read here rather than
+   * from an endpoint of its own: "these contents" and "which lineage they are on"
+   * are one fact and fetching them separately would let them disagree.
+   */
   getBoard: <T>(id: string) =>
-    request<{ board: BoardSummary & { data: T } }>(`/boards/${id}`),
+    request<{ board: BoardSummary & { data: T; generation: number } }>(`/boards/${id}`),
 
   createBoard: <T>(name: string, data: T) =>
     request<{ board: BoardSummary }>('/boards', {
@@ -194,11 +210,29 @@ export const api = {
    * know it, and the server then leaves the stored title alone: sending a
    * guess is how a board could get renamed by a client that had simply never
    * loaded its name.
+   *
+   * `baseGeneration` is the state of the board these contents were derived from,
+   * and the server refuses the write if the board has been replaced since. That
+   * is what stops a debounced autosave carrying pre-undo contents from landing
+   * after the undo and winning. `replacing` marks this write as a whole-board
+   * replacement, which is what moves the generation on; it must be true exactly
+   * when the caller will also broadcast `replaced`.
    */
-  saveBoard: <T>(id: string, name: string | null, data: T) =>
-    request<{ board: BoardSummary }>(`/boards/${id}`, {
+  saveBoard: <T>(
+    id: string,
+    name: string | null,
+    data: T,
+    baseGeneration: number,
+    replacing: boolean,
+  ) =>
+    request<{ board: BoardSummary & { generation: number } }>(`/boards/${id}`, {
       method: 'PUT',
-      body: JSON.stringify(name === null ? { data } : { name, data }),
+      body: JSON.stringify({
+        ...(name === null ? {} : { name }),
+        data,
+        baseGeneration,
+        replacing,
+      }),
     }),
 
   deleteBoard: (id: string) => request<void>(`/boards/${id}`, { method: 'DELETE' }),

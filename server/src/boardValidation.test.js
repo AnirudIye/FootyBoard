@@ -72,7 +72,21 @@ const call = (path, init) =>
   })
 
 const post = (body) => call('/boards', { method: 'POST', body: JSON.stringify(body) })
-const put = (id, body) => call(`/boards/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+/**
+ * `baseGeneration` is required on every write, so it is supplied here.
+ *
+ * A fresh board is on generation 1 and nothing in this file replaces a whole
+ * board, so 1 is always the current base and these writes are refused, when they
+ * are refused, for what they carry rather than for where they came from. That
+ * distinction matters: without it the junk-payload tests below would go on
+ * passing with a 400 about the wrong field, which is a test that has quietly
+ * stopped checking what it says it checks. Concurrency has its own suite.
+ */
+const put = (id, body) =>
+  call(`/boards/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ baseGeneration: 1, ...body }),
+  })
 
 /**
  * Status and body together, read once.
@@ -172,6 +186,8 @@ test('PUT refuses the same, over a board that was fine', async () => {
   for (const data of JUNK) {
     const res = await read(await put(id, { data }))
     assert.equal(res.status, 400, `PUT accepted ${label(data)} with ${res.status}`)
+    // Named, so this cannot pass on a 400 raised by some other field.
+    assert.equal(res.body.field, 'data', `PUT refused ${label(data)} for the wrong reason`)
   }
 
   // And the board it was aimed at is untouched, which is the part that matters

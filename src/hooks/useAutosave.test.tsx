@@ -140,8 +140,16 @@ beforeEach(() => {
   localStorage.clear()
 
   mockApi.listBoards.mockResolvedValue({ boards: [OLD], nextCursor: null })
+  // Every read carries the generation the board is on, because every write has
+  // to state the base it was made from. A fixture without one describes a
+  // response the server cannot send, and `loadBoard` refuses it rather than
+  // opening a board that could never be saved to.
   mockApi.getBoard.mockImplementation(async (id: string) => ({
-    board: { ...summary(id, id === 'old' ? 'Real board' : 'Board 2'), data: boardWithWork() },
+    board: {
+      ...summary(id, id === 'old' ? 'Real board' : 'Board 2'),
+      data: boardWithWork(),
+      generation: 1,
+    },
   }))
   mockApi.saveBoard.mockResolvedValue({ board: OLD })
   mockApi.createBoard.mockResolvedValue({ board: NEW })
@@ -251,6 +259,12 @@ describe('the save path', () => {
   it('refuses to write one board over another', async () => {
     useBoardsStore.setState({ boards: [OLD, NEW], currentId: 'old' })
     useBoardStore.getState().initDefaultBoard('new')
+    // Holding a board means holding which state of it these contents came from,
+    // not only its id: every write states the base it was made on, and contents
+    // whose base is unknown cannot state one. `loadBoard` sets the two together;
+    // this stands in for it, so the accepted write below is testing the id guard
+    // rather than tripping over the other one.
+    useBoardStore.getState().setBoardId('new', 1)
 
     expect(await flushSave('old')).toBe(false)
     expect(mockApi.saveBoard).not.toHaveBeenCalled()
@@ -312,6 +326,7 @@ describe('a stored board this version cannot read', () => {
       board: {
         ...summary(id, boards.find((b) => b.id === id)?.name ?? id),
         data: readable(id) ? boardWithWork() : unreadable,
+        generation: 1,
       },
     }))
   }

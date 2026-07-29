@@ -101,8 +101,23 @@ interface BoardState extends BoardData {
    * row, so it is not recoverable.
    */
   boardId: string | null
-  /** Records which saved board these contents came from. */
-  setBoardId: (boardId: string | null) => void
+  /**
+   * Which state of that board these contents were derived from.
+   *
+   * Sent as the base of every write, and refused by the server when the board
+   * has been replaced since. It moves only when the board's *lineage* does —
+   * undo, redo, reset, a format change — rather than on every save, so it says
+   * "these contents come from that board's current lineage" rather than "these
+   * contents are byte-for-byte that row".
+   *
+   * Null means the same as a null `boardId` does: not known, so refuse to write.
+   * The two are one fact and are always set together, because a generation that
+   * outlived the board it describes would be a base attached to the wrong row,
+   * which is the exact failure `boardId` exists to prevent.
+   */
+  boardGeneration: number | null
+  /** Records which saved board these contents came from, and which state of it. */
+  setBoardId: (boardId: string | null, generation?: number | null) => void
   selection: string[]
   tool: ToolMode
   history: History<PersistedBoard>
@@ -361,7 +376,8 @@ function clampPlayhead(playback: Playback, frameCount: number): Playback {
 export const useBoardStore = create<BoardState>((set, get) => ({
   ...buildDefaultData(),
   boardId: null,
-  setBoardId: (boardId) => set({ boardId }),
+  boardGeneration: null,
+  setBoardId: (boardId, generation = null) => set({ boardId, boardGeneration: generation }),
   selection: [],
   tool: 'select',
   history: createHistory<PersistedBoard>(),
@@ -456,6 +472,10 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     set((s) => ({
       ...buildDefaultData(),
       boardId,
+      // Never carried over. These contents are not the previous board's, and a
+      // brand new board's generation is learned from the read that follows,
+      // never assumed here.
+      boardGeneration: null,
       selection: [],
       tool: 'select',
       history: createHistory<PersistedBoard>(),

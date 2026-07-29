@@ -112,6 +112,26 @@ export function validateBoardData(value) {
   return text
 }
 
+/**
+ * The generation the caller believes it is writing on top of.
+ *
+ * Required rather than optional, which is the decision worth defending. An
+ * optional check is one an old bundle skips, and the write it would skip is
+ * precisely the one this exists to refuse: a debounced autosave carrying contents
+ * from before somebody else replaced the whole board. Client and server ship
+ * together here, exactly as they must for the exact schema version check in
+ * `boardSchema.js`, so refusing an absent value costs nothing and closes the hole
+ * that "be lenient about it" would leave open forever.
+ */
+export function validateBaseGeneration(value) {
+  if (!Number.isInteger(value) || value < 1)
+    throw new BadRequest(
+      'That save did not say which version of the board it was based on.',
+      'baseGeneration',
+    )
+  return value
+}
+
 /** Pagination inputs, clamped so a caller cannot ask for the whole table. */
 export function validatePageQuery({ limit, cursor }) {
   const parsed = Number.parseInt(limit ?? '20', 10)

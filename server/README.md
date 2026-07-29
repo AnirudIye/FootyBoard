@@ -41,14 +41,42 @@ In production, skip step 1 and point `DATABASE_URL` at a managed Postgres.
 | GET | `/api/auth/me` | current user, or 401 |
 | DELETE | `/api/auth/me` | deletes the account; sessions and boards cascade |
 | GET | `/api/boards?limit&cursor` | keyset page of the caller's boards |
-| GET | `/api/boards/:id` | one board including its data |
+| GET | `/api/boards/:id` | one board including its data and its `generation` |
 | POST | `/api/boards` | `{ name, data }` |
-| PUT | `/api/boards/:id` | replace name and data |
+| PUT | `/api/boards/:id` | `{ data, baseGeneration, name?, replacing? }`; 409 when the base has been superseded |
 | PATCH | `/api/boards/:id` | rename only; a missing `name` is a 400, not a default |
 | DELETE | `/api/boards/:id` | remove one board |
 | GET | `/api/assistant/status` | whether the AI fallback is configured |
 | POST | `/api/assistant` | `{ message, consent: true, … }` — 400 without consent |
 | WS | `/ws?board=<id>` | join that board's room |
+
+## Writing a board
+
+`PUT` is not last-writer-wins. `boards.generation` is the lineage the contents
+belong to; every write states the base it was made from in `baseGeneration`, and
+the compare and the bump happen in one `UPDATE ... WHERE id = $ AND generation =
+$`. A write whose base has been superseded is refused with **409** carrying the
+generation the board is actually on, and the client answers that by re-reading
+rather than by retrying on a base that would make the refused contents
+acceptable.
+
+**The generation moves only when `replacing` is true**, which the client sets
+exactly when it will also broadcast `replaced` — undo, redo, reset, a format
+change, answering a joiner. Ordinary autosaves do not move it, and that is the
+whole reason this is usable: two people editing produce a steady alternation of
+ordinary saves that already agree with each other, because the ops carried the
+contents to everyone first, and refusing those would cost a board read and an
+undo history every time for nothing.
+
+`replacing` is a coordination signal among cooperating clients, **not an access
+control**. A client that lies about it can only clobber a board it already has
+write access to, which it can do with an ordinary write; `access.js` is what
+decides who may write at all.
+
+`baseGeneration` is required. An optional check is one an old bundle skips, and
+the write it would skip is precisely the one this exists to refuse. Client and
+server ship together, as they already must for the exact schema version check in
+`src/lib/boardSchema.js`.
 
 ## How the five performance concerns are handled
 

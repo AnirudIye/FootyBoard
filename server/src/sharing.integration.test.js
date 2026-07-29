@@ -580,19 +580,27 @@ test('locking the board stops a member editing, on the instance they are not on'
   )
 
   // And the same lock blocks the REST path, so it cannot be routed around.
+  // The lock is checked before anything in the body is, so this is refused for
+  // being locked rather than for what it carries.
   const save = await json(
     await call(B, `/boards/${boardId}`, collaborator.cookie, {
       method: 'PUT',
-      body: JSON.stringify({ name: 'Shared board', data: testBoard({ sneaky: true }) }),
+      body: JSON.stringify({
+        name: 'Shared board',
+        data: testBoard({ sneaky: true }),
+        baseGeneration: 1,
+      }),
     }),
   )
   assert.equal(save.status, 403)
 
-  // The owner is never locked out by their own lock.
+  // The owner is never locked out by their own lock. A fresh board is on
+  // generation 1 and nothing above replaces the whole board, so that is the
+  // current base.
   const ownerSave = await json(
     await call(A, `/boards/${boardId}`, owner.cookie, {
       method: 'PUT',
-      body: JSON.stringify({ name: 'Shared board', data: testBoard() }),
+      body: JSON.stringify({ name: 'Shared board', data: testBoard(), baseGeneration: 1 }),
     }),
   )
   assert.equal(ownerSave.status, 200)

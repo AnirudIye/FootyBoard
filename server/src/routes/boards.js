@@ -2,10 +2,24 @@ import { Router } from 'express'
 import { randomUUID } from 'node:crypto'
 import { get, all, run } from '../db.js'
 import { accessFor } from '../access.js'
-import { validateBoardName, validateBoardData, validatePageQuery } from '../validate.js'
+import {
+  validateBoardName,
+  validateBoardData,
+  validateBaseGeneration,
+  validatePageQuery,
+} from '../validate.js'
 import { encrypt, decrypt } from '../crypto.js'
 
 export const boardsRouter = Router()
+
+/**
+ * `pg` hands `BIGINT` back as a string, to avoid silently losing precision past
+ * 2^53. A generation that reached the browser as `"6"` would compare false
+ * against every number the client holds, in the one comparison this whole
+ * mechanism rests on, and would do it without a word. So it is converted at every
+ * point it leaves SQL, and nowhere else.
+ */
+const asNumber = (generation) => Number(generation)
 
 boardsRouter.use((req, res, next) => {
   if (!req.user) return res.status(401).json({ error: 'Sign in to use your boards.' })
@@ -101,7 +115,7 @@ boardsRouter.get('/:id', async (req, res) => {
   if (!access.role) return res.status(404).json({ error: 'That board does not exist.' })
 
   const row = await get(
-    'SELECT id, name, data, created_at, updated_at FROM boards WHERE id = $1',
+    'SELECT id, name, data, created_at, updated_at, generation FROM boards WHERE id = $1',
     req.params.id,
   )
   if (!row) return res.status(404).json({ error: 'That board does not exist.' })
@@ -122,6 +136,10 @@ boardsRouter.get('/:id', async (req, res) => {
       data,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      // The base a later write has to carry. Read here rather than from a
+      // separate endpoint, because "these contents" and "which lineage they are
+      // on" are one fact and must not be fetched separately.
+      generation: asNumber(row.generation),
       role: access.role,
       membersCanEdit: access.membersCanEdit,
     },
@@ -174,23 +192,83 @@ boardsRouter.put('/:id', async (req, res) => {
   const renaming = access.role === 'owner' && req.body?.name != null
   const name = renaming ? validateBoardName(req.body.name) : null
   const data = validateBoardData(req.body?.data)
+
+  /**
+   * Optimistic concurrency, and the reason this endpoint is no longer
+   * last-writer-wins.
+   *
+   * It was one `UPDATE ... SET data` with nothing behind it, so a debounced
+   * autosave carrying contents from before somebody pressed undo could commit
+   * *after* the undo and win. The room then diverged for good, because the loser
+   * re-read and got its own stale board back, and an ordinary autosave announces
+   * itself to nobody so nothing ever corrected it. That is gap 10 in
+   * `handoff.md`.
+   *
+   * The compare and the bump are one statement for the same reason every rate
+   * limiter here is: a read, a decision, then a write leaves a gap two requests
+   * can both pass through, and this is precisely a mechanism about two requests.
+   *
+   * `replacing` is the client saying this write is a whole-board replacement and
+   * will be announced as `replaced`. It is a coordination signal among
+   * cooperating clients rather than an access control: a client that lies about
+   * it can only clobber a board it already has write access to, which it can do
+   * today with an ordinary write. `access.js` above is what decides who may
+   * write at all.
+   */
+  const baseGeneration = validateBaseGeneration(req.body?.baseGeneration)
+  const bump = req.body?.replacing === true ? 1 : 0
+
   const now = new Date().toISOString()
   const updated = renaming
     ? await get(
-        'UPDATE boards SET name = $1, data = $2, updated_at = $3 WHERE id = $4 RETURNING name',
+        `UPDATE boards SET name = $1, data = $2, updated_at = $3, generation = generation + $4
+          WHERE id = $5 AND generation = $6
+          RETURNING name, generation`,
         name,
         encrypt(data),
         now,
+        bump,
         req.params.id,
+        baseGeneration,
       )
     : await get(
-        'UPDATE boards SET data = $1, updated_at = $2 WHERE id = $3 RETURNING name',
+        `UPDATE boards SET data = $1, updated_at = $2, generation = generation + $3
+          WHERE id = $4 AND generation = $5
+          RETURNING name, generation`,
         encrypt(data),
         now,
+        bump,
         req.params.id,
+        baseGeneration,
       )
-  if (!updated) return res.status(404).json({ error: 'That board does not exist.' })
-  res.json({ board: { id: req.params.id, name: updated.name, updatedAt: now } })
+
+  /**
+   * No row matched, which is two different answers and they must not be merged.
+   *
+   * The generation moved is a 409: the caller is holding a board this one has
+   * replaced, and telling it so is what lets it re-read instead of retrying.
+   * The board is gone is the same 404 every other branch gives, and it has to
+   * stay a 404: a status that only ever appears for boards that do exist would
+   * hand back exactly the question the shared 404 refuses, which is whether a
+   * board id is real.
+   */
+  if (!updated) {
+    const current = await get('SELECT generation FROM boards WHERE id = $1', req.params.id)
+    if (!current) return res.status(404).json({ error: 'That board does not exist.' })
+    return res.status(409).json({
+      error: 'This board was changed somewhere else, so that save was not applied.',
+      generation: asNumber(current.generation),
+    })
+  }
+
+  res.json({
+    board: {
+      id: req.params.id,
+      name: updated.name,
+      updatedAt: now,
+      generation: asNumber(updated.generation),
+    },
+  })
 })
 
 /** Rename only. Sending a whole board just to change its title would be waste. */

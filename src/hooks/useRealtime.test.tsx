@@ -5,6 +5,7 @@ import { useRealtime } from './useRealtime'
 import SaveStatus from '../components/board/SaveStatus'
 import { api } from '../lib/api'
 import { flushSave, loadBoard } from '../lib/boardSync'
+import { ConflictError } from '../lib/errors'
 import type { PersistedBoard } from '../lib/persistence'
 import { useAuthStore } from '../store/authStore'
 import { useBoardsStore } from '../store/boardsStore'
@@ -121,7 +122,13 @@ const boardWithWork = (): PersistedBoard => ({
  * stopped doing it.
  */
 const holdingBoardInRoom = async () => {
-  mockApi.getBoard.mockResolvedValue({ board: { id: 'board-1', data: boardWithWork() } })
+  // Every read carries the generation the board is on, which is the base a later
+  // write states. A fixture without one describes a response the server cannot
+  // send, and `loadBoard` refuses it rather than opening a board it could never
+  // save to.
+  mockApi.getBoard.mockResolvedValue({
+    board: { id: 'board-1', data: boardWithWork(), generation: 1 },
+  })
   useAuthStore.setState({ email: 'coach@example.com', ready: true })
   useBoardsStore.setState({ currentId: 'board-1', saveState: 'saved' })
   await act(async () => {
@@ -221,7 +228,10 @@ describe('a re-read that will not parse', () => {
 
   /** The peer saved a board this version cannot read, and said so. */
   const peerReplacedTheBoard = async () => {
-    mockApi.getBoard.mockResolvedValue({ board: { id: 'board-1', data: UNREADABLE } })
+    // Generation 2: the peer replaced the whole board, which is what moves it.
+    mockApi.getBoard.mockResolvedValue({
+      board: { id: 'board-1', data: UNREADABLE, generation: 2 },
+    })
     await serverSays({ type: 'replaced', peerId: 'peer-2' })
   }
 
@@ -277,7 +287,9 @@ describe('a re-read that will not parse', () => {
     // and it is being locked out that triggers the re-read.
     await serverSays({ type: 'welcome', peerId: 'me', role: 'member', locked: false, peers: [] })
 
-    mockApi.getBoard.mockResolvedValue({ board: { id: 'board-1', data: UNREADABLE } })
+    mockApi.getBoard.mockResolvedValue({
+      board: { id: 'board-1', data: UNREADABLE, generation: 2 },
+    })
     await serverSays({ type: 'lock', locked: true, peerId: 'owner' })
 
     expect(useBoardsStore.getState().saveState).toBe('blocked')
@@ -312,6 +324,60 @@ describe('a re-read that will not parse', () => {
       useBoardStore.getState().addFrame()
     })
     expect(latest().sent.length).toBe(spoke)
+  })
+})
+
+/**
+ * A whole-board change the room got to first.
+ *
+ * This is gap 10 from the originating side. Undo, redo, reset and a format
+ * change all save and then broadcast `replaced`, and the server now refuses that
+ * save if somebody else replaced the board in the meantime. What must not happen
+ * then is the announcement going out anyway: `replaced` tells every peer to
+ * re-read, and a peer that re-reads on the back of a write that never landed is
+ * being pointed at somebody else's board and told it is this client's change.
+ *
+ * The suppression itself is not new — `sendReplaced` has always waited on the
+ * write — but the reason is, and this is the seam the original defect lived in,
+ * so it is worth holding here rather than only in `boardSync.test.ts`.
+ */
+describe('a whole-board change the room got to first', () => {
+  const raced = async () => {
+    await holdingBoardInRoom()
+    mockApi.saveBoard.mockRejectedValue(new ConflictError('Changed elsewhere.', 2))
+    mockApi.getBoard.mockResolvedValue({
+      board: { id: 'board-1', data: theirs, generation: 2 },
+    })
+
+    // A reset rewrites everything at once, which is exactly the class of change
+    // that saves and then announces itself.
+    await act(async () => {
+      useBoardStore.getState().resetBoardAction()
+      for (let i = 0; i < 10; i += 1) await Promise.resolve()
+    })
+  }
+
+  const theirs: PersistedBoard = {
+    ...defaultPersistedBoard(),
+    frames: [{ id: 'theirs', label: 'theirs', tokens: {} }],
+  }
+
+  const announcements = () =>
+    latest().sent.filter((raw) => JSON.parse(raw).type === 'replaced')
+
+  it('does not tell the room to re-read a write that was refused', async () => {
+    await raced()
+
+    expect(announcements()).toHaveLength(0)
+  })
+
+  it('takes on the board that won instead', async () => {
+    await raced()
+
+    // And converges rather than sitting on a reset nobody accepted, which is
+    // the divergence the whole mechanism exists to stop.
+    expect(useBoardStore.getState().frames.map((f) => f.id)).toEqual(['theirs'])
+    expect(screen.queryByText('Not saving')).toBeNull()
   })
 })
 
@@ -356,11 +422,20 @@ describe('re-reads settle in the order the messages arrived', () => {
     await holdingBoardInRoom()
     await serverSays({ type: 'welcome', peerId: 'me', role: 'member', locked: false, peers: [] })
 
+    /**
+     * Both reads answer on the same generation, and that is deliberate.
+     *
+     * `loadBoard` refuses to adopt a board older than the one it is holding, and
+     * that guard would decide this test on its own if the two answers carried
+     * different generations — which would leave the chain untested while the
+     * test went on claiming to test it. Equal generations make the guard
+     * neutral, so arrival order is once again the only thing that decides.
+     */
     const pending: Array<(data: PersistedBoard) => void> = []
     mockApi.getBoard.mockImplementation(
       () =>
         new Promise((resolve) => {
-          pending.push((data) => resolve({ board: { id: 'board-1', data } }))
+          pending.push((data) => resolve({ board: { id: 'board-1', data, generation: 1 } }))
         }),
     )
     return pending

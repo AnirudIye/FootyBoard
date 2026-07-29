@@ -151,6 +151,30 @@ async function applySchema(client) {
     ALTER TABLE boards ADD COLUMN IF NOT EXISTS anonymous_presence BOOLEAN NOT NULL DEFAULT false;
   `)
 
+  // Which lineage the board's contents are on, so a write from a superseded one
+  // can be refused rather than winning by arriving last.
+  //
+  // **It bumps only on a write that also broadcasts `replaced`** — undo, redo,
+  // reset, a format change, or answering a joiner — and that restraint is the
+  // whole design rather than an optimisation. A counter incremented by every
+  // write would be correct and unusable: an ordinary autosave announces itself to
+  // nobody, so in a two-person room every alternating save leaves the other
+  // client's base stale, and each refusal costs a full board read and that
+  // client's undo history, in the case where both already hold identical contents
+  // because the ops flowed between them.
+  //
+  // Bumping only on replacement makes a refusal mean one specific thing: your
+  // contents come from a lineage this board is no longer on. That is exactly the
+  // case that used to diverge a room for good, and it is what makes the client's
+  // response to a refusal — re-read and adopt, discarding local work — correct
+  // rather than merely tolerable.
+  //
+  // No index. It is only ever read and compared by primary key, so one would be
+  // write amplification, which is the reasoning that dropped `idx_attempts_locked`.
+  await client.query(`
+    ALTER TABLE boards ADD COLUMN IF NOT EXISTS generation BIGINT NOT NULL DEFAULT 1;
+  `)
+
   // The security question, which is what proves identity when a password is
   // forgotten. There is no reset email any more, so these three columns are the
   // whole authenticator for recovery.
