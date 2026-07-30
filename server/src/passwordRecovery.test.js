@@ -74,14 +74,46 @@ async function waitForHealth(timeoutMs = 20_000) {
   throw new Error(`instance on :${PORT} never became healthy`)
 }
 
-const call = (path, init = {}) =>
-  fetch(`http://127.0.0.1:${PORT}/api${path}`, {
+/**
+ * The per-IP signup allowance is shared with every other suite, so no suite may
+ * assume it owns it.
+ *
+ * `node --test` runs these files concurrently and they all reach the API from
+ * 127.0.0.1, so `signup:127.0.0.1` is one counter for the whole run. Between
+ * them the suites make more than the ten requests an hour that allowance
+ * permits, which made the full suite fail on whichever file happened to ask
+ * eleventh while every file passed on its own. Clearing in `before()` cannot fix
+ * that: the total is still over the limit, the clear just moves which test loses.
+ *
+ * So the allowance is reset immediately before each request that spends it.
+ * These tests are about what recovery does, not about the limiter, and the
+ * suite that *is* about the limiter has its own keys.
+ *
+ * **Scoped to the loopback addresses this suite actually reaches the API from**,
+ * which `IP_KEYS` above already enumerates, rather than the `LIKE 'signup:%'`
+ * this used to be. That wildcard reached every other suite's signup counter,
+ * which is the same defect `guestJoin` and `displayName` carried against
+ * `join:%`: it wiped a neighbour's allowance mid-count and made the file that
+ * asserts *when* a limiter trips fail perhaps half the time. Nothing here needs
+ * a prefix; this file's own keys are known exactly.
+ */
+const freshSignupAllowance = async () => {
+  for (const ip of LOOPBACK) await run('DELETE FROM login_attempts WHERE key = $1', `signup:${ip}`)
+}
+
+/** Paths whose handlers charge that allowance. */
+const SPENDS_ALLOWANCE = ['/auth/signup', '/auth/claim']
+
+const call = async (path, init = {}) => {
+  if (SPENDS_ALLOWANCE.includes(path)) await freshSignupAllowance()
+  return fetch(`http://127.0.0.1:${PORT}/api${path}`, {
     ...init,
     headers: {
       ...(init.body ? { 'Content-Type': 'application/json' } : {}),
       ...init.headers,
     },
   })
+}
 
 const post = (path, body, headers) =>
   call(path, { method: 'POST', body: JSON.stringify(body), headers })
@@ -176,6 +208,7 @@ test('the question list is served, and is the one the server validates against',
   // signup accepts. Anything not on it is a 400 rather than a stored value.
   const rejected = await json(
     await post('/auth/signup', {
+      displayName: 'Recovery Tester',
       email: freshEmail(),
       password: 'a-long-enough-password',
       acceptedTerms: true,
@@ -193,6 +226,7 @@ test('signing up stores the answer hashed, and the answer appears nowhere in the
 
   const { status, body } = await json(
     await post('/auth/signup', {
+      displayName: 'Recovery Tester',
       email,
       password: 'a-long-enough-password',
       acceptedTerms: true,
@@ -226,6 +260,7 @@ test('signup refuses a missing or too-short answer, and writes nothing', async (
     const email = freshEmail()
     const { status, body } = await json(
       await post('/auth/signup', {
+        displayName: 'Recovery Tester',
         email,
         password: 'a-long-enough-password',
         acceptedTerms: true,
@@ -243,6 +278,7 @@ test('the round trip: sign up, answer it typed differently, set a new password',
 
   const created = await json(
     await post('/auth/signup', {
+      displayName: 'Recovery Tester',
       email,
       password: 'the-first-password',
       acceptedTerms: true,
@@ -442,6 +478,7 @@ test('changing the password re-sets the question and signs every other session o
 
   const created = await json(
     await post('/auth/signup', {
+      displayName: 'Recovery Tester',
       email,
       password: 'the-first-password',
       acceptedTerms: true,

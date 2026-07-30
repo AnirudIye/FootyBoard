@@ -51,6 +51,28 @@ describe('DrawingToolbar context slot', () => {
     expect(after.map((t) => t.color)).toEqual([target, target, target])
   })
 
+  /**
+   * The triangle is a zone, and the toolbar is where that has to be visible: a
+   * shape with a fill and no way to set it is the same bug as a shape with no
+   * fill at all. Arming it rather than selecting one, because arming is the
+   * half that has no drawing to read the value off and so is the half that can
+   * quietly fail.
+   */
+  it('offers the fill slider for an armed triangle, as it does for a box', () => {
+    render(<DrawingToolbar />)
+    expect(screen.queryByText('Fill')).toBeNull()
+
+    act(() => useBoardStore.getState().setTool('zoneTriangle'))
+
+    expect(screen.getByText('Fill')).toBeInTheDocument()
+  })
+
+  it('arms the triangle tool from its own button', () => {
+    render(<DrawingToolbar />)
+    fireEvent.click(screen.getByText('Triangle'))
+    expect(useBoardStore.getState().tool).toBe('zoneTriangle')
+  })
+
   it('anchors the inspector to the whole pill, not the pointer or the button', () => {
     const p = homePlayers()[0]
     useBoardStore.getState().setSelection([p.id])
@@ -75,10 +97,20 @@ describe('DrawingToolbar context slot', () => {
 
 /**
  * The pill is placed against its measured width, so these are the real numbers,
- * taken from the browser at these viewports: the tool group is a constant
+ * taken from the browser at these viewports: the tool group was a constant
  * 931.11px, centred inside a rail inset 12px from each edge, and a selected
  * curve stacks Bend + left/right + Delete at 254px. Curve + zone is 378 and
  * curve + ball is 389, which is the point: one breakpoint cannot serve them.
+ *
+ * `BAR` is now a fixture rather than a current measurement — the Triangle tool
+ * widened the group by a button — and saying so is cheaper than re-measuring a
+ * number this file only feeds back to itself through a stubbed rect. What is
+ * under test is the rule, that the pill goes beside the bar exactly when its
+ * own width fits in the room left over, and that rule is what survives the
+ * group changing width. **The pill widths above are still live**: they measure
+ * the context pill, which no tool button is part of, and the viewport
+ * thresholds asserted below are arithmetic on `BAR`, so a real re-measure would
+ * move the numbers in these tests together rather than falsify any of them.
  */
 describe('DrawingToolbar context pill placement', () => {
   const BAR = 931.11

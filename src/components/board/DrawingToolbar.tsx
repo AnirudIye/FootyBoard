@@ -21,6 +21,10 @@ const TOOLS: { id: ToolMode; label: string; hint: string }[] = [
   { id: 'curvePass', label: 'Bent pass', hint: 'Curved pass (dashed). Pick which way it bends' },
   { id: 'zoneRect', label: 'Box', hint: 'Rectangular zone' },
   { id: 'zoneEllipse', label: 'Oval', hint: 'Elliptical zone' },
+  // The hint carries the one thing a triangle does that the two zones above it
+  // do not, because it is not guessable from a button that looks like theirs:
+  // the apex follows the start of the drag, so dragging upwards inverts it.
+  { id: 'zoneTriangle', label: 'Triangle', hint: 'Triangular zone: drag from the point to the base' },
   { id: 'zonePoly', label: 'Shape', hint: 'Free polygon: click points, Enter to close' },
   { id: 'text', label: 'Text', hint: 'Text label' },
 ]

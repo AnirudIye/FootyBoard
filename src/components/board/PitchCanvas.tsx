@@ -9,7 +9,7 @@ import { useDrawGesture } from '../../hooks/useDrawGesture'
 import { useWindowPointerUp } from '../../hooks/useWindowPointerUp'
 import { isZone, isText, isMark } from '../../lib/drawings'
 import PitchLayer from './PitchLayer'
-import TokenLayer, { playerHidden, shownX } from './TokenLayer'
+import TokenLayer, { onScreen, lastDrawn } from './TokenLayer'
 import DrawingLayer from './DrawingLayer'
 import PeerLayer from './PeerLayer'
 import { sendCursor } from '../../hooks/useRealtime'
@@ -123,11 +123,23 @@ export default function PitchCanvas() {
     const { tokens, selection } = useBoardStore.getState()
     const hit = tokens
       .filter((t) => {
-        // Test what is on screen, not what is stored: a half view hides the
-        // off-half players entirely and pins the ball and props to the edge.
-        if (t.type === 'player' && playerHidden(view.view, t.x)) return false
-        const nx = t.type === 'player' ? t.x : shownX(view.view, t.x)
-        const p = mapping.toPx(nx, t.y)
+        /**
+         * Test what is on screen, not what is stored.
+         *
+         * A half view hides the off-half players entirely and pins the ball and
+         * props to the edge, so a marquee working off raw stored positions caught
+         * players nobody could see and missed props at the edge it had itself put
+         * there. That much was already fixed.
+         *
+         * What was not: "on screen" meant the stored coordinate, and during
+         * playback or a formation glide a chip is drawn somewhere else entirely.
+         * So this reads the positions the layer actually drew, through the same
+         * function the layer decides visibility with. Two answers that have to
+         * agree is what this was before.
+         */
+        const { hidden, nx, ny } = onScreen(view.view, t, lastDrawn.positions)
+        if (hidden) return false
+        const p = mapping.toPx(nx, ny)
         return p.x >= m.x && p.x <= m.x + m.w && p.y >= m.y && p.y <= m.y + m.h
       })
       .map((t) => t.id)

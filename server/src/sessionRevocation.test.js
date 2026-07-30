@@ -445,7 +445,20 @@ test('deleting the account closes every room that session was in', async () => {
   const first = await openSocket(B, boardId, cookie)
   const second = await openSocket(B, otherBoardId, cookie)
 
-  assert.equal((await call(A, '/auth/me', cookie, { method: 'DELETE' })).status, 204)
+  // The current password rides along because deletion asks for it now, on the
+  // argument `/password` and `/sessions` already made: a held session must not
+  // be enough for the one thing nothing undoes. What this test is about is
+  // unchanged, which is that the rooms close when the account goes.
+  assert.equal(
+    (
+      await call(A, '/auth/me', cookie, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword: person.password }),
+      })
+    ).status,
+    204,
+  )
 
   assert.equal(await waitForClose(first), 4401)
   assert.equal(await waitForClose(second), 4401)

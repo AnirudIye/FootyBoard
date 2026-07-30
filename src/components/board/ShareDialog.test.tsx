@@ -10,6 +10,15 @@ import { useRealtimeStore } from '../../store/realtimeStore'
 import { useToastStore } from '../../store/toastStore'
 
 /**
+ * A signed-in account, as the store now holds it.
+ *
+ * The store used to keep `email: string | null` and use it as the signed-in flag
+ * too. An account can exist without an address now — a guest admitted by a join
+ * code — so the flag is the presence of a user and the address is a field on it.
+ */
+const signedInUser = { id: 'u1', email: 'coach@example.test', displayName: null, createdAt: '2026-07-01T00:00:00.000Z', isGuest: false, twoFactorEnabled: false }
+
+/**
  * The panel that hands out a one-time credential.
  *
  * `POST /share` is the only moment the link's plaintext exists outside the
@@ -120,7 +129,7 @@ beforeEach(() => {
     anonymousPresence: anonymous,
   }))
 
-  useAuthStore.setState({ email: 'coach@example.test', ready: true })
+  useAuthStore.setState({ user: signedInUser, ready: true })
   useBoardsStore.setState({ boards: [BOARD], currentId: 'b1' })
   useRealtimeStore.getState().reset()
   useToastStore.setState({ toasts: [] })
@@ -128,7 +137,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
-  useAuthStore.setState({ email: null, ready: false })
+  useAuthStore.setState({ user: null, ready: false })
   useBoardsStore.setState({ boards: [], currentId: null })
   useRealtimeStore.getState().reset()
 })
@@ -370,5 +379,69 @@ describe('the anonymous guests switch', () => {
     await press(switchNamed('Anonymous guests'))
 
     expect(switchNamed('Anonymous guests')).toHaveAttribute('aria-checked', 'false')
+  })
+})
+
+/**
+ * Who is on this board, which is the owner's own list rather than the room's.
+ *
+ * Every row used to draw `email`, and a guest admitted by a join code has none:
+ * the owner got a blank row with a Remove button beside it, one per guest, all
+ * identical. The endpoint sends a `displayName` that always says something now —
+ * the address for anybody who has one, because who has access is the owner's to
+ * know, and a chosen or generated name for anybody who does not — and this is the
+ * half that draws it.
+ */
+describe('the list of who is on this board', () => {
+  const MEMBERS = [
+    {
+      id: 'm1',
+      email: 'assistant@example.test',
+      displayName: 'assistant@example.test',
+      joinedAt: '2026-07-02T00:00:00.000Z',
+    },
+    {
+      id: 'm2',
+      email: 'analyst@example.test',
+      displayName: 'Nia Adeyemi',
+      joinedAt: '2026-07-03T00:00:00.000Z',
+    },
+    {
+      id: 'g1',
+      email: null,
+      displayName: 'Anonymous Marmot',
+      joinedAt: '2026-07-04T00:00:00.000Z',
+    },
+  ]
+
+  const withMembers = async () => {
+    mockApi.listMembers.mockResolvedValue({ members: MEMBERS })
+    render(<ShareDialog />)
+    await openPanel()
+  }
+
+  it('draws a name for everybody, guest included', async () => {
+    await withMembers()
+
+    // The address for the two accounts that have one, because the owner is
+    // entitled to know who has access to their board.
+    expect(screen.getByText('assistant@example.test')).toBeInTheDocument()
+    // The chosen name where there is one, which is what the room shows too.
+    expect(screen.getByText('Nia Adeyemi')).toBeInTheDocument()
+    // And the guest, who has no address at all. This was the blank row.
+    expect(screen.getByText('Anonymous Marmot')).toBeInTheDocument()
+  })
+
+  it('names the guest in the toast that says they were removed', async () => {
+    await withMembers()
+
+    const rows = screen.getAllByRole('button', { name: 'Remove' })
+    await press(rows[2])
+
+    expect(useToastStore.getState().toasts.map((t) => t.message)).toEqual([
+      'Anonymous Marmot was removed.',
+    ])
+    // The row goes at once; the request waits for Undo to have its chance.
+    expect(screen.queryByText('Anonymous Marmot')).toBeNull()
   })
 })

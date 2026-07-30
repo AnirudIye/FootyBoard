@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { useBoardsStore } from '../../store/boardsStore'
-import { useAuthStore } from '../../store/authStore'
+import { useAuthStore, selectSignedIn } from '../../store/authStore'
 import { EASE_OUT } from '../../theme/motion'
 
 /**
@@ -18,7 +18,7 @@ import { EASE_OUT } from '../../theme/motion'
  * a session in which nothing the coach did was written anywhere.
  */
 export default function SaveStatus() {
-  const signedIn = useAuthStore((s) => s.email)
+  const signedIn = useAuthStore(selectSignedIn)
   const saveState = useBoardsStore((s) => s.saveState)
 
   if (!signedIn) return null

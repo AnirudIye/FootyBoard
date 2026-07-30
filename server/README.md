@@ -31,15 +31,25 @@ In production, skip step 1 and point `DATABASE_URL` at a managed Postgres.
 | --- | --- | --- |
 | GET | `/api/health` | liveness |
 | GET | `/api/auth/security-questions` | the canonical list; the client's dropdown is built from it |
-| POST | `/api/auth/signup` | `{ email, password, acceptedTerms, securityQuestionId, securityAnswer }` — sets session cookie |
-| POST | `/api/auth/login` | `{ email, password }` |
+| POST | `/api/auth/signup` | `{ email, password, acceptedTerms, securityQuestionId, securityAnswer, displayName }` — sets session cookie. `displayName` is **required**: presence falls back to the address without one |
+| POST | `/api/auth/claim` | same body as signup; attaches credentials to the **guest** account the caller already holds, keeping its boards. Refused for an account that already has a password |
+| PATCH | `/api/auth/display-name` | `{ displayName }`; no current password, and open to a guest. A name may not contain `@` |
+| POST | `/api/auth/login` | `{ email, password }` -> `{ user, challenge }`, exactly one of them null. A challenge means **no session was minted**; see Two-step sign-in |
+| POST | `/api/auth/login/2fa` | `{ token, code }` -> `{ user }` and the session cookie. The challenge is spent whether the code is right or wrong |
+| GET | `/api/auth/2fa` | `{ enabled, remainingRecoveryCodes }`; never the codes themselves |
+| POST | `/api/auth/2fa/enroll` | `{ currentPassword }` -> `{ secret, uri }`; writes an **unconfirmed** secret and turns nothing on. Refused for a guest, and for an account that already has it on |
+| POST | `/api/auth/2fa/confirm` | `{ code }` -> `{ recoveryCodes }`; the only path that turns the factor on, and the only place the ten codes are ever said |
+| POST | `/api/auth/2fa/disable` | `{ currentPassword, code }`; clears the secret, the codes and any pending challenge in one transaction. Sessions are deliberately left alone |
+| POST | `/api/auth/2fa/recovery-codes` | `{ currentPassword, code }` -> `{ recoveryCodes }`; replaces all ten in the statement that writes them |
 | POST | `/api/auth/password` | `{ currentPassword, password, securityQuestionId, securityAnswer }` — signs out every other session |
+| POST | `/api/auth/sessions` | `{ currentPassword }` — ends every session and changes nothing else; mints one for the caller and sets the cookie. Refused for a guest, which has no password to check |
 | POST | `/api/auth/forgot` | `{ email }` -> `{ question }`; every address gets one, so this cannot enumerate accounts |
-| POST | `/api/auth/forgot/verify` | `{ email, answer }` -> `{ token }`; rate limited per address and per IP, failures only |
-| POST | `/api/auth/reset` | `{ token, password }`; single use, destroys every session and closes its rooms |
+| POST | `/api/auth/forgot/verify` | `{ email, answer }` -> `{ token, challenge, expiresInMinutes }`, one of the first two null; a factor account gets the challenge and **no reset token**. Rate limited per address and per IP, failures only |
+| POST | `/api/auth/forgot/2fa` | `{ token, code }` -> `{ token, expiresInMinutes }`; spends a `reset`-purpose challenge for the reset token |
+| POST | `/api/auth/reset` | `{ token, password }`; single use, destroys every session and closes its rooms. Never touches the second factor |
 | POST | `/api/auth/logout` | clears the session and closes its rooms |
 | GET | `/api/auth/me` | current user, or 401 |
-| DELETE | `/api/auth/me` | deletes the account; sessions and boards cascade |
+| DELETE | `/api/auth/me` | `{ currentPassword, code? }`; deletes the account, boards cascade |
 | GET | `/api/boards?limit&cursor` | keyset page of the caller's boards |
 | GET | `/api/boards/:id` | one board including its data and its `generation` |
 | POST | `/api/boards` | `{ name, data }` |
@@ -100,6 +110,9 @@ hot paths use index scans, not sequential scans:
 - `idx_boards_user_updated` on `(user_id, updated_at DESC, id DESC)` — one
   composite index serving both halves of the keyset query
 - `idx_sessions_expiry` — the hourly sweep of dead sessions
+- `idx_revocations_at` — both readers of `session_revocations`: an instance
+  catching up asks for rows newer than its watermark, the hourly sweep for rows
+  older than the retention, and nothing ever looks one up by session or user
 
 **Connection pooling** is real now that the database is Postgres. Every
 connection is a TCP socket plus a backend process on the server, both expensive
@@ -168,6 +181,21 @@ Consent enforced only by the panel that asks for it is not enforced.
 database yields no usable cookies, and any session can be revoked by deleting
 one row.
 
+**A session alone is not enough for anything destructive**, and until 2026-07-30
+it was enough for the most destructive thing here. `POST /api/auth/password` and
+`POST /api/auth/sessions` both require the current password, on the argument that
+a session left open on a shared machine must not be enough or the control becomes
+a gift to the person it exists to remove. `DELETE /api/auth/me` asked for none of
+it, while destroying the account and every board under it with no backup behind
+them. It goes through the same `assertCurrentPassword` now, **and through the
+second factor as well when one is on**: leaving it behind the password alone
+would let a stolen session plus a known password destroy everything without the
+attacker ever meeting the factor, which is the hole the recovery path was
+designed to avoid. A **guest** is admitted on the session alone, deliberately and
+by name: that row has no password to confirm, so demanding one would make
+deletion impossible rather than harder, and the privacy policy promises deletion
+to everybody. `src/accountDeletion.test.js` holds all of it.
+
 **Deleting the row is only half of revoking it.** REST reads the row on every
 request, so the next call is refused at once; a WebSocket is authorized once,
 during the handshake, and never again, so it carries on relaying edits in both
@@ -178,6 +206,75 @@ closes the matching sockets in every room it holds. Evictions are matched on the
 session, not on the user, so signing out of one browser does not close another,
 and changing a password does not close the replacement session it just minted.
 `src/sessionRevocation.test.js` holds this across two instances.
+
+**Publishing is not the same as arriving, so the eviction is written down too.**
+An instance whose `LISTEN` connection is down when a revocation is published
+never hears it, and nothing re-checks a socket after the handshake, so it would
+keep serving a session that no longer exists anywhere. Every deletion therefore
+leaves a `session_revocations` row behind, written in the same statement as the
+delete — one data-modifying CTE, so neither half can commit without the other —
+and each instance catches up on the rows newer than its in-memory watermark when
+its listener reopens. The watermark is not durable on purpose: sockets do not
+survive a restart, so an instance that was down at revocation time re-authorizes
+everything from scratch and has nothing to catch up on. Rows are swept hourly at
+the session TTL plus a day. `src/durableEviction.test.js` holds it by taking the
+far instance's connections away and reviving them.
+
+**Ending every session is its own endpoint**, not only a side effect of changing
+a password. `POST /api/auth/sessions` takes the current password, destroys every
+session for the account, and mints one for the browser that asked, so somebody
+who thinks a session has been taken can throw it out without inventing a new
+password. The current password is what makes it useless to whoever took the
+session; the replacement is what stops it locking its owner out. The presence
+check, the guest refusal and the comparison are one `assertCurrentPassword` that
+this and `/password` both call, because two spellings of that rule means one of
+them drifts weaker. Held by `src/signOutEverywhere.test.js`.
+
+**Two-step sign-in** is TOTP (RFC 6238, SHA-1, 30 second period, six digits, one
+step of window), hand-written on `node:crypto` in `src/totp.js` against the RFC's
+own test vectors rather than pulled in as a dependency. The secret is **sealed
+with `encrypt()`, not hashed**, and that is forced rather than chosen: the server
+has to compute the same HMAC the phone computes, so scrypt is structurally
+unavailable here in a way it is not for the password or the security answer. A
+stolen database plus a stolen `ENCRYPTION_KEY` therefore yields working factors,
+which is inherent to TOTP and is why the recovery codes are hashed as well.
+
+`users.totp_confirmed_at` is the switch, never `users.totp_secret`. A secret with
+a NULL confirmation is an enrollment somebody abandoned, and reading the secret
+as "on" would turn that into a lockout. Every login path and `publicUser`'s
+`twoFactorEnabled` read the confirmation column.
+
+**A correct password buys a row in `auth_challenges` and nothing else.** Five
+minute TTL, single use, `purpose` of `login` or `reset` compared inside the
+claiming statement so a factor met while recovering cannot sign anybody in. It is
+returned in the response **body and never in a cookie**: a cookie would ride on
+every request including the board routes, and one handler that forgot to
+distinguish the two would be an authentication bypass. The cost is that reloading
+mid sign-in starts again, which is right for a five minute step.
+
+**The claim is the check, twice over.** A TOTP code moves `users.totp_last_step`
+forward in one guarded `UPDATE`, so the same code cannot be spent twice inside
+its ninety seconds; a recovery code moves `used_at` off NULL in one guarded
+`UPDATE`, so it works exactly once. The challenge itself is claimed **before** the
+code is compared, so one challenge is worth one guess: mistype it and you enter
+your password again. Ten recovery codes, sixteen characters from a 24 letter
+alphabet, stored as SHA-256 (about 2^72.7, so a memory-hard KDF would buy a
+property `randomInt` already gives), written in the same transaction that sets
+the confirmation so there is no ordering in which an account has the factor on
+and no way back in.
+
+Code checks are limited by a read-in-front-of-the-charge pair keyed on the user
+id and on the IP, charging failures only: five per fifteen minutes per account,
+twenty per ten minutes per network. Charging successes would lock somebody out
+for signing in five times on a flaky connection; charging failures with nothing
+reading first would refuse the wrong guesses and wave the right one through.
+
+**Losing both the authenticator and every unused recovery code needs an
+operator.** That is the accepted cost of having no mailer, and today it means a
+`psql` statement:
+`UPDATE users SET totp_secret = NULL, totp_confirmed_at = NULL, totp_last_step = NULL WHERE email = '…';`
+followed by `DELETE FROM recovery_codes WHERE user_id = '…';`. `src/twoFactorEnroll.test.js`
+(:8817) and `src/twoFactorLogin.test.js` (:8818) hold the whole feature.
 
 **Login responses do not leak account existence**: a wrong password and an
 unknown address both return `Incorrect email or password.`
@@ -220,7 +317,12 @@ Server-side guarantees:
 Board *names* are stored unencrypted, deliberately, so the picker can sort
 without decrypting every row.
 
-The notification bus does not buffer. Losing the `LISTEN` connection is retried
-every two seconds, and ops published during the gap reach this instance's own
-sockets and are logged as unpublished rather than held for replay. Rooms
-reconverge on the next whole-board `replaced`, not on their own.
+The notification bus does not buffer **ops**. Losing the `LISTEN` connection is
+retried every two seconds, and ops published during the gap reach this
+instance's own sockets and are logged as unpublished rather than held for
+replay. Rooms reconverge on the next whole-board `replaced`, not on their own.
+Replaying an op needs a per-board sequence number and a bounded window, neither
+of which exists.
+
+Session evictions are the deliberate exception, because losing one costs a
+security guarantee rather than convergence; see `session_revocations` above.

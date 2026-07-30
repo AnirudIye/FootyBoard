@@ -3,6 +3,7 @@ import type {
   Team,
   Token,
   Drawing,
+  DrawingType,
   Frame,
   ViewSettings,
   CustomFormation,
@@ -26,18 +27,24 @@ import { emit, emitFinal, emitReplaced, runAsRemote } from '../lib/realtime/brid
 import { applyOp } from '../lib/realtime/apply'
 import type { EntityOp } from '../lib/realtime/protocol'
 
-export type ToolMode =
-  | 'select'
-  | 'pen'
-  | 'arrow'
-  | 'dashedArrow'
-  | 'curveArrow'
-  | 'curvePass'
-  | 'line'
-  | 'zoneRect'
-  | 'zoneEllipse'
-  | 'zonePoly'
-  | 'text'
+/**
+ * What the pointer is armed to do: draw one kind of thing, or select.
+ *
+ * Derived from `DrawingType` rather than restating it, which it did until a
+ * triangle needed adding to both. The two lists had been identical since the
+ * board was written, and being identical was doing real work: `DrawingToolbar`
+ * hands a narrowed `ToolMode` to `isZone`, and `useDrawGesture` puts one
+ * straight into a draft's `type`, so both call sites only compile while every
+ * tool that is not `select` is a drawing kind. A copy that the compiler holds
+ * flush against its original is still a copy — it drifts the moment somebody
+ * adds to one and the type error lands in a file they were not editing, which
+ * reads as an unrelated breakage rather than as the omission it is.
+ *
+ * A tool that genuinely is not a drawing kind belongs in this union beside
+ * `'select'`. That is the extension point, and it is why this is a union rather
+ * than the bare alias.
+ */
+export type ToolMode = DrawingType | 'select'
 
 /**
  * The muted, colour-blind-safe team pair. Defined in `src/theme/teamColors.ts`
@@ -57,7 +64,6 @@ const defaultView: ViewSettings = {
   lineColor: '#F2F6F1',
   overlayGrid: false,
   pitchTheme: 'dark',
-  snap: false,
 }
 
 interface BoardData {

@@ -28,9 +28,25 @@ const variants: Record<Variant, string> = {
 export const buttonClass = (variant: Variant = 'secondary', className = '') =>
   `${base} ${variants[variant]} ${className}`
 
+/**
+ * Press feedback, and deliberately no hover motion.
+ *
+ * There was a one-pixel hover lift here. This is the shared button, so it fired
+ * on the toolbar row, the frame strip controls, the share dialog, the board
+ * picker, the auth pages and every popover trigger — a coach's pointer crosses
+ * the toolbar dozens of times a session, and each crossing set a spring running
+ * on something nobody was looking at. The `hover:` colour change in `base` is
+ * the affordance; this is the feedback.
+ *
+ * `y: 0` went with it. It was only there to cancel the lift.
+ *
+ * The spring stays hand-typed rather than becoming `SPRING_SNAP`. The two are not
+ * the same spring — `{bounce, duration}` and `{stiffness, damping, mass}` solve
+ * to different curves here — so swapping it changes the feel of every press in
+ * the product, which is a separate decision from removing a hover.
+ */
 export const pressMotion = {
-  whileHover: { y: -1 },
-  whileTap: { scale: 0.96, y: 0 },
+  whileTap: { scale: 0.96 },
   transition: { type: 'spring', stiffness: 520, damping: 30, mass: 0.5 },
 } as const
 

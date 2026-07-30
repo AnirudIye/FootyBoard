@@ -4,6 +4,7 @@ import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { api } from '../lib/api'
 import type { BoardSummary } from '../lib/api'
+import { SCHEMA_VERSION } from '../lib/persistence'
 import type { PersistedBoard } from '../lib/persistence'
 import { flushSave } from '../lib/boardSync'
 import { AppError } from '../lib/errors'
@@ -14,6 +15,15 @@ import { useAuthStore } from '../store/authStore'
 import { useBoardsStore } from '../store/boardsStore'
 import { useBoardStore, defaultPersistedBoard } from '../store/boardStore'
 import { useToastStore } from '../store/toastStore'
+
+/**
+ * A signed-in account, as the store now holds it.
+ *
+ * The store used to keep `email: string | null` and use it as the signed-in flag
+ * too. An account can exist without an address now — a guest admitted by a join
+ * code — so the flag is the presence of a user and the address is a field on it.
+ */
+const signedInUser = { id: 'u1', email: 'coach@example.test', displayName: null, createdAt: '2026-07-01T00:00:00.000Z', isGuest: false, twoFactorEnabled: false }
 
 /**
  * Creating a board must not be able to destroy the one already open.
@@ -157,7 +167,7 @@ beforeEach(() => {
   useBoardsStore.getState().reset()
   useBoardStore.getState().initDefaultBoard()
   useToastStore.setState({ toasts: [] })
-  useAuthStore.setState({ email: 'coach@example.test', ready: true })
+  useAuthStore.setState({ user: signedInUser, ready: true })
 })
 
 afterEach(() => {
@@ -165,7 +175,7 @@ afterEach(() => {
   // Harness is a React update nothing is wrapping.
   cleanup()
   vi.useRealTimers()
-  useAuthStore.setState({ email: null, ready: false })
+  useAuthStore.setState({ user: null, ready: false })
 })
 
 describe('creating a board while another one is open', () => {
@@ -317,7 +327,15 @@ describe('an edit that defers its undo step', () => {
  * user action at all.
  */
 describe('a stored board this version cannot read', () => {
-  const unreadable = { version: 1, teams: [], tokens: [] }
+  /**
+   * A truncated row: the current version, and most of the board missing.
+   *
+   * It used to be `{ version: 1, ... }`, which read as "an old board" and stopped
+   * being true the day the guard learned to bring old boards forward. These tests
+   * are about the dead end rather than about versions, so the payload says so on
+   * its face: unreadable because half of it is not there.
+   */
+  const unreadable = { version: SCHEMA_VERSION, teams: [], tokens: [] }
 
   /** The board list, and which of its boards come back readable. */
   const listing = (boards: BoardSummary[], readable: (id: string) => boolean) => {
@@ -464,7 +482,7 @@ describe('a stored board this version cannot read', () => {
  */
 describe('the indicator for a signed-out guest', () => {
   it('renders nothing', () => {
-    useAuthStore.setState({ email: null, ready: true })
+    useAuthStore.setState({ user: null, ready: true })
     useBoardsStore.setState({ saveState: 'blocked' })
 
     const { container } = render(<SaveStatus />)

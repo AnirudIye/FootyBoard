@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "verify:deployed": "node scripts/check-deployed-headers.mjs"
   },
   "dependencies": {
     "@fontsource/geist-sans": "^5.3.0",

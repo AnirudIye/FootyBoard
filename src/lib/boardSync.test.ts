@@ -3,6 +3,7 @@ import type { Mock } from 'vitest'
 import { api } from './api'
 import { AppError, ConflictError } from './errors'
 import { loadBoard, flushSave } from './boardSync'
+import { SCHEMA_VERSION } from './persistence'
 import type { PersistedBoard } from './persistence'
 import { useBoardStore, defaultPersistedBoard } from '../store/boardStore'
 import { useBoardsStore } from '../store/boardsStore'
@@ -198,6 +199,92 @@ describe('a write the room has already moved past', () => {
 
     expect(await flushSave('board-1')).toBe(false)
     expect(useBoardsStore.getState().saveState).toBe('offline')
+  })
+})
+
+/**
+ * Opening a board that was stored by an older build.
+ *
+ * The guard used to compare the version for equality, so bumping
+ * `SCHEMA_VERSION` sent every existing row down the "a board that cannot be
+ * opened" path at once. These drive the real loader, because the guard accepting
+ * an old payload is only half of it: the reader has to bring it forward before
+ * the store takes it, or the board opens carrying fields this version does not
+ * know and writes them straight back.
+ */
+describe('a board stored by an older version', () => {
+  /** A version 1 row: no `bench`, and a `view` still carrying `snap`. */
+  const storedAtV1 = () => {
+    const { bench: _bench, ...board } = defaultPersistedBoard()
+    return {
+      ...board,
+      version: 1,
+      view: { ...board.view, snap: true },
+      frames: [{ id: 'old', label: 'old', tokens: {} }],
+    }
+  }
+
+  it('opens it, rather than sending it to the dead end', async () => {
+    serves(storedAtV1(), 3)
+    useBoardsStore.setState({ boards: [], currentId: 'board-1', saveState: 'idle' })
+
+    expect(await loadBoard('board-1', 'open')).toBe(true)
+    expect(heldTag()).toBe('old')
+    expect(useBoardStore.getState().boardId).toBe('board-1')
+    expect(useBoardsStore.getState().saveState).not.toBe('blocked')
+  })
+
+  it('holds it upgraded, so the next save writes a current board', async () => {
+    // The row stays at version 1 until something writes to it. That is the
+    // intended cost: the upgrade is in memory, and the next save is what makes
+    // it durable.
+    serves(storedAtV1(), 3)
+    // Asserted, not assumed: without it a refused load leaves the previous
+    // board in the store and every assertion below passes on that instead.
+    expect(await loadBoard('board-1', 'open')).toBe(true)
+
+    const written = useBoardStore.getState().getPersistable()
+    expect(written.version).toBe(SCHEMA_VERSION)
+    expect(written.bench).toEqual([])
+    expect('snap' in written.view).toBe(false)
+
+    accepts(3)
+    expect(await flushSave('board-1')).toBe(true)
+    expect((lastWrite()[2] as PersistedBoard).version).toBe(SCHEMA_VERSION)
+  })
+
+  it('adopts one a peer replaced the board with', async () => {
+    // `adopt` is the other way in, and it must not be the strict one: a peer
+    // still on an older bundle replaces the board with a payload it wrote.
+    await openAt(3, 'mine')
+    serves(storedAtV1(), 4)
+
+    expect(await loadBoard('board-1', 'adopt')).toBe(true)
+    expect(heldTag()).toBe('old')
+    expect('snap' in useBoardStore.getState().view).toBe(false)
+  })
+
+  it('never upgrades a board it is refusing to write to', async () => {
+    // A board from a newer build is refused, and the refusal has to happen
+    // before anything is brought forward: an upgraded stand-in in the store,
+    // over a board whose contents this version does not understand, is how the
+    // "could not read this" case turns into "this is gone".
+    await openAt(3, 'mine')
+    serves({ ...storedAtV1(), version: SCHEMA_VERSION + 1 }, 4)
+
+    expect(await loadBoard('board-1', 'adopt')).toBe(false)
+    expect(heldTag()).toBe('mine')
+  })
+
+  it('refuses one with no generation, old version or not', async () => {
+    // The other refusal ahead of the upgrade. A board this client cannot state a
+    // base for is one it can never write, so being able to read it is worth
+    // nothing.
+    await openAt(3, 'mine')
+    mockApi.getBoard.mockResolvedValue({ board: { id: 'board-1', data: storedAtV1() } })
+
+    expect(await loadBoard('board-1', 'adopt')).toBe(false)
+    expect(heldTag()).toBe('mine')
   })
 })
 

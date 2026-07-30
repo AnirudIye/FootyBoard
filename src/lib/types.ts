@@ -40,6 +40,7 @@ export type DrawingType =
   | 'curvePass'
   | 'zoneRect'
   | 'zoneEllipse'
+  | 'zoneTriangle'
   | 'zonePoly'
   | 'text'
 
@@ -78,7 +79,6 @@ export interface ViewSettings {
   lineColor: string
   overlayGrid: boolean
   pitchTheme: 'dark' | 'light'
-  snap: boolean
 }
 
 export interface CustomFormation {

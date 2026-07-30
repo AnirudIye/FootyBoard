@@ -1,6 +1,6 @@
 import { Group, Line, Rect, Ellipse, Text, Circle } from 'react-konva'
 import { useBoardStore } from '../../store/boardStore'
-import { arrowHead, quadraticPoints, bboxOf } from '../../lib/geometry'
+import { arrowHead, quadraticPoints, bboxOf, triangleCorners } from '../../lib/geometry'
 import type { Drawing } from '../../lib/types'
 import type { PitchMapping } from './pitchMapping'
 
@@ -160,13 +160,28 @@ export default function DrawingShape({ drawing: d, mapping: m, selected }: Props
       )
     }
 
-    case 'zonePoly':
+    // Both are a closed run of corners filled at the zone opacity, and the only
+    // difference is where the corners come from: a polygon stores every one of
+    // them, a triangle stores the drag and grows its third. Sharing the branch
+    // rather than copying six lines of `Line` props is the point — a fill or a
+    // hit-area that only two of the three zones agreed on would be a bug nobody
+    // would think to look for.
+    case 'zoneTriangle':
+    case 'zonePoly': {
+      const corners =
+        d.type === 'zoneTriangle'
+          ? triangleCorners(mapped[0], mapped[1], mapped[2], mapped[3])
+          : mapped
       return (
         <Group>
-          <Line points={mapped} closed fill={d.color} opacity={d.fillOpacity ?? 0.18} {...common} />
+          <Line points={corners} closed fill={d.color} opacity={d.fillOpacity ?? 0.18} {...common} />
+          {/* Drawn from `mapped`, not from `corners`, and correct either way:
+              the triangle is inscribed in the drag it was made with, so the two
+              have the same bounds. */}
           {selectionOutline()}
         </Group>
       )
+    }
 
     case 'text': {
       const [x, y] = mapped

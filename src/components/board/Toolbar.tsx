@@ -15,7 +15,7 @@ import SaveStatus from './SaveStatus'
 import ShareDialog from './ShareDialog'
 import PresenceStack from './PresenceStack'
 import { useRealtimeStore } from '../../store/realtimeStore'
-import { useAuthStore } from '../../store/authStore'
+import { useAuthStore, selectSignedIn } from '../../store/authStore'
 import { toast } from '../../store/toastStore'
 import { toUserMessage } from '../../lib/errors'
 import type { PitchView, PitchKind, Side } from '../../lib/types'
@@ -148,7 +148,7 @@ export default function Toolbar() {
   const canRedo = useBoardStore((s) => s.history.future.length > 0)
 
   const locked = useRealtimeStore((s) => s.locked)
-  const email = useAuthStore((s) => s.email)
+  const signedIn = useAuthStore(selectSignedIn)
 
   const activeTeam = useBoardStore((s) => s.activeTeam)
   const setActiveTeam = useBoardStore((s) => s.setActiveTeam)
@@ -266,7 +266,7 @@ export default function Toolbar() {
               ends: one hands out a code, the other takes one. Hidden from a
               guest for the same reason ShareDialog is: /join only redirects
               them to /login, so the button's whole outcome is a dead end. */}
-          {email && (
+          {signedIn && (
             <Link
               to="/join"
               className="rounded border border-rule bg-surface px-3 py-1.5 text-[13px] leading-none

@@ -14,6 +14,15 @@ import { useRealtimeStore } from '../store/realtimeStore'
 import { useToastStore } from '../store/toastStore'
 
 /**
+ * A signed-in account, as the store now holds it.
+ *
+ * The store used to keep `email: string | null` and use it as the signed-in flag
+ * too. An account can exist without an address now — a guest admitted by a join
+ * code — so the flag is the presence of a user and the address is a field on it.
+ */
+const signedInUser = { id: 'u1', email: 'coach@example.com', displayName: null, createdAt: '2026-07-01T00:00:00.000Z', isGuest: false, twoFactorEnabled: false }
+
+/**
  * What the board says about itself once it stops being in step with the room.
  *
  * Two defects, one condition. Both ended with the top bar reporting a healthy
@@ -84,7 +93,7 @@ function Harness() {
 
 /** Signed in, with a board open, which is the only state that opens a room. */
 const openRoom = async () => {
-  useAuthStore.setState({ email: 'coach@example.com', ready: true })
+  useAuthStore.setState({ user: signedInUser, ready: true })
   useBoardsStore.setState({ currentId: 'board-1', saveState: 'saved' })
   render(<Harness />)
   await act(async () => {
@@ -129,7 +138,7 @@ const holdingBoardInRoom = async () => {
   mockApi.getBoard.mockResolvedValue({
     board: { id: 'board-1', data: boardWithWork(), generation: 1 },
   })
-  useAuthStore.setState({ email: 'coach@example.com', ready: true })
+  useAuthStore.setState({ user: signedInUser, ready: true })
   useBoardsStore.setState({ currentId: 'board-1', saveState: 'saved' })
   await act(async () => {
     expect(await loadBoard('board-1', 'open')).toBe(true)
@@ -153,7 +162,7 @@ afterEach(() => {
   useRealtimeStore.getState().reset()
   useBoardsStore.setState({ saveState: 'idle', currentId: null })
   useBoardStore.getState().initDefaultBoard()
-  useAuthStore.setState({ email: null })
+  useAuthStore.setState({ user: null })
   useToastStore.setState({ toasts: [] })
 })
 

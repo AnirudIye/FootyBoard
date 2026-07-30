@@ -56,7 +56,6 @@ export const testBoard = (overrides = {}) => ({
     lineColor: '#F2F6F1',
     overlayGrid: false,
     pitchTheme: 'dark',
-    snap: false,
   },
   customFormations: [],
   ...overrides,

@@ -8,6 +8,11 @@ import AuthPage from './components/auth/AuthPage'
 import ForgotPasswordPage from './components/auth/ForgotPasswordPage'
 import ResetPasswordPage from './components/auth/ResetPasswordPage'
 import ChangePasswordPage from './components/auth/ChangePasswordPage'
+import TwoFactorPage from './components/auth/TwoFactorPage'
+import DeleteAccountPage from './components/auth/DeleteAccountPage'
+import DisplayNamePage from './components/auth/DisplayNamePage'
+import SignOutEverywherePage from './components/auth/SignOutEverywherePage'
+import ClaimPage from './components/auth/ClaimPage'
 import PrivacyPolicy from './components/legal/PrivacyPolicy'
 import TermsOfService from './components/legal/TermsOfService'
 
@@ -46,6 +51,31 @@ export const routes: RouteObject[] = [
       { path: '/forgot', element: <ForgotPasswordPage /> },
       { path: '/reset', element: <ResetPasswordPage /> },
       { path: '/password', element: <ChangePasswordPage /> },
+      // The second factor. A page beside `/password` rather than a panel in the
+      // account popover, because the moment it exists for is ten recovery codes
+      // on screen that no endpoint will ever hand back, and 236px is not where
+      // anybody copies those down. Closed to a guest, like `/password`: a factor
+      // sits behind the current password and a guest has none.
+      { path: '/2fa', element: <TwoFactorPage /> },
+      // Deleting the account. A page for the reason `/sessions` is one: it now
+      // takes the current password, and a code when the factor is on, and a
+      // native confirm cannot collect either. Open to a guest, unlike
+      // `/password`: nothing here is a credential change, and the privacy policy
+      // promises deletion to everybody without excepting an account that has no
+      // address.
+      { path: '/delete-account', element: <DeleteAccountPage /> },
+      // What a room calls you. Open to a guest, unlike `/password`: a display
+      // name is not a credential, and a guest with no address is exactly who
+      // gains most from having one.
+      { path: '/name', element: <DisplayNamePage /> },
+      // Ending every session without changing the password. A page rather than a
+      // control on the board, because it closes the caller's own room, and a
+      // board still mounted reports that as a session that has ended.
+      { path: '/sessions', element: <SignOutEverywherePage /> },
+      // Where a guest turns the account their join code made into one they can
+      // sign back into. Not `/signup`: that would make a second account and
+      // leave their boards on the first.
+      { path: '/claim', element: <ClaimPage /> },
       { path: '/privacy', element: <PrivacyPolicy /> },
       { path: '/terms', element: <TermsOfService /> },
       {

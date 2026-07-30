@@ -53,8 +53,72 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export interface ApiUser {
   id: string
-  email: string
+  /**
+   * Null for a guest, which genuinely has none.
+   *
+   * A guest account is created by redeeming a join code without signing in, so
+   * there is no address to store and no password either. Nullable here rather
+   * than a separate type, because every other field means the same thing for both
+   * kinds and two types would have to be kept in step by hand.
+   */
+  email: string | null
+  /**
+   * The name other people in a room are told, or null.
+   *
+   * Required at signup and when a guest claims their account, so every account
+   * made from now on has one. Null means an account that predates the field, and
+   * the consequence is real rather than cosmetic: until they set one, the room
+   * goes on calling them by their address. That is known gap 2 in the handoff, and
+   * the reason `/name` exists.
+   *
+   * Nullable rather than defaulted to the address here, deliberately. What the
+   * room is told is the server's decision, made in one place, and a fallback
+   * written on this side too would be a second copy of that rule in the one
+   * place it cannot be enforced.
+   */
+  displayName: string | null
   createdAt: string
+  /** Whether this account was handed out by a join code rather than created. */
+  isGuest: boolean
+  /**
+   * Whether signing in to this account needs a code as well as the password.
+   *
+   * Derived server-side from `totp_confirmed_at` and **never** from the presence
+   * of a secret. An account can hold a sealed secret with the factor still off,
+   * because that is what an enrollment somebody started and abandoned looks like,
+   * and reporting it as on would show a locked-looking account page for a factor
+   * no authenticator could satisfy.
+   *
+   * Read, never written: turning it on is `/2fa`, and this field is what that
+   * page and the account menu render from.
+   */
+  twoFactorEnabled: boolean
+}
+
+/**
+ * The thing a correct password buys when the account has a second factor.
+ *
+ * It is not a session and deliberately not a cookie: it comes back in the
+ * response body and lives only in the memory of the page asking for the code, so
+ * reloading mid sign-in means starting again. `expiresInMinutes` comes from the
+ * server rather than being written down here, because the TTL is the server's
+ * and a copy on this side is a copy that drifts.
+ */
+export interface LoginChallenge {
+  token: string
+  expiresInMinutes: number
+}
+
+/**
+ * What `POST /api/auth/login` answers, with exactly one of the two null.
+ *
+ * Both keys always present rather than a union to narrow, which is the shape
+ * `getShare` already uses. It also means `const { user } = await api.logIn(...)`
+ * goes on reading for every account that has no factor.
+ */
+export interface LoginResult {
+  user: ApiUser | null
+  challenge: LoginChallenge | null
 }
 
 /**
@@ -92,9 +156,21 @@ export interface ShareMeta {
   createdAt: string
 }
 
+/**
+ * Somebody with access to a board, as the owner is told about them.
+ *
+ * The same division the room's `Peer` makes, and for the same reason: `email` is
+ * what the server chose to disclose and **`displayName` is the only field to
+ * render**. They are not interchangeable here either. `email` is null for a guest,
+ * which is what used to draw a blank row with a Remove button beside it, while
+ * `displayName` always says something: the address when there is one, because the
+ * owner is entitled to know who has access to their board, and a chosen or
+ * generated name when there is not.
+ */
 export interface BoardMember {
   id: string
-  email: string
+  email: string | null
+  displayName: string
   joinedAt: string
 }
 
@@ -103,12 +179,20 @@ export const api = {
   securityQuestions: () =>
     request<{ questions: SecurityQuestion[] }>('/auth/security-questions'),
 
+  /**
+   * `displayName` is not optional, here or on the server.
+   *
+   * It is what the room calls this person, and the alternative the relay falls
+   * back on is their email address. Asking at signup is what makes a new account
+   * safe without anybody having to think about it later.
+   */
   signUp: (
     email: string,
     password: string,
     acceptedTerms: boolean,
     securityQuestionId: string,
     securityAnswer: string,
+    displayName: string,
   ) =>
     request<{ user: ApiUser }>('/auth/signup', {
       method: 'POST',
@@ -118,13 +202,87 @@ export const api = {
         acceptedTerms,
         securityQuestionId,
         securityAnswer,
+        displayName,
       }),
     }),
 
+  /**
+   * A password, and then either a user or a challenge.
+   *
+   * A 200 either way, which is what lets a challenge reach the page at all:
+   * `request` throws for every non-2xx, so a challenge delivered as an error
+   * would arrive as a sentence with nothing to spend. `challenge` non-null means
+   * no session was minted and the second step is owed.
+   */
   logIn: (email: string, password: string) =>
-    request<{ user: ApiUser }>('/auth/login', {
+    request<LoginResult>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
+    }),
+
+  /**
+   * The second step of signing in: the challenge, and a code from the
+   * authenticator app or one of the recovery codes.
+   *
+   * **The challenge is spent whether the code is right or wrong**, because the
+   * server claims the row before comparing, so one challenge buys exactly one
+   * guess. A caller that catches the failure must send the person back to the
+   * password step rather than offering another go at the same token, which would
+   * fail every time however right the code was.
+   *
+   * The account is named by the challenge row and never by anything in this
+   * body, so there is no shape of this call that signs somebody else in.
+   */
+  completeTwoFactor: (token: string, code: string) =>
+    request<{ user: ApiUser }>('/auth/login/2fa', {
+      method: 'POST',
+      body: JSON.stringify({ token, code }),
+    }),
+
+  /**
+   * Give a guest account real credentials, keeping everything it already holds.
+   *
+   * Deliberately not `signUp`. That would create a second account and leave the
+   * guest's boards and memberships behind on the first, which is the whole
+   * failure this exists to prevent. The server refuses it for an account that
+   * already has a password, because no current password is asked for here.
+   */
+  claim: (
+    email: string,
+    password: string,
+    acceptedTerms: boolean,
+    securityQuestionId: string,
+    securityAnswer: string,
+    displayName: string,
+  ) =>
+    request<{ user: ApiUser }>('/auth/claim', {
+      method: 'POST',
+      body: JSON.stringify({
+        email,
+        password,
+        acceptedTerms,
+        securityQuestionId,
+        securityAnswer,
+        displayName,
+      }),
+    }),
+
+  /**
+   * Set or change the name other people in a room see.
+   *
+   * PATCH, because it changes one field of an account that already exists, which
+   * is what the two owner switches on a board use it for. No current password:
+   * this is not a credential, and a guest has none to give while being exactly
+   * who benefits most from having a name at all.
+   *
+   * The room hears it on the next connection rather than immediately, because the
+   * relay reads the name when a socket is authorized. Worth knowing before
+   * wondering why a rename did not appear on a board that is already open.
+   */
+  setDisplayName: (displayName: string) =>
+    request<{ user: ApiUser }>('/auth/display-name', {
+      method: 'PATCH',
+      body: JSON.stringify({ displayName }),
     }),
 
   logOut: () => request<void>('/auth/logout', { method: 'POST' }),
@@ -149,6 +307,103 @@ export const api = {
     }),
 
   /**
+   * End every session on this account and keep the password.
+   *
+   * The control for somebody who thinks a session has been taken. Until this
+   * existed the only way to end them all was `changePassword`, which made them
+   * invent a new password on the way, so the price of throwing an intruder out
+   * was a credential change nobody wanted.
+   *
+   * The current password is what makes it useless to the intruder, so it is the
+   * whole body. Every session goes, including this browser's, and the response
+   * sets the cookie for the one the server mints to replace it: the session
+   * changes, the account does not.
+   *
+   * No store action stands behind this, deliberately. Nothing in `authStore`
+   * changes, because the same person stays signed in, and a passthrough action
+   * would be a second name for one call. `changePassword` is called directly for
+   * exactly the same reason.
+   */
+  signOutEverywhere: (currentPassword: string) =>
+    request<{ ok: true }>('/auth/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword }),
+    }),
+
+  /**
+   * Whether the factor is on, and how many ways back in are left.
+   *
+   * `enabled` is already on the user object, so this exists for the count. It is
+   * the part that has to be visible: an account with the factor on and no unused
+   * recovery codes is one lost phone away from needing an operator, and the
+   * `/2fa` page can only say so if it can see it.
+   *
+   * The codes themselves are never in this answer. They are said once, by
+   * `confirmTwoFactorEnrollment` and `regenerateRecoveryCodes`, and a status call
+   * that could hand them back would give them to anybody holding a session.
+   */
+  twoFactorStatus: () =>
+    request<{ enabled: boolean; remainingRecoveryCodes: number }>('/auth/2fa'),
+
+  /**
+   * Step one of turning it on: a secret to put in an authenticator app.
+   *
+   * The current password is required, and it is the same door `changePassword`
+   * and `signOutEverywhere` go through: a session left open on a shared machine
+   * must not be enough to attach somebody else's authenticator, which would be a
+   * lockout rather than a nuisance. **A guest is refused by that same door**, with
+   * `field: 'currentPassword'` and a message about having no password, which is
+   * the signal to send them to `/claim` rather than to show them a password box.
+   *
+   * Nothing is on yet when this returns. Only `confirmTwoFactorEnrollment`
+   * turns it on, so an enrollment abandoned here leaves a secret nothing reads.
+   */
+  beginTwoFactorEnrollment: (currentPassword: string) =>
+    request<{ secret: string; uri: string }>('/auth/2fa/enroll', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword }),
+    }),
+
+  /**
+   * Step two: prove the app is generating this account's codes, and turn it on.
+   *
+   * The ten recovery codes come back here and from `regenerateRecoveryCodes`, and
+   * from nowhere else, ever. Whatever this resolves is the only copy the person
+   * will be shown, so a caller that drops it has thrown away the account's way
+   * back in.
+   */
+  confirmTwoFactorEnrollment: (code: string) =>
+    request<{ recoveryCodes: string[] }>('/auth/2fa/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+
+  /**
+   * Turn the factor off. Both the password and a live code, because a disable
+   * behind the password alone would make the whole feature exactly as strong as
+   * the password. A recovery code works in place of the app's code.
+   *
+   * Sessions are deliberately left alone: nothing about their authority changed,
+   * and the person has just proved both factors on this request.
+   */
+  disableTwoFactor: (currentPassword: string, code: string) =>
+    request<{ ok: true }>('/auth/2fa/disable', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, code }),
+    }),
+
+  /**
+   * Replace all ten recovery codes, invalidating the previous ten in the same
+   * statement. Same body as the disable and for the same reason: a fresh set of
+   * ten codes is a set of ten new ways into the account.
+   */
+  regenerateRecoveryCodes: (currentPassword: string, code: string) =>
+    request<{ recoveryCodes: string[] }>('/auth/2fa/recovery-codes', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, code }),
+    }),
+
+  /**
    * Step one of recovery: which question guards this address.
    *
    * Every address gets one back, including addresses with no account, so this
@@ -161,11 +416,36 @@ export const api = {
       body: JSON.stringify({ email }),
     }),
 
-  /** Step two: the answer, in exchange for a short-lived single-use token. */
+  /**
+   * Step two: the answer, in exchange for a short-lived single-use token, or for
+   * a challenge when the account has a second factor.
+   *
+   * Exactly one of `token` and `challenge` is non-null, the same shape `logIn`
+   * uses. `expiresInMinutes` describes the **reset token** and is on the response
+   * either way, so the copy on the page does not have to guard a field that
+   * appears and disappears; the challenge carries its own, shorter one.
+   *
+   * The factor is demanded here rather than in front of `resetPassword`, because
+   * the reset token is the credential: issuing one and then guarding its use
+   * would put the code in front of something already handed out.
+   */
   verifySecurityAnswer: (email: string, answer: string) =>
-    request<{ token: string; expiresInMinutes: number }>('/auth/forgot/verify', {
+    request<{ token: string | null; challenge: LoginChallenge | null; expiresInMinutes: number }>(
+      '/auth/forgot/verify',
+      { method: 'POST', body: JSON.stringify({ email, answer }) },
+    ),
+
+  /**
+   * Step two and a half: the code, in exchange for the reset token.
+   *
+   * The same one-guess-per-challenge rule `completeTwoFactor` carries, and the
+   * same consequence for a caller: a refusal here means starting the recovery
+   * again from the address, not another attempt on this token.
+   */
+  completeRecoveryTwoFactor: (token: string, code: string) =>
+    request<{ token: string; expiresInMinutes: number }>('/auth/forgot/2fa', {
       method: 'POST',
-      body: JSON.stringify({ email, answer }),
+      body: JSON.stringify({ token, code }),
     }),
 
   /** Step three. The token works once and signs every session out. */
@@ -177,7 +457,28 @@ export const api = {
 
   me: () => request<{ user: ApiUser }>('/auth/me'),
 
-  deleteAccount: () => request<void>('/auth/me', { method: 'DELETE' }),
+  /**
+   * Delete the account and, by cascade, every board saved under it.
+   *
+   * **The current password is required, and a code as well when the factor is
+   * on**, which is the same door `changePassword` and `signOutEverywhere` go
+   * through and for the same reason: a session left open on a shared machine
+   * must not be enough to do the one thing nothing can undo. Until 2026-07-30
+   * this call carried no body at all.
+   *
+   * Both are optional *here* rather than required, because a **guest** account
+   * has no password to send and the server lets one through on the session
+   * alone. That is not a hole: `verifyPassword` answers false for a guest's null
+   * salt by design, so demanding a password would make deletion impossible for
+   * that account rather than merely harder, and the privacy policy promises
+   * deletion to everybody. The server decides which rule applies from the row,
+   * never from what this sends.
+   */
+  deleteAccount: (currentPassword?: string, code?: string) =>
+    request<void>('/auth/me', {
+      method: 'DELETE',
+      body: JSON.stringify({ currentPassword, code }),
+    }),
 
   listBoards: (limit = 20, cursor?: string) =>
     request<{ boards: BoardSummary[]; nextCursor: string | null }>(
@@ -336,5 +637,20 @@ export const api = {
     request<{ board: { id: string; name: string } }>('/shares/join', {
       method: 'POST',
       body: JSON.stringify({ code }),
+    }),
+
+  /**
+   * Redeem a code with no account, taking one in the process.
+   *
+   * `asGuest` is sent explicitly and the server requires it, rather than the
+   * absence of a session being taken as consent. A missing cookie is also what an
+   * expired session looks like, and turning that person into a brand new guest
+   * would walk them away from their own boards without a word. Only the guest
+   * door on the auth page calls this.
+   */
+  joinAsGuest: (code: string) =>
+    request<{ board: { id: string; name: string } }>('/shares/join', {
+      method: 'POST',
+      body: JSON.stringify({ code, asGuest: true }),
     }),
 }

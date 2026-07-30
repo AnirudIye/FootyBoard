@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import type { BoardMember } from '../../lib/api'
 import { toUserMessage } from '../../lib/errors'
-import { useAuthStore } from '../../store/authStore'
+import { useAuthStore, selectSignedIn } from '../../store/authStore'
 import { useBoardsStore } from '../../store/boardsStore'
 import { useRealtimeStore } from '../../store/realtimeStore'
 import { toast } from '../../store/toastStore'
@@ -60,7 +60,7 @@ interface ShareFacts {
 }
 
 export default function ShareDialog() {
-  const email = useAuthStore((s) => s.email)
+  const signedIn = useAuthStore(selectSignedIn)
   const currentId = useBoardsStore((s) => s.currentId)
   const boards = useBoardsStore((s) => s.boards)
   const role = useRealtimeStore((s) => s.role)
@@ -169,7 +169,7 @@ export default function ShareDialog() {
     return () => window.clearTimeout(t)
   }, [confirmRotate, open])
 
-  if (!email || !currentId || !isOwner) return null
+  if (!signedIn || !currentId || !isOwner) return null
 
   const shareUrl = (token: string) =>
     `${window.location.origin}/board?board=${currentId}&share=${encodeURIComponent(token)}`
@@ -307,7 +307,10 @@ export default function ShareDialog() {
       })
     }, UNDO_WINDOW)
 
-    toast(`${member.email} was removed.`, {
+    // `displayName` rather than `email`, which is null for a guest: this toast
+    // used to read "null was removed" for exactly the people the owner is most
+    // likely to be removing.
+    toast(`${member.displayName} was removed.`, {
       label: 'Undo',
       run: () => {
         window.clearTimeout(pending)
@@ -459,7 +462,7 @@ export default function ShareDialog() {
             <p className="mt-1.5 text-[11px] leading-relaxed text-ink-2">
               {anonymous
                 ? 'Cursors show a made-up name like Anonymous Quokka. Nobody in the room sees anyone else’s email, including you. You still see real addresses in the list below.'
-                : 'Cursors and the presence stack show everyone’s email address, to everyone on the board.'}
+                : 'Cursors and the presence stack show the name each person chose for themselves. Anyone who has not chosen one is shown by their email address instead.'}
             </p>
           </div>
         </div>
@@ -474,8 +477,16 @@ export default function ShareDialog() {
             <ul className="mt-2 flex flex-col gap-1.5">
               {members.map((m) => (
                 <li key={m.id} className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-[12px] text-ink-2" title={m.email}>
-                    {m.email}
+                  {/* `displayName` is the only field to draw, the same rule the
+                      room's peers follow. It is the address for anybody who has
+                      one, because who has access to this board is the owner's to
+                      know; a guest has none, and drawing `email` put a blank row
+                      with a Remove button beside it. */}
+                  <span
+                    className="min-w-0 flex-1 truncate text-[12px] text-ink-2"
+                    title={m.displayName}
+                  >
+                    {m.displayName}
                   </span>
                   <button
                     onClick={() => removeMember(m)}

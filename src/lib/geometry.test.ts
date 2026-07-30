@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { clampNorm, dist, arrowHead, quadraticPoints, bboxOf } from './geometry'
+import { clampNorm, dist, arrowHead, quadraticPoints, bboxOf, triangleCorners } from './geometry'
 
 describe('geometry', () => {
   it('clamps norm coordinates to 0..100', () => {
@@ -62,5 +62,41 @@ describe('bboxOf', () => {
   })
   it('handles a single point', () => {
     expect(bboxOf([7, 9])).toEqual({ x: 7, y: 9, w: 0, h: 0 })
+  })
+})
+
+/**
+ * Asserted here rather than through a mounted stage, for the reason `dragChip`
+ * is exported from `PlayerChip` and `onScreen` from `TokenLayer`: the rule is
+ * worth holding on its own, and a Konva canvas in jsdom would only be in the
+ * way of holding it.
+ */
+describe('triangleCorners', () => {
+  it('centres the apex on the edge the drag started from', () => {
+    // Dragged down and to the right from (0,0): apex on top, base on the floor.
+    expect(triangleCorners(0, 0, 10, 20)).toEqual([5, 0, 0, 20, 10, 20])
+  })
+
+  it('inverts when the drag runs the other way, so a triangle can point down', () => {
+    // The same box, dragged bottom-left to top-right. The apex stays with the
+    // start, which is the whole of how a coach points one downwards.
+    const t = triangleCorners(0, 20, 10, 0)
+    expect(t).toEqual([5, 20, 0, 0, 10, 0])
+    expect(t[1]).toBeGreaterThan(t[3])
+  })
+
+  it('fills exactly the box the drag described', () => {
+    // What the selection outline is drawn from: it bounds the two drag points,
+    // so the triangle has to reach all four sides of them or the dashed box
+    // would sit off the shape it is marking.
+    const drag = [12, 30, 48, 6]
+    const corners = triangleCorners(drag[0], drag[1], drag[2], drag[3])
+    expect(bboxOf(corners)).toEqual(bboxOf(drag))
+  })
+
+  it('survives a degenerate drag without producing anything non-finite', () => {
+    const t = triangleCorners(50, 50, 50, 50)
+    expect(t).toHaveLength(6)
+    expect(t.every((n) => Number.isFinite(n))).toBe(true)
   })
 })

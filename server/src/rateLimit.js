@@ -33,6 +33,35 @@ const ANSWER_LOCKOUT_MS = 15 * 60 * 1000
 const MAX_ANSWER_IP_ATTEMPTS = 20
 const ANSWER_IP_WINDOW_MS = 10 * 60 * 1000
 
+/**
+ * And the same two shapes a third time for the second factor, on keys of their
+ * own again.
+ *
+ * **Their own keys, for the reason `answer:` has its own.** Burning the factor
+ * allowance must not lock somebody out of signing in, and mistyping a password
+ * must not cost them attempts at the code they are about to be asked for. These
+ * three counters guard three different doors and none of them may shut another.
+ *
+ * **The arithmetic, so the numbers can be checked rather than taken on trust.**
+ * A six digit code is 10^6, and a one-step window either side means three codes
+ * are acceptable at any instant, so one blind guess lands with probability
+ * 3 x 10^-6. Five guesses per fifteen minutes is 480 a day, which puts the
+ * expected time to a hit on the order of 1,900 years, and every one of those
+ * days leaves 480 rows of evidence in `login_attempts`.
+ *
+ * The per-IP figure is more of a judgement than the per-account one, and it is
+ * the one worth measuring: a coaching staff behind one school NAT all signing in
+ * at the start of a session could trip twenty in ten minutes between them if
+ * five of them mistype twice each. The per-account limit is what is actually
+ * carrying the security here; this one is a second net for somebody spraying
+ * codes across many accounts, which the per-account counter would never see.
+ */
+const MAX_FACTOR_ATTEMPTS = 5
+const FACTOR_LOCKOUT_MS = 15 * 60 * 1000
+
+const MAX_FACTOR_IP_ATTEMPTS = 20
+const FACTOR_IP_WINDOW_MS = 10 * 60 * 1000
+
 const MIN_GAP_MS = 500
 
 /**
@@ -246,6 +275,95 @@ export async function recordAnswerFailure({ email, ip }) {
     staleAfterMs: ANSWER_IP_WINDOW_MS,
     max: MAX_ANSWER_IP_ATTEMPTS,
     lockoutMs: ANSWER_IP_WINDOW_MS,
+    hold: false,
+  })
+}
+
+/**
+ * The two allowances guarding a second-factor code.
+ *
+ * **Keyed on the raw user id rather than through `addressKey`**, matching
+ * `confirm:${user.id}`. The reasoning that makes `forgot:` a digest does not
+ * apply: that key counts an address taken straight out of an unauthenticated
+ * body, so writing it verbatim would record who has been asked about and let
+ * anyone insert rows of their choosing. This id comes from a challenge row we
+ * issued, so it is ours, it is already opaque, and hashing it would only make
+ * the row harder to read while investigating.
+ *
+ * Exported because the suites that assert on this counter have to name the key,
+ * and a second spelling of it in a test is how a test ends up passing against a
+ * limiter that is writing somewhere else.
+ */
+export const factorKey = (userId) => `factor:${userId}`
+const factorIpKey = (ip) => `factor-ip:${ip}`
+
+/**
+ * Whether this account or network may try a code right now.
+ *
+ * **Checked before the code is compared, and that is the half that does the
+ * work**, exactly as it is for the security answer. `consume` on its own would
+ * not do here for two separate reasons.
+ *
+ * It bumps unconditionally, so it would charge successes, and five successful
+ * sign-ins in a quarter of an hour is an ordinary morning on a flaky connection
+ * rather than an attack. Charging failures only is right.
+ *
+ * But charging failures only *with nothing reading first* is the exact defect
+ * this file already argues about above: it refuses the wrong guesses and waves
+ * the right one through, so the guesser pays nothing for the only attempt they
+ * care about. For a six digit code that is not a subtlety, it is the whole
+ * feature. Reading first is what makes a spent allowance stop the next attempt
+ * being evaluated at all.
+ */
+export async function assertMayUseFactor({ userId, ip }) {
+  const account = await readRecord(factorKey(userId))
+  if (account && Number(account.locked_until) > Date.now()) {
+    const wait = secondsUntil(Number(account.locked_until))
+    throw new TooManyRequests(
+      `Too many incorrect codes. Try again in ${Math.ceil(wait / 60)} minutes.`,
+      wait,
+    )
+  }
+
+  const perIp = await readRecord(factorIpKey(ip))
+  if (perIp && Number(perIp.locked_until) > Date.now()) {
+    throw new TooManyRequests(
+      'Too many attempts from this network. Try again shortly.',
+      secondsUntil(Number(perIp.locked_until)),
+    )
+  }
+}
+
+/**
+ * Charge a wrong code to both allowances.
+ *
+ * `hold: false` on both, matching `recordFailure` and `recordAnswerFailure`:
+ * nothing reaches here while a lock is held, because `assertMayUseFactor` has
+ * already turned it away, and a served lockout has to start the count over
+ * rather than carry it forward, or one wrong code every fifteen minutes would
+ * hold an account shut for good.
+ *
+ * These rows are swept by `purgeStaleAllowances` without any change to it: they
+ * do not match `account:%`, so they age out exactly as `answer:` rows do, and
+ * the fifteen minute lockout is far inside the twenty-four hour retention, so
+ * nothing is handed back that is still being withheld.
+ */
+export async function recordFactorFailure({ userId, ip }) {
+  const now = Date.now()
+
+  await bump(factorKey(userId), {
+    now,
+    staleAfterMs: NEVER_STALE_MS,
+    max: MAX_FACTOR_ATTEMPTS,
+    lockoutMs: FACTOR_LOCKOUT_MS,
+    hold: false,
+  })
+
+  await bump(factorIpKey(ip), {
+    now,
+    staleAfterMs: FACTOR_IP_WINDOW_MS,
+    max: MAX_FACTOR_IP_ATTEMPTS,
+    lockoutMs: FACTOR_IP_WINDOW_MS,
     hold: false,
   })
 }

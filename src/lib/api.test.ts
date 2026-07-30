@@ -94,6 +94,21 @@ describe('saving a board', () => {
   })
 })
 
+describe('ending every session', () => {
+  it('posts the current password to the sessions endpoint, under the name the server reads', async () => {
+    // The field name is the whole contract here. Call it `password` and the
+    // server answers 400 for a password the person typed correctly, which reads
+    // as a refusal rather than as a mismatch between two files.
+    answers(200, { ok: true })
+
+    await api.signOutEverywhere('the-only-password')
+
+    expect(sentMethod()).toBe('POST')
+    expect(sentTo()).toBe('/api/auth/sessions')
+    expect(sentBody()).toEqual({ currentPassword: 'the-only-password' })
+  })
+})
+
 describe('reading a board', () => {
   it('carries the generation back beside the contents', async () => {
     // Read from the same response as the data, because "these contents" and

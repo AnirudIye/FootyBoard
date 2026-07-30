@@ -25,6 +25,25 @@ const A = 8799
 const B = 8800
 const ENTRY = fileURLToPath(new URL('./index.js', import.meta.url))
 
+/**
+ * This suite's own address, so its per-IP allowances belong to nobody else.
+ *
+ * `node --test` runs these files concurrently and every one of them reaches the
+ * API from 127.0.0.1, so `join:127.0.0.1` and `share:127.0.0.1` are single
+ * counters shared by the whole run. That is survivable for a suite that merely
+ * needs an endpoint to work, and fatal for the two tests below, which assert
+ * *when* a limiter trips: another file making a failing join in the same second
+ * moves the answer, and a file resetting the counter mid-loop means it never
+ * trips at all. Both were seen, and both look exactly like a broken limiter.
+ *
+ * So these instances declare a proxy and the suite sends its own
+ * `X-Forwarded-For`, which is the mechanism `npm run cluster` already uses. The
+ * address is from TEST-NET-3, reserved for documentation, so it can never be a
+ * real client. This makes the assertion stronger rather than weaker: it now also
+ * proves the allowance is keyed per address rather than being one global bucket.
+ */
+const SUITE_IP = '203.0.113.7'
+
 const children = []
 let owner
 let collaborator
@@ -33,7 +52,16 @@ let boardId
 
 function startInstance(port) {
   const child = spawn(process.execPath, [ENTRY], {
-    env: { ...process.env, PORT: String(port), RUN_MAINTENANCE: 'false', INSTANCE_LABEL: `test-${port}` },
+    env: {
+      ...process.env,
+      PORT: String(port),
+      RUN_MAINTENANCE: 'false',
+      INSTANCE_LABEL: `test-${port}`,
+      // Without this `req.ip` is the socket address and every suite shares it.
+      // See SUITE_IP. Express still falls back to the socket address for any
+      // request that sends no header, so nothing else here changes.
+      TRUST_PROXY: '1',
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   child.stderr.on('data', (d) => {
@@ -76,6 +104,7 @@ const call = (port, path, cookie, init = {}) =>
     ...init,
     headers: {
       Cookie: cookie,
+      'X-Forwarded-For': SUITE_IP,
       ...(init.body ? { 'Content-Type': 'application/json' } : {}),
       ...init.headers,
     },
@@ -138,13 +167,17 @@ function waitForMessage(socket, match, timeoutMs = 3000) {
 const seen = (socket, match) => socket.received.some(match)
 
 /**
- * The redeem and join limits are database rows, so they outlive a test run and
- * a second run starts partway through the allowance. Clearing them is the same
+ * The redeem and join limits are database rows, so they outlive a test run and a
+ * second run starts partway through the allowance. Clearing them is the same
  * reason the tests create their own users: a test should not depend on how
  * recently the last one happened to run.
+ *
+ * Only this suite's rows, keyed on `SUITE_IP`. Deleting every `join:%` would hand
+ * allowances back to whichever file is running beside this one, which is the same
+ * interference this is avoiding, caused rather than suffered.
  */
 const clearRateLimits = () =>
-  run("DELETE FROM login_attempts WHERE key LIKE 'join:%' OR key LIKE 'share:%'")
+  run('DELETE FROM login_attempts WHERE key = $1 OR key = $2', `join:${SUITE_IP}`, `share:${SUITE_IP}`)
 
 before(async () => {
   await migrate()

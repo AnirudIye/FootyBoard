@@ -21,6 +21,18 @@ import { randomInt } from 'node:crypto'
  * and revoke the code outright.
  */
 
+/**
+ * `twoFactor.js` declares a `RECOVERY_ALPHABET` that is character for character
+ * this same string, and it is deliberately a second declaration rather than an
+ * import. The two are independent choices that happen to agree: this one is
+ * about what survives being read aloud across a hall for twelve hours, and that
+ * one is about what somebody copies onto paper and keeps until they need it.
+ * The direction that costs something is *narrowing* this string: drop a letter
+ * that turns out to be misread across a hall, and an import would have
+ * `normalizeRecoveryCode` refuse every recovery code already in somebody's
+ * drawer that contains it, which is a lockout rather than a cosmetic change.
+ * Do not "fix" this into one constant; that file carries the matching note.
+ */
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
 export const CODE_LENGTH = 6
 

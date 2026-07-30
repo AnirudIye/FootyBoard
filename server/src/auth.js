@@ -23,8 +23,17 @@ export async function hashPassword(password, salt = randomBytes(16).toString('he
   return { hash: derived.toString('hex'), salt }
 }
 
-/** Constant-time comparison, so a wrong password cannot be found by timing. */
+/**
+ * Constant-time comparison, so a wrong password cannot be found by timing.
+ *
+ * A missing salt or digest is false rather than a throw. Guest accounts have
+ * both columns null, and while no caller should reach here with one — `WHERE
+ * email = $1` cannot match a null address — the difference between "false" and
+ * "500 from `Buffer.from(null, 'hex')`" is the difference between a closed door
+ * and a door that reports something about itself when pushed.
+ */
 export async function verifyPassword(password, salt, expectedHex) {
+  if (typeof salt !== 'string' || typeof expectedHex !== 'string') return false
   const derived = await scryptAsync(password, salt, KEYLEN, SCRYPT_PARAMS)
   const expected = Buffer.from(expectedHex, 'hex')
   if (expected.length !== derived.length) return false
@@ -70,7 +79,8 @@ export async function createSession(userId) {
 export async function sessionForToken(token) {
   if (!token) return null
   const row = await get(
-    `SELECT s.id AS session_id, u.id, u.email, u.created_at
+    `SELECT s.id AS session_id, u.id, u.email, u.display_name, u.created_at, u.is_guest,
+            u.totp_confirmed_at
        FROM sessions s
        JOIN users u ON u.id = s.user_id
       WHERE s.token_hash = $1 AND s.expires_at > $2`,
@@ -79,9 +89,47 @@ export async function sessionForToken(token) {
   )
   if (!row) return null
   // Same shape the routes return, so callers never see raw column names.
+  //
+  // `isGuest` travels with every authenticated request rather than being looked
+  // up where it is needed, because the routes that must refuse a guest are the
+  // credential routes, and a check they each have to remember to make is a check
+  // one of them will eventually not make. `email` is null for a guest, and every
+  // consumer of this shape has to expect that.
+  //
+  // `displayName` rides along for the same reason and has the same shape of
+  // absence: null on any account created before the column existed. The socket
+  // handshake is the caller that needs it — `identity()` decides what a room may
+  // be told about somebody, and reading it here means that decision costs the
+  // query every authenticated request already runs rather than one of its own.
+  //
+  // `twoFactorEnabled` rides along for the third version of the same reason: the
+  // account menu and the two-step sign-in page both need to know whether the
+  // factor is on, and `GET /api/auth/me` is where the client learns everything
+  // else about itself, so a second endpoint asking the same row the same
+  // question would be a round trip bought for nothing.
+  //
+  // **The sealed TOTP secret column is deliberately not in the SELECT above,
+  // and adding it would be a real leak rather than an untidiness.** This
+  // function builds the object that becomes `req.user` and is returned verbatim
+  // by `GET /api/auth/me`, so a secret on it is one `res.json(req.user)` away
+  // from the wire — and unlike a password digest, a TOTP secret is a live bearer
+  // credential that generates codes. The column name is deliberately not written
+  // out anywhere in this file, so that grepping this file for it stays a real
+  // check on that property rather than a search that finds its own warning.
+  //
+  // The flag is derived from `totp_confirmed_at` for the reason `publicUser`
+  // gives: an abandoned enrollment holds a secret and is not a factor, and
+  // reporting one as "on" would be a lockout rather than a wrong label.
   return {
     id: row.session_id,
-    user: { id: row.id, email: row.email, createdAt: row.created_at },
+    user: {
+      id: row.id,
+      email: row.email,
+      displayName: row.display_name ?? null,
+      createdAt: row.created_at,
+      isGuest: row.is_guest === true,
+      twoFactorEnabled: row.totp_confirmed_at != null,
+    },
   }
 }
 
@@ -108,6 +156,20 @@ export const SESSION_COOKIE = {
   path: '/',
   secure: isProduction,
 }
+
+/**
+ * Setting and clearing the session cookie, in one place.
+ *
+ * These lived in `routes/auth.js` while it was the only router minting sessions.
+ * Guest admission in `routes/shares.js` mints one too, and a second spelling of
+ * "how a session cookie is set" is exactly what the note on `SESSION_COOKIE`
+ * above warns about: the attributes have to match for a clear to replace a live
+ * cookie, and `maxAge` has to be on the way in and off the way out.
+ */
+export const signIn = (res, token) =>
+  res.cookie(COOKIE_NAME, token, { ...SESSION_COOKIE, maxAge: SESSION_TTL_MS })
+
+export const signOut = (res) => res.clearCookie(COOKIE_NAME, SESSION_COOKIE)
 
 /** Minimal cookie parser — we only ever need our own key. */
 export function readCookie(header, name) {

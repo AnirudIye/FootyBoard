@@ -1,6 +1,6 @@
 import { useBoardStore } from '../../store/boardStore'
 import { useRealtimeStore, useRoomSize } from '../../store/realtimeStore'
-import { useAuthStore } from '../../store/authStore'
+import { useAuthStore, selectSignedIn } from '../../store/authStore'
 import { MonoReadout } from '../ui/MonoReadout'
 
 /**
@@ -51,7 +51,7 @@ export default function HUD() {
   const kind = useBoardStore((s) => s.view.kind)
   const selectionCount = useBoardStore((s) => s.selection.length)
   const locked = useRealtimeStore((s) => s.locked)
-  const signedIn = useAuthStore((s) => s.email)
+  const signedIn = useAuthStore(selectSignedIn)
 
   return (
     <div

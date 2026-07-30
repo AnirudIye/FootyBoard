@@ -1,5 +1,5 @@
-import { all, transaction } from './db.js'
-import { tokenDigest } from './auth.js'
+import { all, run, transaction, DB_NOW_MS } from './db.js'
+import { SESSION_TTL_MS, tokenDigest } from './auth.js'
 import { closeSessionSockets } from './realtime.js'
 
 /**
@@ -26,10 +26,53 @@ import { closeSessionSockets } from './realtime.js'
  * function here publishes the eviction itself rather than returning ids and
  * trusting its caller to pass them on. `DELETE FROM sessions` written anywhere
  * else is the defect coming back.
+ *
+ * **Publishing is not the same as arriving, which is why the eviction is also
+ * written down.** The NOTIFY is the only thing that closes an open socket, and
+ * an instance whose LISTEN connection is down when it is published never hears
+ * it — so the row would be gone everywhere while one instance went on relaying
+ * a revoked session's edits until it happened to disconnect. Every deletion
+ * here therefore leaves a `session_revocations` row behind, and an instance
+ * catching up after its listener reopens reads those rows and sweeps its rooms
+ * again. See the reconciliation in `realtime.js` for the reading half.
  */
 
 /** The socket half, applied on this instance and published to every other. */
 const evict = (rows) => closeSessionSockets(rows.map((row) => row.id))
+
+/**
+ * The one statement that ends sessions, in whichever of the three shapes.
+ *
+ * It is one statement rather than a delete followed by an insert because that
+ * is what makes "written in the same transaction" true by construction rather
+ * than by every caller remembering to open one. Postgres runs a data-modifying
+ * CTE exactly once and to completion whether or not the outer query reads it,
+ * so `recorded` writes every row `gone` deleted, and a statement is its own
+ * transaction wherever there is not already one around it. Neither half can
+ * commit without the other in either direction: no session is destroyed without
+ * a durable record of the eviction, and no record survives a revocation that
+ * rolled back and therefore never happened.
+ *
+ * The returned ids come from `gone` rather than from the insert, so what gets
+ * evicted on this instance is exactly what was deleted, whatever the insert
+ * does. Returning the insert's rows instead would silently skip a socket the
+ * moment anything was ever added to make that write forgiving.
+ *
+ * `where` is a clause written in this file and never a value — the value it
+ * compares is bound as `$1`, which is the only parameter this statement takes.
+ * The moment of revocation is the database's own clock rather than this
+ * process's, because it is what another instance's watermark is compared
+ * against and those two must be reading the same clock.
+ */
+const endingSessions = (where) => `
+  WITH gone AS (
+    DELETE FROM sessions WHERE ${where} RETURNING id, user_id
+  ), recorded AS (
+    INSERT INTO session_revocations (session_id, user_id, revoked_at)
+    SELECT id, user_id, ${DB_NOW_MS} FROM gone
+  )
+  SELECT id FROM gone
+`
 
 /**
  * End one session: signing out of this browser, and nothing else.
@@ -40,10 +83,7 @@ const evict = (rows) => closeSessionSockets(rows.map((row) => row.id))
  */
 export async function destroySession(token) {
   if (!token) return 0
-  const rows = await all(
-    'DELETE FROM sessions WHERE token_hash = $1 RETURNING id',
-    tokenDigest(token),
-  )
+  const rows = await all(endingSessions('token_hash = $1'), tokenDigest(token))
   evict(rows)
   return rows.length
 }
@@ -70,9 +110,7 @@ export async function destroyAllSessions(within) {
   const outcome = await transaction(async (client) => {
     const userId = await within(client)
     if (!userId) return null
-    const { rows } = await client.query('DELETE FROM sessions WHERE user_id = $1 RETURNING id', [
-      userId,
-    ])
+    const { rows } = await client.query(endingSessions('user_id = $1'), [userId])
     return { userId, rows }
   })
 
@@ -96,7 +134,40 @@ export async function destroyAllSessions(within) {
  * defect, wherever it is written.
  */
 export async function purgeExpiredSessions() {
-  const rows = await all('DELETE FROM sessions WHERE expires_at <= $1 RETURNING id', Date.now())
+  const rows = await all(endingSessions('expires_at <= $1'), Date.now())
   evict(rows)
   return rows.length
+}
+
+/**
+ * How long a revocation is worth keeping, and why it is this long.
+ *
+ * Derived from the session TTL rather than written down beside it, because the
+ * two are the same fact: a revocation's whole job is to let an instance that
+ * missed the NOTIFY catch up, and past the point where the session it names
+ * could still have been alive there is nothing left to catch up with. A session
+ * created the instant before it was revoked had at most `SESSION_TTL_MS` to run,
+ * and a session left alone that long is closed by `purgeExpiredSessions` above,
+ * through this very statement. The extra day is slack rather than reasoning —
+ * the sweep runs hourly and the row costs three columns.
+ *
+ * This does not pretend to cover a bus outage measured in weeks. An outage that
+ * long is not an outage, it is the cluster being down, and every socket went
+ * with it.
+ */
+export const REVOCATION_RETENTION_MS = SESSION_TTL_MS + 24 * 60 * 60 * 1000
+
+/**
+ * Sweep revocations nothing can still be catching up with.
+ *
+ * Beside the session purge rather than beside the other sweeps in `db.js`, for
+ * the reason given above that one: this table exists only because ending a
+ * session is two halves, and `db.js` has no business knowing about the second.
+ */
+export async function purgeExpiredRevocations() {
+  const { changes } = await run(
+    'DELETE FROM session_revocations WHERE revoked_at < $1',
+    Date.now() - REVOCATION_RETENTION_MS,
+  )
+  return changes
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { api } from '../lib/api'
 import { toUserMessage } from '../lib/errors'
-import { useAuthStore } from '../store/authStore'
+import { useAuthStore, selectSignedIn } from '../store/authStore'
 import { useBoardsStore } from '../store/boardsStore'
 import { toast } from '../store/toastStore'
 
@@ -18,7 +18,7 @@ import { toast } from '../store/toastStore'
  * screenshot, and in whatever the next page sends as a referrer.
  */
 export function useShareLink() {
-  const email = useAuthStore((s) => s.email)
+  const signedIn = useAuthStore(selectSignedIn)
   const ready = useAuthStore((s) => s.ready)
   const handled = useRef(false)
 
@@ -32,7 +32,7 @@ export function useShareLink() {
 
     // Signing in has to come first — a share link grants access to an account,
     // so there must be an account to grant it to. Come back here afterwards.
-    if (!email) {
+    if (!signedIn) {
       const next = encodeURIComponent(window.location.pathname + window.location.search)
       window.location.replace(`/login?next=${next}`)
       return
@@ -65,5 +65,5 @@ export function useShareLink() {
         clean()
       }
     })()
-  }, [email, ready])
+  }, [signedIn, ready])
 }

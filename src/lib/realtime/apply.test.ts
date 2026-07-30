@@ -47,7 +47,6 @@ const board = (over: Partial<BoardSlice> = {}): BoardSlice => ({
     lineColor: '#F2F6F1',
     overlayGrid: false,
     pitchTheme: 'dark',
-    snap: false,
   },
   customFormations: [],
   ...over,

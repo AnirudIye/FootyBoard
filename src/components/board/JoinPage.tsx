@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { toUserMessage } from '../../lib/errors'
 import { CODE_LENGTH, cleanCode as clean, joinPath } from '../../lib/joinCode'
-import { useAuthStore } from '../../store/authStore'
+import { useAuthStore, selectSignedIn } from '../../store/authStore'
 import { useBoardsStore } from '../../store/boardsStore'
 import { AuthShell } from '../auth/AuthShell'
 import { Button } from '../ui/Button'
@@ -18,7 +18,8 @@ import { Button } from '../ui/Button'
  */
 
 export default function JoinPage() {
-  const email = useAuthStore((s) => s.email)
+  // A guest has an account, so a guest can redeem a code like anybody else.
+  const signedIn = useAuthStore(selectSignedIn)
   const navigate = useNavigate()
   const [params] = useSearchParams()
 
@@ -60,10 +61,10 @@ export default function JoinPage() {
    */
   useEffect(() => {
     const fromUrl = clean(params.get('code') ?? '')
-    if (!email || redeemed.current || fromUrl.length !== CODE_LENGTH) return
+    if (!signedIn || redeemed.current || fromUrl.length !== CODE_LENGTH) return
     redeemed.current = true
     void redeem(fromUrl)
-  }, [email, params, redeem])
+  }, [signedIn, params, redeem])
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -75,7 +76,7 @@ export default function JoinPage() {
     // and type it should land on the thing they were told to type it into, not
     // on a signup form. The code rides along in `next` so it survives the trip
     // and they never type it twice.
-    if (!email) {
+    if (!signedIn) {
       navigate(`/login?next=${encodeURIComponent(joinPath(code))}`)
       return
     }
@@ -115,7 +116,7 @@ export default function JoinPage() {
           </p>
         )}
 
-        {!email && (
+        {!signedIn && (
           <p className="text-[12px] leading-relaxed text-ink-2">
             You will be asked to sign in before you join. Your code is kept, so you will not
             need to type it again.

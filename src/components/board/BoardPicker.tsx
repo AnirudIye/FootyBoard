@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useBoardsStore } from '../../store/boardsStore'
 import { useBoardStore, defaultPersistedBoard } from '../../store/boardStore'
-import { useAuthStore } from '../../store/authStore'
+import { useAuthStore, selectSignedIn } from '../../store/authStore'
 import { Button } from '../ui/Button'
 import { Popover } from '../ui/Popover'
 import { toast } from '../../store/toastStore'
@@ -10,7 +10,7 @@ import { toUserMessage } from '../../lib/errors'
 import { relativeTime } from './relativeTime'
 
 export default function BoardPicker() {
-  const signedIn = useAuthStore((s) => s.email)
+  const signedIn = useAuthStore(selectSignedIn)
   const boards = useBoardsStore((s) => s.boards)
   const currentId = useBoardsStore((s) => s.currentId)
   const nextCursor = useBoardsStore((s) => s.nextCursor)

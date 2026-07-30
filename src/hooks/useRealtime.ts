@@ -5,7 +5,7 @@ import type { EntityOp, Op, ServerMessage } from '../lib/realtime/protocol'
 import { loadBoard, flushSave, rereadFailed } from '../lib/boardSync'
 import { useBoardStore } from '../store/boardStore'
 import { useBoardsStore } from '../store/boardsStore'
-import { useAuthStore } from '../store/authStore'
+import { useAuthStore, selectSignedIn } from '../store/authStore'
 import { useRealtimeStore } from '../store/realtimeStore'
 import { toast } from '../store/toastStore'
 
@@ -18,12 +18,16 @@ import { toast } from '../store/toastStore'
  * board's own code paths.
  */
 export function useRealtime() {
-  const email = useAuthStore((s) => s.email)
+  // A guest admitted by a join code is a real member of a real room, so the
+  // gate is "is there an account" and not "is there an address".
+  const signedIn = useAuthStore(selectSignedIn)
   const currentId = useBoardsStore((s) => s.currentId)
 
   useEffect(() => {
-    // A guest has no account, so no board on a server, so nobody to share with.
-    if (!email || !currentId) return
+    // Nobody signed in means no board on a server and so nobody to share with.
+    // This used to say "a guest", and a guest is now exactly the case that does
+    // belong in a room: admitted by a code, a real member, a real board.
+    if (!signedIn || !currentId) return
 
     let disposed = false
 
@@ -272,7 +276,7 @@ export function useRealtime() {
       connection.close()
       useRealtimeStore.getState().reset()
     }
-  }, [email, currentId])
+  }, [signedIn, currentId])
 }
 
 /**

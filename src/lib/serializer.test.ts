@@ -39,7 +39,6 @@ const view: ViewSettings = {
   lineColor: '#fff',
   overlayGrid: false,
   pitchTheme: 'dark',
-  snap: false,
 }
 
 describe('describeTeam', () => {

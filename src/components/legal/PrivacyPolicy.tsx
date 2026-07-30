@@ -1,6 +1,6 @@
 import LegalPage, { Clause } from './LegalPage'
 
-const UPDATED = '27 July 2026'
+const UPDATED = '29 July 2026'
 
 export default function PrivacyPolicy() {
   return (
@@ -49,6 +49,20 @@ export default function PrivacyPolicy() {
             have forgotten your password.
           </li>
           <li>
+            <strong className="text-ink">An encrypted copy of your two-step sign-in secret</strong>,
+            if you have turned two-step sign-in on. This one is different from your password and
+            the difference matters: the server has to work out the same code your authenticator app
+            is showing, so it has to be able to read the secret back. It is encrypted with
+            AES-256-GCM under the same key your board contents use, which is held in the server's
+            environment and never in the database. It is deleted when you turn two-step sign-in
+            off.
+          </li>
+          <li>
+            <strong className="text-ink">Hashes of your ten recovery codes</strong>, and which of
+            them have been spent. The codes themselves are shown to you once, at the moment you turn
+            two-step sign-in on, and are never stored in readable form or shown again.
+          </li>
+          <li>
             <strong className="text-ink">Your boards</strong>: player positions, drawings,
             animation frames, and view settings. These are encrypted before they are stored. The
             board's <em>name</em> is not, which is a deliberate trade covered below.
@@ -59,8 +73,8 @@ export default function PrivacyPolicy() {
           </li>
           <li>
             <strong className="text-ink">A counter against your network address</strong>, so that
-            someone trying passwords or guessing join codes can be slowed down. It is a count and a
-            clock, nothing more, and it resets when the window passes or you sign in.
+            someone trying passwords, sign-in codes or join codes can be slowed down. It is a count
+            and a clock, nothing more, and it resets when the window passes or you sign in.
           </li>
           <li>
             <strong className="text-ink">Whether you turned the online assistant on</strong>, and
@@ -219,17 +233,43 @@ export default function PrivacyPolicy() {
           changed to stop it.
         </p>
         <p>
+          <strong className="text-ink">
+            If two-step sign-in is on, the answer alone is not enough to reset anything.
+          </strong>{' '}
+          A correct answer buys a five-minute prompt for a code, and only that code produces a reset
+          token. That is deliberate: without it, the security question would be the cheapest way
+          into the account and the second step would never be met by an attacker at all. Completing
+          a reset does not turn two-step sign-in off.
+        </p>
+        <p>
           Be plain about the trade this makes. A question whose answer somebody close to you could
           guess is a weaker secret than a password, and the limits above are what stand between the
           two. Choose a question whose answer is not on your public profile, and treat the answer as
-          another password rather than as a fact about you.
+          another password rather than as a fact about you. Two-step sign-in is what puts a floor
+          under it.
         </p>
         <p>
-          What we do not have: two-factor authentication. Sessions last 30 days. Changing your
-          password signs out every other session on the account, which is the way to end one you
-          think somebody else is holding. Beyond HTTPS in transit and the encryption described
-          above, treat a FootyBoard account as protecting tactical work rather than sensitive
-          personal information.
+          Two-step sign-in is available and is off until you turn it on. With it on, signing in
+          takes your password and then a code from an authenticator app, and no session is created
+          between the two steps. Turning it on gives you ten recovery codes, shown once; each works
+          a single time and they are the way back in if the phone is lost. Turning it off needs the
+          password and a current code together. Codes are limited in the same way answers are: five
+          wrong ones lock the account for 15 minutes.
+        </p>
+        <p>
+          <strong className="text-ink">
+            If you lose both your authenticator app and your recovery codes, nobody here can restore
+            access to that account.
+          </strong>{' '}
+          There is no reset email anywhere in this product and no path that lets the security
+          question skip the code, so there is nothing left to fall back on. Keep the recovery codes
+          somewhere that is not the phone the app is on.
+        </p>
+        <p>
+          Sessions last 30 days. Changing your password signs out every other session on the
+          account, which is the way to end one you think somebody else is holding. Beyond HTTPS in
+          transit and the encryption described above, treat a FootyBoard account as protecting
+          tactical work rather than sensitive personal information.
         </p>
       </Clause>
 

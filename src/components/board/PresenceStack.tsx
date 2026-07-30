@@ -21,9 +21,9 @@ export default function PresenceStack() {
         {list.slice(0, 4).map((peer) => (
           <motion.span
             key={peer.id}
-            initial={{ opacity: 0, scale: 0.6 }}
+            initial={{ opacity: 0, scale: 0.92 }}
             animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.6 }}
+            exit={{ opacity: 0, scale: 0.92 }}
             transition={{ type: 'spring', stiffness: 520, damping: 30, mass: 0.6 }}
             title={peer.displayName}
             style={{ background: peerColor(peer.id) }}

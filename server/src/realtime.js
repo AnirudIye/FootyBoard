@@ -2,7 +2,7 @@ import { WebSocketServer } from 'ws'
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
 import { accessFor } from './access.js'
-import { get } from './db.js'
+import { get, all, DB_NOW_MS } from './db.js'
 import { sessionForToken, readCookie, COOKIE_NAME } from './auth.js'
 import { isAllowedOrigin } from './env.js'
 
@@ -26,8 +26,29 @@ const INSTANCE_ID = randomUUID()
 // anything larger is a bug or an abuse and is dropped rather than truncated.
 const MAX_PAYLOAD = 6000
 
-/** How long to wait before trying the notification bus again after it drops. */
-const LISTENER_RETRY_MS = 2000
+/**
+ * How long to wait before trying the notification bus again after it drops.
+ *
+ * Exported because it is also the window a missed eviction survives in, so
+ * `durableEviction.test.js` budgets against this rather than against a second
+ * copy of the number that would drift the day this one is tuned.
+ */
+export const LISTENER_RETRY_MS = 2000
+
+/**
+ * How far back a catch-up looks behind its own watermark.
+ *
+ * A revocation is stamped as its statement runs, not as its transaction
+ * commits, so two revocations can become visible in the opposite order to their
+ * timestamps. A catch-up that landed between them would advance past the later
+ * stamp and never see the earlier row appear behind it — a revocation silently
+ * skipped, which is the one outcome this whole mechanism exists to prevent.
+ * Re-applying a revocation costs nothing, because the socket it names is
+ * already gone, so the watermark is deliberately held this far back rather than
+ * made exact. It only has to exceed how long a revocation can sit between its
+ * own statement and its commit, and a minute is orders of magnitude more.
+ */
+const RECONCILE_OVERLAP_MS = 60_000
 
 /**
  * Messages a client is never allowed to send.
@@ -138,8 +159,15 @@ function hash32(text) {
  * the alternative is a room-wide allocation table with a consensus problem
  * attached, which is a great deal of machinery for "two people are both called
  * Anonymous Badger".
+ *
+ * Exported for the owner's member list, which has the same problem from the REST
+ * side: a guest has no address, so a list selecting one drew a blank row. It asks
+ * this rather than inventing a second stand-in, because the owner matching a row
+ * in the list against a cursor on the pitch depends on the two agreeing, and two
+ * spellings of "what do we call somebody with no address" is exactly how they
+ * would stop agreeing.
  */
-function anonymousNameFor(boardId, userId) {
+export function anonymousNameFor(boardId, userId) {
   const taken = new Set()
   for (const socket of rooms.get(boardId) ?? []) {
     if (socket.userId !== userId && socket.anonName) taken.add(socket.anonName)
@@ -173,9 +201,48 @@ function anonymousNameFor(boardId, userId) {
  *
  * Evaluated per message rather than frozen at join, so flipping the setting
  * takes effect on the next introduction without anyone reconnecting.
+ *
+ * **There are now two reasons to substitute, and they are one rule.** The owner
+ * asked, or there is no address to show in the first place: a guest admitted by a
+ * join code has a null one, by construction. Keying on the absent address rather
+ * than on the account being a guest is deliberate — the question here is "what
+ * may this room be told", and the honest answer follows from what there is to
+ * tell rather than from how the account came to exist. Without it a guest reaches
+ * the room as `{ email: null }`, which is not a leak but is an unlabelled cursor,
+ * and the whole point of carrying `email` at all is that a peer has something to
+ * put beside a pointer.
+ *
+ * **Four candidates now, and the order is the feature.**
+ *
+ *   1. The board hides addresses, so the generated name, whatever else is true.
+ *      The owner is deciding what their room discloses and that outranks anybody's
+ *      preference about themselves — a coach who has just turned the switch on
+ *      before reading a code to a hall must not be quietly overridden by somebody
+ *      who set their own name to something identifying.
+ *   2. A chosen display name. This is the new one, and it is why a member no
+ *      longer has to be either an address or an animal.
+ *   3. No address at all, so the generated name. A guest, as before.
+ *   4. The address, exactly as it always was.
+ *
+ * **Case 4 is a residual gap rather than a design.** An account created before
+ * this column existed carries a null name and keeps disclosing its local part
+ * until somebody sets one. There is no name to invent on their behalf, and
+ * defaulting everyone to an animal would turn a working roster into a zoo without
+ * being asked, which is the same argument that keeps anonymity off by default. It
+ * is written down in `handoff.md` beside the security-question backfill, which
+ * has the identical shape.
+ *
+ * The chosen name is read off the socket rather than the row, so it is fixed at
+ * the handshake exactly as the address is. A rename therefore reaches the room on
+ * the next connection rather than immediately, which is a real cost and a small
+ * one: what has to be live is the *owner's* switch, because that is thrown mid
+ * session in front of a room, and that stays live because the flag is read here
+ * per message rather than baked into a payload at join.
  */
 function identity(socket) {
-  const name = anonymousPresence.get(socket.boardId) ? socket.anonName : socket.userEmail
+  const name = anonymousPresence.get(socket.boardId)
+    ? socket.anonName
+    : socket.userDisplayName || socket.userEmail || socket.anonName
   return { email: name, displayName: name }
 }
 
@@ -314,6 +381,55 @@ export async function attachRealtime(httpServer) {
   }
 
   /**
+   * The moment up to which every revocation has been applied to this instance.
+   *
+   * In memory and deliberately not durable. A restart re-authorizes every
+   * socket from scratch, because sockets do not survive a restart, so there is
+   * nothing for a remembered watermark to protect: at the moment this is
+   * assigned the process holds no rooms at all, and the only thing this value
+   * bounds is a query that consequently has nothing to do.
+   */
+  let appliedThrough = Date.now()
+
+  /**
+   * Catch up on evictions that were published while this instance was deaf.
+   *
+   * The NOTIFY is the only thing that closes a socket, and an instance whose
+   * LISTEN connection was down when one was published never heard it. Its
+   * sockets are then authorized by sessions that no longer exist anywhere, and
+   * nothing re-checks a socket after the handshake, so they would keep relaying
+   * that person's edits until they happened to disconnect. `sessions.js` writes
+   * every revocation down for exactly this read.
+   *
+   * The clock is read *before* the rows rather than after, so this can only
+   * ever claim to have applied things that were already committed when it
+   * looked. And it is applied through `applyControl` — the same arm the bus
+   * message lands in — rather than through `closeSessionSockets`, for two
+   * reasons: what an eviction does to a room is written down once, and this
+   * instance is catching *itself* up. Publishing would tell every other
+   * instance something it has either already done or is about to do for itself,
+   * and turn one instance reconnecting into a broadcast to all of them.
+   */
+  async function catchUpOnRevocations() {
+    const [{ at }] = await all(`SELECT ${DB_NOW_MS} AS at`)
+    const revoked = await all(
+      'SELECT session_id FROM session_revocations WHERE revoked_at > $1',
+      appliedThrough - RECONCILE_OVERLAP_MS,
+    )
+    if (revoked.length > 0) {
+      applyControl(null, {
+        type: 'evict-session',
+        sessionIds: revoked.map((row) => row.session_id),
+      })
+    }
+    // Advanced whether or not anything was found, or an instance that has been
+    // up for a month would rescan a month of revocations the first time its
+    // listener blinked. `Math.max` because the watermark is only ever allowed
+    // to move forward.
+    appliedThrough = Math.max(appliedThrough, Number(at))
+  }
+
+  /**
    * Open the bus, and keep it open.
    *
    * Losing this connection is invisible from outside: the instance carries on
@@ -321,6 +437,14 @@ export async function attachRealtime(httpServer) {
    * every other instance. Rooms then diverge with nothing obviously wrong, so
    * logging the error and carrying on is not an option — a Postgres restart
    * would silently split the cluster until somebody noticed and redeployed.
+   *
+   * **`LISTEN` first, then catch up, and only then is the client the listener.**
+   * A revocation committing between the two is delivered by both, which costs a
+   * closed socket being closed a second time; the other order leaves a gap that
+   * neither covers, which costs the guarantee. Publishing the client last means
+   * a failed catch-up is a failed open: the connection is ended and the retry
+   * comes round again, rather than this instance sitting on a live bus
+   * believing it is up to date when it is not.
    */
   async function openListener() {
     const client = new pg.Client({
@@ -337,7 +461,13 @@ export async function attachRealtime(httpServer) {
       reopenListener()
     })
     await client.connect()
-    await client.query(`LISTEN ${CHANNEL}`)
+    try {
+      await client.query(`LISTEN ${CHANNEL}`)
+      await catchUpOnRevocations()
+    } catch (err) {
+      await client.end().catch(() => {})
+      throw err
+    }
     listener = client
   }
 
@@ -455,6 +585,10 @@ export async function attachRealtime(httpServer) {
       socket.userId = user.id
       socket.sessionId = session.id
       socket.userEmail = user.email
+      // Beside the address rather than instead of it, because `identity()` needs
+      // both: the name is what the room hears and the address is the fallback
+      // for an account that has never chosen one.
+      socket.userDisplayName = user.displayName ?? null
       socket.boardId = boardId
       socket.role = access.role
 

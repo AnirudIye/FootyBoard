@@ -93,9 +93,9 @@ export default function FrameStrip() {
                       <motion.button
                         key={f.id}
                         layout
-                        initial={{ opacity: 0, scale: 0.6 }}
+                        initial={{ opacity: 0, scale: 0.92 }}
                         animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.6 }}
+                        exit={{ opacity: 0, scale: 0.92 }}
                         whileTap={{ scale: 0.9 }}
                         transition={spring}
                         onClick={() => jumpTo(i)}

@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { api } from '../../lib/api'
 import { toUserMessage } from '../../lib/errors'
-import { useAuthStore } from '../../store/authStore'
+import { useAuthStore, selectSignedIn, selectIsGuest } from '../../store/authStore'
 import { AuthShell, field, submitBtn, FormError } from './AuthShell'
 import SecurityQuestionFields, { useSecurityQuestions } from './SecurityQuestionFields'
 
@@ -23,7 +23,12 @@ import SecurityQuestionFields, { useSecurityQuestions } from './SecurityQuestion
  */
 export default function ChangePasswordPage() {
   const navigate = useNavigate()
-  const email = useAuthStore((s) => s.email)
+  const signedIn = useAuthStore(selectSignedIn)
+  // The one page where "has credentials" is the real question rather than "is
+  // signed in". A guest has neither a current password to confirm nor a stored
+  // one to replace, so the form cannot be completed and the server refuses it;
+  // sending them to the claim page is the same request they actually mean.
+  const isGuest = useAuthStore(selectIsGuest)
   const ready = useAuthStore((s) => s.ready)
   const { questions, failed } = useSecurityQuestions()
 
@@ -37,11 +42,13 @@ export default function ChangePasswordPage() {
   const [done, setDone] = useState(false)
 
   // Nothing here is usable signed out, and the server would refuse it anyway.
-  // Waiting for `ready` matters: before the session has been checked, `email`
-  // is null for everyone, including the people who are signed in.
+  // Waiting for `ready` matters: before the session has been checked, nobody
+  // looks signed in, including the people who are.
   useEffect(() => {
-    if (ready && !email) navigate('/login?next=/password', { replace: true })
-  }, [ready, email, navigate])
+    if (!ready) return
+    if (!signedIn) navigate('/login?next=/password', { replace: true })
+    else if (isGuest) navigate('/claim', { replace: true })
+  }, [ready, signedIn, isGuest, navigate])
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

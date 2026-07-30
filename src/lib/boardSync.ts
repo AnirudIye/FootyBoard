@@ -1,6 +1,6 @@
 import { api } from './api'
 import { ConflictError } from './errors'
-import { isPersistedBoard } from './persistence'
+import { isPersistedBoard, upgradeBoard } from './persistence'
 import type { PersistedBoard } from './persistence'
 import { useBoardStore } from '../store/boardStore'
 import { useBoardsStore } from '../store/boardsStore'
@@ -58,12 +58,16 @@ export function rereadFailed(): void {
 export async function loadBoard(boardId: string, mode: LoadMode): Promise<boolean> {
   const { board } = await api.getBoard<PersistedBoard>(boardId)
 
-  // A board from an older version, or one that arrived damaged, is not worth
-  // crashing over. Note what is deliberately *not* done here: the store is left
-  // exactly as it was. Whatever the caller shows instead did not come from this
-  // board, so it must not end up claiming to be it, or the stand-in gets
-  // written over the record that failed to parse and the original is gone for
-  // good rather than merely unreadable by this version.
+  // A board that arrived damaged, or from a version this one cannot place, is
+  // not worth crashing over. Note what is deliberately *not* done here: the
+  // store is left exactly as it was. Whatever the caller shows instead did not
+  // come from this board, so it must not end up claiming to be it, or the
+  // stand-in gets written over the record that failed to parse and the original
+  // is gone for good rather than merely unreadable by this version.
+  //
+  // "Older" is no longer one of the reasons. The guard accepts any version the
+  // migrations can carry forward, which is what stops a schema bump from sending
+  // every row in the database down this path at once.
   if (!isPersistedBoard(board.data)) return false
 
   /**
@@ -106,8 +110,26 @@ export async function loadBoard(boardId: string, mode: LoadMode): Promise<boolea
     return true
   }
 
-  if (mode === 'adopt') useBoardStore.getState().adoptRemote(board.data)
-  else useBoardStore.getState().loadPersisted(board.data)
+  /**
+   * Bring an older payload up to this version, in memory.
+   *
+   * Deliberately here, after both refusals above and nowhere earlier. An
+   * upgraded board is one this client will write back at the new version on its
+   * next save, which is the intended way a row stops being old — so it must
+   * never happen for a board the client has decided not to write to. A board
+   * with no generation, or one from a version this build cannot place, has
+   * already returned by this point and the store has not been touched, which is
+   * the same guard `flushSave` rests on rather than a second one.
+   *
+   * The row itself is untouched until that save. The cost of that is a board
+   * that is read but never edited stays at its stored version indefinitely, and
+   * the alternative — writing on open — means every board list view rewriting
+   * rows it was only asked to read.
+   */
+  const data = upgradeBoard(board.data)
+
+  if (mode === 'adopt') useBoardStore.getState().adoptRemote(data)
+  else useBoardStore.getState().loadPersisted(data)
   useBoardStore.getState().setBoardId(boardId, generation as number)
   return true
 }

@@ -28,6 +28,12 @@ const MAX_EMAIL = 254 // RFC 5321
 const MAX_PASSWORD = 200
 const MIN_PASSWORD = 8
 const MAX_NAME = 120
+/**
+ * Shorter than a board name, because this one is drawn in a cursor label and a
+ * 40px presence chip rather than in a heading. Sixty is comfortably more than
+ * any real name and still fits the places it has to fit.
+ */
+const MAX_DISPLAY_NAME = 60
 const MAX_BOARD_BYTES = 512 * 1024
 
 /** Strips control characters, which have no place in a submitted field. */
@@ -54,6 +60,43 @@ export function validatePassword(raw) {
   if (password.length > MAX_PASSWORD)
     throw new BadRequest(`Use a password shorter than ${MAX_PASSWORD} characters.`, 'password')
   return password
+}
+
+/**
+ * The name a person chooses for the room to call them.
+ *
+ * **An `@` is refused, and that is a property of the system rather than good
+ * manners.** `anonymousPresence.test.js` asserts bluntly that no `@` appears
+ * anywhere in three sockets' traffic, which is the whole guarantee behind the
+ * owner's anonymity switch. If a display name could carry one, that assertion
+ * would stop being a fact about what the relay sends and become a hope about
+ * what people type: somebody who set their name to their address would put it
+ * back on the wire of an anonymous board, and the test that is supposed to catch
+ * exactly that would keep passing because the test's own accounts do not do it.
+ * `realtimeStore`'s `shownName` also splits on `@` to drop a domain, so a name
+ * containing one would arrive at a cursor label cut in half.
+ *
+ * Required rather than optional at signup and at `/claim`, which is enforced by
+ * the callers rather than here: those are the two places an account comes into
+ * existence with credentials, so demanding it there is what makes every new
+ * account safe by construction.
+ */
+export function validateDisplayName(raw) {
+  if (raw === undefined || raw === null)
+    throw new BadRequest('Choose the name other people will see.', 'displayName')
+  const name = requireString(raw, 'displayName')
+  if (!name) throw new BadRequest('Choose the name other people will see.', 'displayName')
+  if (name.length > MAX_DISPLAY_NAME)
+    throw new BadRequest(
+      `Use a name shorter than ${MAX_DISPLAY_NAME} characters.`,
+      'displayName',
+    )
+  if (name.includes('@'))
+    throw new BadRequest(
+      'A display name cannot contain an @. It is shown to everyone on the board, which is the one thing an email address should not be.',
+      'displayName',
+    )
+  return name
 }
 
 export function validateAcceptedTerms(value) {

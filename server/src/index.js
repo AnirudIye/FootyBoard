@@ -1,11 +1,12 @@
 import express from 'express'
 import { createServer } from 'node:http'
 import { migrate, purgeStaleAllowances, closePool } from './db.js'
-import { purgeExpiredSessions } from './sessions.js'
+import { purgeExpiredSessions, purgeExpiredRevocations } from './sessions.js'
 import { initEncryption } from './crypto.js'
 import { userForToken, readCookie, COOKIE_NAME } from './auth.js'
 import { attachRealtime } from './realtime.js'
 import { purgeExpiredResets } from './passwordReset.js'
+import { purgeExpiredChallenges } from './twoFactor.js'
 import { authRouter } from './routes/auth.js'
 import { boardsRouter } from './routes/boards.js'
 import { sharesRouter, redeemRouter } from './routes/shares.js'
@@ -138,18 +139,27 @@ const realtime = await attachRealtime(server)
  * Only one instance needs to sweep; the rest would run the same DELETEs against
  * the same rows.
  *
- * Three things accumulate. Sessions and reset links expire on a timestamp the
- * row carries. Rate-limit allowances do not expire at all on their own, and
- * several of them are keyed on values a stranger chooses, so without this the
- * table grows by one row per distinct address anyone has ever typed into
- * "forgot password".
+ * Five things accumulate. Sessions, reset links and auth challenges expire on a
+ * timestamp the row carries. Rate-limit allowances do not expire at all on their
+ * own, and several of them are keyed on values a stranger chooses, so without
+ * this the table grows by one row per distinct address anyone has ever typed
+ * into "forgot password". Session revocations are kept deliberately, so that an
+ * instance whose bus was down can catch up on them, and stop being worth
+ * keeping once the session each one names could no longer have been alive.
+ *
+ * The `factor:` allowances need no entry of their own: they do not match
+ * `account:%`, so `purgeStaleAllowances` already ages them out exactly as it
+ * does `answer:`, and the fifteen minute lockout is far inside the twenty-four
+ * hour retention, so nothing is handed back that is still being withheld.
  */
 if (process.env.RUN_MAINTENANCE !== 'false') {
   const sweep = async () => {
     for (const [what, purge] of [
       ['Session', purgeExpiredSessions],
       ['Reset link', purgeExpiredResets],
+      ['Auth challenge', purgeExpiredChallenges],
       ['Rate limit', purgeStaleAllowances],
+      ['Session revocation', purgeExpiredRevocations],
     ]) {
       await purge().catch((err) => console.error(`${what} purge failed:`, err.message))
     }

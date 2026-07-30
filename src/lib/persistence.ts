@@ -7,7 +7,11 @@ import type {
   CustomFormation,
 } from './types'
 
-import { SCHEMA_VERSION, isPersistedBoard as isBoard } from './boardSchema.js'
+import {
+  SCHEMA_VERSION,
+  isPersistedBoard as isBoard,
+  upgradeBoard as upgrade,
+} from './boardSchema.js'
 
 export { SCHEMA_VERSION }
 
@@ -40,4 +44,24 @@ export interface PersistedBoard {
  */
 export function isPersistedBoard(value: unknown): value is PersistedBoard {
   return isBoard(value)
+}
+
+/**
+ * The same board, at the version this build understands.
+ *
+ * The guard accepts any version the migrations in `boardSchema.js` can carry
+ * forward, so something has to actually carry it, and this is it. See
+ * `loadBoard`, which is the one caller: it runs after the read has been accepted,
+ * so a board this client is refusing to write to is never upgraded into the
+ * store.
+ *
+ * Types, honestly: `boardSchema.js` is plain JavaScript, so this signature is an
+ * assertion rather than a check, exactly like the predicate above. And the input
+ * is a `PersistedBoard` only in the loose sense the guard means it — an older
+ * payload can be missing `bench` and can carry a `view` field this version has
+ * dropped, neither of which the interface describes. That is the whole reason
+ * there is something to upgrade.
+ */
+export function upgradeBoard(board: PersistedBoard): PersistedBoard {
+  return upgrade(board)
 }

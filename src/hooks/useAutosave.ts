@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useBoardStore, defaultPersistedBoard } from '../store/boardStore'
-import { useAuthStore } from '../store/authStore'
+import { useAuthStore, selectSignedIn } from '../store/authStore'
 import { useBoardsStore } from '../store/boardsStore'
 import { loadBoard, flushSave } from '../lib/boardSync'
 import { isApplyingRemote } from '../lib/realtime/bridge'
@@ -45,7 +45,11 @@ function persistableChanged(a: BoardState, b: BoardState): boolean {
  * owns saving it. Combining them would make every keystroke re-run the load.
  */
 export function useAutosave() {
-  const email = useAuthStore((s) => s.email)
+  // "Is there an account" rather than "is there an address". A guest admitted by
+  // a join code has an account, real membership and boards that save, and no
+  // address at all; gating on the address would have left them on an unsaved
+  // board looking at somebody else's, which is the whole thing this fixed.
+  const signedIn = useAuthStore(selectSignedIn)
   const ready = useAuthStore((s) => s.ready)
   const currentId = useBoardsStore((s) => s.currentId)
 
@@ -64,8 +68,11 @@ export function useAutosave() {
     if (!ready) return
     const boards = useBoardsStore.getState()
 
-    if (!email) {
-      // Guest: a full board that is never written anywhere.
+    if (!signedIn) {
+      // Nobody signed in: a full board that is never written anywhere. Note this
+      // is no longer what the product calls a guest — a guest admitted by a join
+      // code has an account and lands in the branch below, with boards that save.
+      // This is the signed-out visitor who just opened `/board`.
       loadedId.current = null
       boards.reset()
       useBoardStore.getState().initDefaultBoard()
@@ -90,11 +97,11 @@ export function useAutosave() {
     return () => {
       cancelled = true
     }
-  }, [email, ready])
+  }, [signedIn, ready])
 
   // 2. Opening a board — at sign-in or from the picker — pulls its contents.
   useEffect(() => {
-    if (!email || !currentId) return
+    if (!signedIn || !currentId) return
 
     let cancelled = false
     loadedId.current = null
@@ -165,11 +172,11 @@ export function useAutosave() {
     return () => {
       cancelled = true
     }
-  }, [email, currentId])
+  }, [signedIn, currentId])
 
   // 3. Write changes back, debounced.
   useEffect(() => {
-    if (!email || !currentId) return
+    if (!signedIn || !currentId) return
 
     let timer: number | null = null
     let warned = false
@@ -230,5 +237,5 @@ export function useAutosave() {
       unsubscribe()
       if (timer !== null) window.clearTimeout(timer)
     }
-  }, [email, currentId])
+  }, [signedIn, currentId])
 }

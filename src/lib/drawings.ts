@@ -10,14 +10,21 @@ export interface DrawStyle {
   curve: CurveDirection
 }
 
-const ZONE_TYPES: DrawingType[] = ['zoneRect', 'zoneEllipse', 'zonePoly']
+const ZONE_TYPES: DrawingType[] = ['zoneRect', 'zoneEllipse', 'zoneTriangle', 'zonePoly']
 
 /** Zones sit beneath the chips; everything else sits above them. */
 export const isZone = (t: DrawingType): boolean => ZONE_TYPES.includes(t)
 export const isText = (t: DrawingType): boolean => t === 'text'
 export const isMark = (t: DrawingType): boolean => !isZone(t) && !isText(t)
 
-/** Types whose gesture is a simple drag from one corner/end to another. */
+/**
+ * Types whose gesture is a simple drag from one corner/end to another.
+ *
+ * Separate from `isZone` on purpose, and the two overlap without either
+ * implying the other: `zonePoly` is a zone that is not dragged, `arrow` is
+ * dragged and is not a zone. Being a zone decides which band a shape is painted
+ * in; being a drag type is what makes the pointer release commit one at all.
+ */
 export const isDragType = (t: DrawingType): boolean =>
   t === 'line' ||
   t === 'arrow' ||
@@ -25,7 +32,8 @@ export const isDragType = (t: DrawingType): boolean =>
   t === 'curveArrow' ||
   t === 'curvePass' ||
   t === 'zoneRect' ||
-  t === 'zoneEllipse'
+  t === 'zoneEllipse' ||
+  t === 'zoneTriangle'
 
 /** Curved types share a control point and a bend direction. */
 export const isCurve = (t: DrawingType): boolean => t === 'curveArrow' || t === 'curvePass'

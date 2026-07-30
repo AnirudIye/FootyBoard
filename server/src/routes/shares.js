@@ -2,8 +2,9 @@ import { Router } from 'express'
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
 import { get, all, run, transaction } from '../db.js'
 import { accessFor } from '../access.js'
-import { publish } from '../realtime.js'
+import { publish, anonymousNameFor } from '../realtime.js'
 import { consume } from '../rateLimit.js'
+import { createSession, signIn } from '../auth.js'
 import { normalizeCode, codeExpiryFrom, withFreshCode } from '../joinCode.js'
 import { BadRequest } from '../validate.js'
 
@@ -159,10 +160,34 @@ sharesRouter.delete('/:id/share', async (req, res) => {
   res.status(204).end()
 })
 
+/**
+ * Who is on this board, for the owner alone.
+ *
+ * **Two fields, and only one of them is ever drawn**, which is the same division
+ * the presence protocol already makes: `email` is what the server chose to
+ * disclose and `displayName` is what a client renders. Keeping the convention
+ * identical on both wires is the point — one rule to know rather than two.
+ *
+ * This used to select `u.email` and nothing else, which was fine until a join
+ * code could admit somebody without an account. A guest's address is null, so the
+ * owner's own "who has access to my board" list drew a blank row with a Remove
+ * button beside it, and two guests were indistinguishable from each other and
+ * from a rendering bug.
+ *
+ * The order the stand-in is chosen in differs from `identity()`'s on purpose, and
+ * the difference is the whole reason this endpoint exists. **The owner is entitled
+ * to a real address for anybody who has one**: "who has access to my board" is
+ * theirs to know, which is not the same question as "who is that cursor", and it
+ * is why the anonymity switch deliberately does not reach in here. So the address
+ * wins when there is one, and a name only stands in where there is nothing else
+ * to give. For a guest who has never chosen one, that is the same generated name
+ * the room uses, asked of the same function, so a row here and a cursor on the
+ * pitch agree about who somebody is.
+ */
 sharesRouter.get('/:id/members', async (req, res) => {
   if (!(await requireOwner(req, res))) return
   const rows = await all(
-    `SELECT u.id, u.email, m.joined_at
+    `SELECT u.id, u.email, u.display_name, m.joined_at
        FROM board_members m
        JOIN users u ON u.id = m.user_id
       WHERE m.board_id = $1
@@ -170,7 +195,12 @@ sharesRouter.get('/:id/members', async (req, res) => {
     req.params.id,
   )
   res.json({
-    members: rows.map((r) => ({ id: r.id, email: r.email, joinedAt: r.joined_at })),
+    members: rows.map((r) => ({
+      id: r.id,
+      email: r.email,
+      displayName: r.email ?? r.display_name ?? anonymousNameFor(req.params.id, r.id),
+      joinedAt: r.joined_at,
+    })),
   })
 })
 
@@ -231,6 +261,37 @@ sharesRouter.patch('/:id/anonymous', async (req, res) => {
   publish(req.params.id, { type: 'anon', anonymous })
   res.json({ anonymousPresence: anonymous })
 })
+
+/**
+ * Make an account for somebody who was handed a code, not a signup form.
+ *
+ * No address and no password, so it is reachable only by the cookie this returns.
+ * `accepted_terms_at` is set because the door they came through says so; the
+ * column is still NOT NULL and still means what it says.
+ *
+ * One transaction, because a user row without the membership it was created for
+ * is a stranded account, and a membership row for a user that failed to insert
+ * cannot exist at all. Either both or neither.
+ */
+async function admitAsGuest(share) {
+  const id = randomUUID()
+  const now = new Date().toISOString()
+
+  return await transaction(async (client) => {
+    await client.query(
+      `INSERT INTO users (id, email, password_hash, password_salt, accepted_terms_at, created_at, is_guest)
+       VALUES ($1, NULL, NULL, NULL, $2, $2, true)`,
+      [id, now],
+    )
+    await client.query(
+      `INSERT INTO board_members (board_id, user_id, share_id, joined_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (board_id, user_id) DO NOTHING`,
+      [share.board_id, id, share.id, now],
+    )
+    return id
+  })
+}
 
 /** Shared by both ways in: whoever is asking becomes a member of `share`. */
 async function admit(share, user) {
@@ -309,7 +370,24 @@ redeemRouter.post('/:token/redeem', async (req, res) => {
  * limiter has counted it, so mashing the keyboard is not a free way to probe.
  */
 redeemRouter.post('/join', async (req, res) => {
-  if (!req.user) return res.status(401).json({ error: 'Sign in to join a board.' })
+  /**
+   * Joining without an account, and why it is asked for rather than assumed.
+   *
+   * `asGuest` is an explicit flag and not "there was no cookie". A missing
+   * cookie is also exactly what an expired session looks like, and somebody
+   * whose thirty days ran out between reading the code and typing it would then
+   * be silently handed a brand new empty account, walked away from every board
+   * they own, with nothing said. The flag makes the caller state the intent, and
+   * only the guest door on the auth page sets it.
+   *
+   * A guest is created only once the code has been checked, further down. Doing
+   * it here would make this endpoint a way to fill the users table by guessing,
+   * and the guessing allowance exists precisely because six readable characters
+   * is a searchable space.
+   */
+  const asGuest = req.body?.asGuest === true
+  if (!req.user && !asGuest)
+    return res.status(401).json({ error: 'Sign in to join a board.' })
 
   const code = normalizeCode(req.body?.code)
 
@@ -358,6 +436,14 @@ redeemRouter.post('/join', async (req, res) => {
     return res
       .status(410)
       .json({ error: 'That code has expired. Ask for the new one and try again.' })
+  }
+
+  // Only now, with a live code in hand, is an account made. Every failure above
+  // returns having created nobody.
+  if (!req.user) {
+    const guestId = await admitAsGuest(share)
+    signIn(res, await createSession(guestId))
+    return res.json({ board: { id: share.board_id, name: share.name } })
   }
 
   res.json({ board: await admit(share, req.user) })

@@ -42,11 +42,14 @@ export default function BenchRail({ side }: { side: Side }) {
           <motion.button
             key={t.id}
             layout
-            initial={{ opacity: 0, scale: 0.6 }}
+            initial={{ opacity: 0, scale: 0.92 }}
             animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.6 }}
-            whileHover={{ scale: 1.12 }}
-            whileTap={{ scale: 0.92 }}
+            exit={{ opacity: 0, scale: 0.92 }}
+            // 1.04, not 1.12. This is a 32px chip in a rail the coach sweeps to
+            // read shirt numbers, so a 12% jump set every chip springing in turn.
+            // Enough to say "this is the one under the pointer" and no more.
+            whileHover={{ scale: 1.04 }}
+            whileTap={{ scale: 0.94 }}
             transition={spring}
             title={`Bring on number ${t.number}`}
             onClick={() => unbenchToken(t.id, isHome ? 22 : 78, 92)}

@@ -1,6 +1,6 @@
 import LegalPage, { Clause } from './LegalPage'
 
-const UPDATED = '27 July 2026'
+const UPDATED = '29 July 2026'
 
 export default function TermsOfService() {
   return (
@@ -25,8 +25,8 @@ export default function TermsOfService() {
       <Clause heading="Your account">
         <p>
           Creating an account allows your boards to be saved and retrieved. You are responsible for
-          maintaining the confidentiality of your password and of your security question's answer,
-          and for all activity that occurs under your account.
+          maintaining the confidentiality of your password, of your security question's answer, and
+          of any recovery codes you are given, and for all activity that occurs under your account.
         </p>
         <p>
           If you forget your password, answering your security question lets you set a new one.
@@ -34,6 +34,13 @@ export default function TermsOfService() {
           existing sessions for the account, as does changing your password while signed in.
           Deleting your account removes its boards immediately, and no backup is retained from which
           they could be restored.
+        </p>
+        <p>
+          You may turn on two-step sign-in, which adds a code from an authenticator app to your
+          password. With it on, that code is also required before your security question can reset
+          anything. You are given ten recovery codes when you turn it on, shown once, and each works
+          a single time. If you lose both the authenticator app and those codes, access to that
+          account cannot be restored by us or by anyone else, and its boards cannot be recovered.
         </p>
       </Clause>
 

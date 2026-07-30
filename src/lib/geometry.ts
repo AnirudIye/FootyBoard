@@ -62,6 +62,35 @@ export function quadraticPoints(
   return out
 }
 
+/**
+ * The three corners of a triangular zone, from the two corners of the drag that
+ * made it. Returned flat as [apexX, apexY, ...base], apex first.
+ *
+ * A triangle is stored the way a box and an oval are — the two points of the
+ * drag, nothing else — and grows its third corner here, on the way to the
+ * screen. That is not a saving of eight bytes. Every dragged zone then has the
+ * same four numbers in `points`, so `shiftDrawing`, `shiftAttached`, the
+ * marquee and the selection outline go on treating them alike instead of
+ * acquiring a case, and the outline in particular comes out right for free:
+ * `bboxOf` of the drag is exactly the box this fills.
+ *
+ * **The apex stays with the start of the drag**, which is the one place a
+ * triangle differs from the two symmetric shapes beside it and the reason this
+ * does not normalise the box first. A box dragged up-right and a box dragged
+ * down-left are the same box, so `zoneRect` may take `Math.min` and lose the
+ * direction; a triangle dragged the other way is a triangle pointing the other
+ * way, and a coach drawing a funnel back towards their own goal wants that.
+ * Drag from the point towards the base and the shape follows the hand.
+ *
+ * Only the vertical axis, deliberately. A rule that also aimed the apex left or
+ * right would have to decide which delta dominates, which makes the shape flip
+ * under a hand that wobbles near the diagonal — and a sideways triangle is not
+ * what the pressing traps and passing triangles this is for are drawn as.
+ */
+export function triangleCorners(x0: number, y0: number, x1: number, y1: number): number[] {
+  return [(x0 + x1) / 2, y0, x0, y1, x1, y1]
+}
+
 /** Axis-aligned bounds of a flat [x,y,...] point list. */
 export function bboxOf(points: number[]): PitchBox {
   let minX = Infinity

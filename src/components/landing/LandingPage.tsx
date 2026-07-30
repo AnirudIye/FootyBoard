@@ -15,7 +15,7 @@ import { SpecularButton } from './fx/SpecularButton'
 import PlasmaWave from './fx/PlasmaWave'
 import DotField from './fx/DotField'
 import { useReducedMotion } from '../../hooks/useReducedMotion'
-import { useAuthStore } from '../../store/authStore'
+import { useAuthStore, selectSignedIn, selectEmail } from '../../store/authStore'
 
 // The page's three greens, named once. The signal is the accent token itself;
 // the deep and the pale are the ends of the headline's own ramp.
@@ -215,7 +215,12 @@ function JoinByCodeLink({ className = '' }: { className?: string }) {
 }
 
 function Navbar() {
-  const signedIn = useAuthStore((s) => s.email)
+  const signedIn = useAuthStore(selectSignedIn)
+  // Two facts, not one. This header used to read the address and use it as both,
+  // which worked until an account could exist without one: a guest admitted by a
+  // join code is signed in and has nothing to print, and printing the flag
+  // instead renders an empty span, since React draws booleans as nothing.
+  const email = useAuthStore(selectEmail)
 
   return (
     <div className="relative">
@@ -245,7 +250,7 @@ function Navbar() {
         <div className="flex items-center gap-2">
           {signedIn ? (
             <span className="hidden font-mono text-[11px] uppercase tracking-[0.1em] text-foreground/50 sm:inline">
-              {signedIn}
+              {email ?? 'Guest'}
             </span>
           ) : (
             <>
