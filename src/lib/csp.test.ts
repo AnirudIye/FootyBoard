@@ -1,33 +1,39 @@
 import { describe, it, expect } from 'vitest'
 
+import { DOCUMENT_CSP } from './csp.js'
+
 // Read through Vite's own `?raw` rather than `node:fs`. This file sits under
 // `src`, which is typechecked by tsconfig.app.json with `types: ["vite/client"]`
 // and no node types, and adding them here would loosen the whole app to get at
-// two config files.
+// three config files.
 import viteConfigSource from '../../vite.config.ts?raw'
+import serverEntrySource from '../../server/src/index.js?raw'
 import vercelConfigSource from '../../vercel.json?raw'
 
 /**
- * The policy is written twice and has to stay one policy.
+ * Three things deliver this policy, and they have to stay one policy.
  *
  * `vite.config.ts` injects it as a `<meta>` tag so the built output is never
- * unprotected, and `vercel.json` sends it as a real header because a `<meta>`
- * CSP silently ignores `frame-ancestors`, which is the directive clickjacking
- * protection actually rests on. Neither can be dropped: the tag covers a host
- * that forgets the header, and the header covers what the tag cannot express.
+ * unprotected; `vercel.json` sends it as a real header because a `<meta>` CSP
+ * silently ignores `frame-ancestors`, which is the directive clickjacking
+ * protection actually rests on; and `server/src/index.js` sends it when
+ * `SERVE_STATIC=true` makes that process the origin. None can be dropped: the
+ * tag covers a host that forgets the header, the header covers what the tag
+ * cannot express, and the server is the only one of the three present on a
+ * self-hosted deploy.
  *
- * Two copies of a security control is how one of them quietly stops matching.
- * This repo has already shipped that failure several times, most recently a
- * team colour that drifted from its own token while a comment claimed they
- * matched. So the drift is asserted rather than trusted to review.
+ * **This file used to compare two copies by regex, and the third delivery was
+ * added without it noticing.** The API served `dist/` under its own
+ * `default-src 'none'`, so the page loaded with its own scripts forbidden and
+ * nothing failed anywhere. Two of the three import the policy from
+ * `src/lib/csp.js` now, so they cannot disagree; `vercel.json` is JSON, can
+ * import nothing, and is the one copy still kept in step by hand. That is what
+ * the first test below is for.
+ *
+ * The other two tests are about the imports staying imports. A re-declared
+ * literal would pass a value comparison on the day it was written and drift
+ * afterwards, which is exactly how this got here.
  */
-
-/** The array literal in vite.config.ts, joined the way the plugin joins it. */
-function policyFromViteConfig(): string {
-  const block = viteConfigSource.match(/const CSP = \[([\s\S]*?)\]\.join\('; '\)/)
-  if (!block) throw new Error('could not find the CSP array in vite.config.ts')
-  return [...block[1].matchAll(/^\s*"([^"]+)",/gm)].map((m) => m[1]).join('; ')
-}
 
 interface VercelHeader {
   key: string
@@ -49,8 +55,8 @@ function policyFromVercelJson(): string {
 }
 
 describe('content security policy', () => {
-  it('is the same policy in the meta tag and the Vercel header', () => {
-    expect(policyFromVercelJson()).toBe(policyFromViteConfig())
+  it('is the same policy in vercel.json as in the module the other two import', () => {
+    expect(policyFromVercelJson()).toBe(DOCUMENT_CSP)
   })
 
   it('sends the header on every path, not just the document', () => {
@@ -61,6 +67,20 @@ describe('content security policy', () => {
     // The whole reason the header exists. A `<meta>` CSP drops frame-ancestors
     // without complaining, so losing it here loses it everywhere.
     expect(policyFromVercelJson()).toContain("frame-ancestors 'none'")
+  })
+
+  it('has the meta tag import the policy rather than restate it', () => {
+    expect(viteConfigSource).toMatch(/import \{ DOCUMENT_CSP \} from '\.\/src\/lib\/csp\.js'/)
+    // A re-declared array is the shape the drift came in last time.
+    expect(viteConfigSource).not.toMatch(/const CSP = \[/)
+  })
+
+  it('has the API import the document policy, so SERVE_STATIC serves a usable page', () => {
+    // The regression this file exists for. Without this import the API sends
+    // `default-src 'none'` on index.html and the app never boots, while every
+    // status code and content type stays correct.
+    expect(serverEntrySource).toMatch(/import \{ DOCUMENT_CSP \} from '\.\.\/\.\.\/src\/lib\/csp\.js'/)
+    expect(serverEntrySource).toMatch(/DOCUMENT_CSP/)
   })
 })
 

@@ -16,6 +16,13 @@ import { assistantRouter } from './routes/assistant.js'
 import { TooManyRequests } from './rateLimit.js'
 import { ORIGIN, APP_ENV, isProduction, isAllowedOrigin } from './env.js'
 
+// The second import that crosses into the frontend tree, after `boardSchema.js`
+// in `validate.js` and for the same reason: this process serves the document
+// when `SERVE_STATIC` is on, so it needs the document's policy, and there must
+// be exactly one of those. See `src/lib/csp.js`. Deploying the API without
+// `src/lib/` beside it breaks it at boot.
+import { DOCUMENT_CSP } from '../../src/lib/csp.js'
+
 const PORT = Number(process.env.PORT ?? 8787)
 const INSTANCE_LABEL = process.env.INSTANCE_LABEL ?? `pid-${process.pid}`
 
@@ -82,26 +89,58 @@ if (TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(TRUST_PROXY) ? Number(TRUST
 app.disable('x-powered-by')
 
 /**
- * Every response here is JSON. Nothing this process serves is a document, so
- * the policy says exactly that: no scripts, no styles, no images, no
- * connections, nothing. `default-src 'none'` is the strongest statement
- * available and costs nothing, because there is nothing to permit.
+ * The policy for this API's own replies, which are JSON and nothing else.
  *
- * That is also its limit, and worth being plain about: a CSP only governs the
- * response carrying it, so this one protects the API's own replies and says
- * nothing about the app. The document policy belongs on whatever serves
- * `index.html`, which in development is Vite and in production is the static
- * host, neither of which passes through here.
+ * No scripts, no styles, no images, no connections, nothing. `default-src
+ * 'none'` is the strongest statement available and costs nothing, because there
+ * is nothing to permit.
  *
  * `frame-ancestors` restates `X-Frame-Options` in the form modern browsers
  * actually read; the older header stays for the ones that do not.
+ *
+ * **This used to be the only policy this file knew, and that shipped a blank
+ * page.** The comment here said the document policy "belongs on whatever serves
+ * `index.html`, which in development is Vite and in production is the static
+ * host, neither of which passes through here" — which stopped being true in
+ * `6a4ce0b`, when `SERVE_STATIC` made this process the static host. Nothing
+ * flagged it, because serving a file does not look like it touches a policy set
+ * a hundred lines earlier. See `policyFor` below and `src/lib/csp.js`.
+ *
+ * **Do not loosen this to fix a document.** Its tightness is the point, it is
+ * what protects the JSON, and the document is a different response with a
+ * different policy.
  */
-const CONTENT_SECURITY_POLICY = [
+const API_CONTENT_SECURITY_POLICY = [
   "default-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
   "frame-ancestors 'none'",
 ].join('; ')
+
+/**
+ * Whether this process is also the origin serving the page.
+ *
+ * Read once, here, rather than at each use site: the flag decides two things
+ * that have to agree — which policy a response carries, and whether `dist/` is
+ * mounted at all — and two reads of `process.env` are two chances to spell the
+ * literal differently. The value is the string `true` and nothing else.
+ */
+const SERVES_DOCUMENTS = process.env.SERVE_STATIC === 'true'
+
+/**
+ * Which policy this request's response should carry.
+ *
+ * When this process answers only JSON, every response is an API response and
+ * gets the tight policy. When it is also the origin, the split is by path and it
+ * is the same test the static fallback below uses, deliberately: a rule about
+ * which requests are documents that was written out twice would be a rule that
+ * eventually disagrees with itself, and this file has already been bitten by
+ * exactly that.
+ */
+function policyFor(req) {
+  if (!SERVES_DOCUMENTS) return API_CONTENT_SECURITY_POLICY
+  return req.path.startsWith('/api/') ? API_CONTENT_SECURITY_POLICY : DOCUMENT_CSP
+}
 
 /**
  * A year, subdomains included, and no `preload`.
@@ -137,11 +176,11 @@ const HSTS = 'max-age=31536000; includeSubDomains'
  * and a claim with a whole class of exceptions in it is one that has quietly
  * stopped being true.
  */
-app.use((_req, res, next) => {
+app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Referrer-Policy', 'no-referrer')
   res.setHeader('X-Frame-Options', 'DENY')
-  res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY)
+  res.setHeader('Content-Security-Policy', policyFor(req))
   /**
    * HSTS follows the deployment signal, not the connection.
    *
@@ -338,7 +377,7 @@ app.use('/api/assistant', assistantRouter)
  * anything under `/api` so a missing endpoint reads as a missing endpoint rather
  * than as a page.
  */
-if (process.env.SERVE_STATIC === 'true') {
+if (SERVES_DOCUMENTS) {
   const dist = fileURLToPath(new URL('../../dist', import.meta.url))
 
   // `index: false` so the directory handler does not answer `/` before the

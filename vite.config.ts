@@ -2,12 +2,15 @@
 import { defineConfig, type Plugin } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
+import { DOCUMENT_CSP } from './src/lib/csp.js'
+
 /**
- * The app's own Content-Security-Policy.
+ * The app's own Content-Security-Policy, injected as a `<meta>` tag.
  *
- * The API sets one too, but that governs nothing a browser renders: it answers
- * JSON, so its policy applies to a document nobody looks at. The policy that
- * matters is the one on the page, and it has to be delivered with the page.
+ * **The policy itself lives in `src/lib/csp.js`**, which is the only place it is
+ * spelled out. Three things deliver it — this tag, `vercel.json`, and the API
+ * when `SERVE_STATIC=true` makes it the origin — and the one that arrived last
+ * arrived without it, which is the whole story in that file's header.
  *
  * Injected at build time rather than written into `index.html`, because a
  * static tag applies in dev as well and Vite's HMR client needs an inline
@@ -15,42 +18,18 @@ import react from '@vitejs/plugin-react'
  * shipped policy to keep dev working, dev simply has no policy and the built
  * output has a strict one.
  *
- * `frame-ancestors` is here for the copy-paste: a `<meta>` CSP silently ignores
- * it, along with `report-uri` and `sandbox`. Clickjacking protection therefore
- * still depends on the host sending this as a real header. Doing that is
- * strictly better than this tag and is what a deploy should do.
+ * `frame-ancestors` is in the policy for the copy-paste: a `<meta>` CSP silently
+ * ignores it, along with `report-uri` and `sandbox`. Clickjacking protection
+ * therefore still depends on the host sending this as a real header. Doing that
+ * is strictly better than this tag and is what a deploy should do.
  */
-const CSP = [
-  "default-src 'self'",
-  "script-src 'self'",
-  // Framer Motion and React write inline `style` attributes on nearly every
-  // animated element, and an attribute cannot carry a nonce. This is the one
-  // relaxation the app genuinely needs.
-  "style-src 'self' 'unsafe-inline'",
-  // `blob:` covers PNG and GIF export, which draw the stage into a canvas and
-  // hand back an object URL; `data:` covers the inline favicon.
-  "img-src 'self' data: blob:",
-  "font-src 'self'",
-  // Same-origin REST plus the `/ws` room socket. `'self'` already covers a
-  // same-origin websocket in current browsers; the explicit schemes are for
-  // the deploys that put the API on another host.
-  "connect-src 'self' ws: wss:",
-  // WebM and MP4 sequence export, same object-URL route as the images.
-  "media-src 'self' blob:",
-  "worker-src 'self' blob:",
-  "object-src 'none'",
-  "base-uri 'none'",
-  "form-action 'none'",
-  "frame-ancestors 'none'",
-].join('; ')
-
 const contentSecurityPolicy = (): Plugin => ({
   name: 'footyboard-csp',
   apply: 'build',
   transformIndexHtml: (html) =>
     html.replace(
       '<head>',
-      `<head>\n    <meta http-equiv="Content-Security-Policy" content="${CSP}" />`,
+      `<head>\n    <meta http-equiv="Content-Security-Policy" content="${DOCUMENT_CSP}" />`,
     ),
 })
 
