@@ -1,5 +1,7 @@
 import express from 'express'
 import { createServer } from 'node:http'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { migrate, purgeStaleAllowances, closePool } from './db.js'
 import { purgeExpiredSessions, purgeExpiredRevocations } from './sessions.js'
 import { initEncryption } from './crypto.js'
@@ -313,6 +315,46 @@ app.use('/api/boards', sharesRouter)
 app.use('/api/boards', boardsRouter)
 app.use('/api/shares', redeemRouter)
 app.use('/api/assistant', assistantRouter)
+
+/**
+ * Serve the built frontend from this process, when this process is the origin.
+ *
+ * Off by default and opted into with `SERVE_STATIC`, read the way
+ * `RUN_MIGRATIONS` and `RUN_MAINTENANCE` are: development keeps using the Vite
+ * dev server and its `/api` and `/ws` proxy, which is the arrangement that
+ * reloads on save, and nothing about a local run changes.
+ *
+ * **This exists because the app is single-origin and cannot be talked out of
+ * it.** `src/lib/api.ts` fetches `/api...` with no configurable base,
+ * `connection.ts` builds the socket URL from `window.location.host`, and the
+ * session cookie is `SameSite=lax`, so it is not sent cross-site at all. Putting
+ * the page on one host and this on another does not cost a config line, it costs
+ * the cookie, and a static host cannot proxy the WebSocket upgrade either. One
+ * origin serving both halves is the only shape that works, and on a host with a
+ * shell that means this process.
+ *
+ * Mounted here on purpose: after every `/api` router, so no board route is
+ * shadowed by a file, and before the JSON 404 below, which still answers for
+ * anything under `/api` so a missing endpoint reads as a missing endpoint rather
+ * than as a page.
+ */
+if (process.env.SERVE_STATIC === 'true') {
+  const dist = fileURLToPath(new URL('../../dist', import.meta.url))
+
+  // `index: false` so the directory handler does not answer `/` before the
+  // fallback does; the fallback is the one place index.html is sent from.
+  app.use(express.static(dist, { index: false }))
+
+  // A plain middleware rather than a wildcard route: Express 5 parses route
+  // strings with path-to-regexp v8, where a bare '*' is no longer a valid
+  // pattern, and a rule that throws at boot is a worse failure than the one it
+  // was guarding against.
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next()
+    if (req.path.startsWith('/api/')) return next()
+    res.sendFile(join(dist, 'index.html'))
+  })
+}
 
 app.use((_req, res) => res.status(404).json({ error: 'No such endpoint.' }))
 

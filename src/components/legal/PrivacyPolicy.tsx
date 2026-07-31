@@ -1,6 +1,6 @@
 import LegalPage, { Clause } from './LegalPage'
 
-const UPDATED = '29 July 2026'
+const UPDATED = '30 July 2026'
 
 export default function PrivacyPolicy() {
   return (
@@ -17,6 +17,12 @@ export default function PrivacyPolicy() {
           fallback: if you switch it on, a message the on-device assistant does not understand is
           sent to Google, along with a description of what is on your board. It is off until you
           turn it on, and the section below says exactly what travels.
+        </p>
+        <p>
+          Most of that assistant is not artificial intelligence at all. It is a set of rules that
+          ship with the page. Only the optional online fallback uses a general purpose AI model, its
+          tactical answers can be wrong, and none of it is professional coaching advice. The section
+          below called &ldquo;What the AI can and cannot do&rdquo; says so in full.
         </p>
         <p>We do not sell or share anything, and we run no advertising or analytics.</p>
       </Clause>
@@ -136,8 +142,59 @@ export default function PrivacyPolicy() {
           outside our control, which is the honest reason this is a choice and not a default.
         </p>
         <p>
+          <strong className="text-ink">
+            That last point deserves more than a gesture at somebody else's terms.
+          </strong>{' '}
+          Which terms apply depends on the API key the installation was set up with. On Google's
+          free API tier, Google may use what is sent, and the reply it returns, to improve their
+          products, and that can include review by people. On their paid tier they state that they
+          do not. We cannot tell you from here which one you are using, so if a board description is
+          sensitive to you, treat the online assistant as public and leave it off. We do not train
+          any model of our own on anything you type or draw.
+        </p>
+        <p>
           You can withdraw permission at any time in the same panel. The assistant then goes back to
           being offline, instant, and free.
+        </p>
+      </Clause>
+
+      <Clause heading="What the AI can and cannot do">
+        <p>
+          This section exists because claims about AI are easy to make and hard to walk back. It is
+          written to be accurate rather than impressive, and it errs toward saying less.
+        </p>
+        <p>
+          <strong className="text-ink">Most of the assistant is not AI.</strong> Every phrasing it
+          already knows is handled by ordinary rules that ship with the page: pattern matching, no
+          model, no network, no learning of any kind. That covers the majority of what people type
+          at it. We call it an assistant rather than an AI for exactly that reason, and the panel
+          labels itself OFFLINE or HYBRID so you can see which half answered you.
+        </p>
+        <p>
+          <strong className="text-ink">The AI half is a general purpose model, not a football
+          one.</strong>{' '}
+          It is Google's Gemini. We did not build it, train it, or fine tune it on football, and we
+          have not measured it against anything. We make no claim that it is accurate, that it is
+          better than any other tool, or that it performs at the level of a qualified coach.
+        </p>
+        <p>
+          <strong className="text-ink">Its tactical advice can be wrong.</strong> Answers about how
+          to play with or against a shape are generated text. They may be confidently stated and
+          still be mistaken, out of date, or unsuitable for your players. Nothing it says is
+          professional coaching, medical, safeguarding, or officiating advice, and it should not be
+          the only basis for a decision that affects real people, least of all children.
+        </p>
+        <p>
+          <strong className="text-ink">It cannot act on your board on its own.</strong> The model
+          never touches the board directly. It may ask for one of a fixed, published list of actions,
+          our server checks that request against that same list before anything runs, and anything
+          outside it is discarded. Every change it does make goes onto the same undo stack as your
+          own edits, so you can take it back the way you take back anything else.
+        </p>
+        <p>
+          <strong className="text-ink">It makes no decisions about you.</strong> It does not profile
+          you, score you, rank you, or make any automated decision producing legal or similarly
+          significant effects. It reads a message and a description of a pitch, and it answers.
         </p>
       </Clause>
 
