@@ -13,6 +13,15 @@ const PROMPTS = [
   'Read the board',
 ]
 
+/**
+ * The one opener that is offered only once the online half is on.
+ *
+ * A tactical question is the thing the offline assistant cannot answer, so
+ * suggesting it to somebody running offline is suggesting a dead end. The other
+ * four work either way, which is why they are always there.
+ */
+const TACTICS_PROMPT = 'How do I play against a 4-2-3-1?'
+
 const spring = { type: 'spring' as const, stiffness: 380, damping: 32, mass: 0.7 }
 
 interface NoticeSpec {
@@ -156,11 +165,11 @@ export default function Assistant() {
                 <div className="space-y-3">
                   <p className="text-[13px] leading-relaxed text-ink-2">
                     {hybrid
-                      ? 'Tell me what to set up. Everything I recognise runs on your machine. Anything else can go to Google Gemini.'
+                      ? 'Tell me what to set up, or ask how to play with or against a shape. Everything I recognise runs on your machine. Anything else can go to Google Gemini.'
                       : 'Tell me what to set up. I run on your machine, so nothing you type here goes anywhere.'}
                   </p>
                   <div className="flex flex-col gap-1.5">
-                    {PROMPTS.map((p) => (
+                    {(hybrid ? [...PROMPTS, TACTICS_PROMPT] : PROMPTS).map((p) => (
                       <button
                         key={p}
                         onClick={() => submit(p)}

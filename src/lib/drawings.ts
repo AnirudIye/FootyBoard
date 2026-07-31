@@ -32,8 +32,29 @@ export const isDragType = (t: DrawingType): boolean =>
   t === 'curveArrow' ||
   t === 'curvePass' ||
   t === 'zoneRect' ||
-  t === 'zoneEllipse' ||
-  t === 'zoneTriangle'
+  t === 'zoneEllipse'
+
+/**
+ * Types placed by clicking their corners rather than dragging a box.
+ *
+ * The complement of `isDragType` among the shapes, and named rather than
+ * spelled out at each site because three places in `useDrawGesture` ask the same
+ * question: which pointer-down starts or extends a shape, which pointer-move
+ * must *not* rubber-band a second corner, and which pointer-up must leave the
+ * draft standing instead of committing it. Those three answers have to agree, and
+ * a shape that is a click type to one of them and not to the others is a gesture
+ * that half works.
+ *
+ * The two differ only in when they end. A polygon takes as many corners as you
+ * give it and closes on Enter; a triangle closes itself on the third, because
+ * three is the whole of what a triangle is and asking for a keystroke as well
+ * would be asking twice.
+ */
+export const isClickType = (t: DrawingType): boolean =>
+  t === 'zonePoly' || t === 'zoneTriangle'
+
+/** Corners a click-placed shape needs before it becomes one, or 0 for no limit. */
+export const CLICK_CORNERS: Partial<Record<DrawingType, number>> = { zoneTriangle: 3 }
 
 /** Curved types share a control point and a bend direction. */
 export const isCurve = (t: DrawingType): boolean => t === 'curveArrow' || t === 'curvePass'

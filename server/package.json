@@ -12,6 +12,7 @@
     "dev": "node --watch --env-file-if-exists=.env src/index.js",
     "start": "node --env-file-if-exists=.env src/index.js",
     "cluster": "node --env-file-if-exists=.env scripts/cluster.js",
+    "migrate": "node --env-file-if-exists=.env scripts/migrate.js",
     "test": "node --test"
   },
   "dependencies": {

@@ -47,6 +47,9 @@ export default function LegalPage({
             <Link to="/terms" className="transition-colors hover:text-accent">
               Terms of Service
             </Link>
+            <Link to="/accessibility" className="transition-colors hover:text-accent">
+              Accessibility
+            </Link>
             <Link to="/" className="transition-colors hover:text-accent">
               Home
             </Link>

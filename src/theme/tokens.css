@@ -97,6 +97,90 @@
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/*
+  Daylight: the same match, not a different product.
+
+  **This is a counterpart to "floodlit", not an inversion of it.** Inverting the
+  palette gives white-with-neon-green, which is the generic default this design
+  language exists to avoid, and it fails outright on the one colour that matters:
+  `42 224 122` measures 1.75:1 on white, so the accent could not be used for a
+  single word of text or a single control. So the ground keeps the near-neutral
+  green tint the dark palette has in the other direction, and the accent is the
+  same hue taken down to a weight that carries text. It reads as the same product
+  in daylight rather than as a second theme borrowed from somewhere else.
+
+  Every ratio below was measured rather than estimated, on all three grounds,
+  because that is what the dark palette above does and a comment claiming a
+  ratio it does not have is the exact failure this repo keeps finding in itself.
+
+  `color-scheme` is restated rather than inherited. The dark rule above is
+  load-bearing (without it native `<select>` popups render white-on-white), and
+  the same is true here in reverse: left at `dark`, a light page opens a
+  near-black dropdown under near-black text.
+*/
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  /* Ground + surfaces. The direction reverses with the theme: in the dark they
+     lift out of black, here they lift toward white, so a card is still the
+     nearer surface and a well is still the further one. */
+  --paper: 247 249 247;
+  --surface: 255 255 255;
+  --surface-sunken: 238 241 238;
+  --rule: 214 220 215;
+  --rule-strong: 172 181 174;
+
+  /* Ink. 17.56:1, 6.57:1 and 5.15:1 on --paper, and the third step is the one
+     that had to be argued for in the dark palette for the same reason: it is
+     the colour of nearly every 10px and 11px label in the product. It clears
+     4.5:1 on every ground it sits on, --surface-sunken included, which is the
+     tightest at 4.79:1. */
+  --ink: 16 20 17;
+  --ink-2: 82 92 85;
+  --ink-3: 98 108 101;
+  --hero-sub: 62 72 65;
+
+  /* The accent, carried down to where it can be read.
+     5.14:1 on --paper and 5.44:1 on --surface, so it may set text and controls
+     rather than only decorate them, which is the whole reason it is not the
+     floodlit value. Hover goes darker rather than lighter, because on a light
+     ground "more emphasis" is more ink: 6.99:1 on --paper. */
+  --accent: 11 122 60;
+  --accent-hover: 8 99 48;
+  --accent-wash: rgba(11, 122, 60, 0.08);
+  /* No glow on a light ground. The dark theme's is the accent bleeding into
+     black; the same effect here is a smear. Kept as a near-transparent tint so
+     anything consuming the token still resolves, and it simply does not read. */
+  --accent-glow: rgba(11, 122, 60, 0.14);
+
+  /* Selection ground. The mirror of the dark one: there the accent was scaled
+     down until --ink could sit on it, here it is lifted until --ink can, at
+     14.57:1. */
+  --selection: 186 240 208;
+
+  /* The alarm, at the same job and the same floor: 6.08:1 on --paper and
+     6.44:1 on --surface, and --surface is the one that decides because the
+     toolbar it sits in is bg-surface/95. */
+  --alert: 178 44 20;
+
+  /* Depth from black is wrong here; on a light ground it is depth from the
+     page. Much shallower, because a heavy shadow on white reads as dirt. */
+  --shadow-1: 0 1px 2px rgba(16, 20, 17, 0.08);
+  --shadow-2: 0 18px 40px -18px rgba(16, 20, 17, 0.22);
+}
+
+/* The same lift the dark theme gives a reader who asked the OS for more than
+   the floor, in the other direction: the two secondary inks go darker and the
+   hairline gains enough weight to carry meaning. --ink-3 reaches 8.02:1 on
+   --paper and --rule goes from 1.32:1 to 3.17:1. */
+@media (prefers-contrast: more) {
+  :root[data-theme='light'] {
+    --ink-2: 54 63 57;
+    --ink-3: 70 79 73;
+    --rule: 132 143 135;
+  }
+}
+
 html,
 body,
 #root {

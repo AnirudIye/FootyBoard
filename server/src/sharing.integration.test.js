@@ -642,6 +642,43 @@ test('locking the board stops a member editing, on the instance they are not on'
   b.close()
 })
 
+/**
+ * The direction the lock tests never covered, which is the whole point of the
+ * feature.
+ *
+ * Instructor mode is "the owner demonstrates and everybody watches". Every
+ * assertion above is about the watching half: a member's edits are dropped, and
+ * their REST save is refused. Nothing asserted that the owner's edits *arrive*,
+ * and a lock that silences the room including the person it exists to give the
+ * floor to is a feature that does nothing at all.
+ */
+test('the owner demonstrating on a locked board is seen by the members', async () => {
+  const a = await openSocket(A, boardId, owner.cookie)
+  const b = await openSocket(B, boardId, collaborator.cookie)
+
+  const locked = await json(
+    await call(A, `/boards/${boardId}/lock`, owner.cookie, {
+      method: 'PATCH',
+      body: JSON.stringify({ locked: true }),
+    }),
+  )
+  assert.equal(locked.status, 200)
+  await waitForMessage(b, (m) => m.type === 'lock' && m.locked === true)
+
+  a.send(JSON.stringify({ type: 'patch', entity: 'token', id: 'demo', patch: { x: 44, y: 55 } }))
+
+  const relayed = await waitForMessage(b, (m) => m.type === 'patch' && m.id === 'demo')
+  assert.deepEqual(relayed.patch, { x: 44, y: 55 })
+
+  // And on the other instance, which is the case the cached lock could break:
+  // the member is served by B and the lock was set on A.
+  a.send(JSON.stringify({ type: 'add', entity: 'drawing', item: { id: 'demo-arrow', type: 'arrow', points: [1, 2, 3, 4], color: '#fff', thickness: 2 } }))
+  await waitForMessage(b, (m) => m.type === 'add' && m.item?.id === 'demo-arrow')
+
+  a.close()
+  b.close()
+})
+
 test('a member joining an already-locked board is told so, and cannot edit', async () => {
   // Not the same path as being locked mid-session: this one arrives in the
   // welcome message rather than as a broadcast, so it has to be right too.

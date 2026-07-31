@@ -55,6 +55,12 @@ const FATAL: Record<number, string> = {
   // running out. Saying "sign in" alone read as though nothing had changed.
   4401: 'Your session has ended. Sign in again to collaborate on this board.',
   4403: 'This board is no longer shared with you.',
+  // The row is gone, so a retry cannot succeed: it re-authorizes against a
+  // board that does not exist and comes back as a 4403 saying the wrong thing,
+  // one backoff later. This code has always been on the wire from
+  // `reconcileRooms`; it became the ordinary close for a deletion when the
+  // route started publishing one.
+  4404: 'This board has been deleted.',
 }
 
 export class RoomConnection {

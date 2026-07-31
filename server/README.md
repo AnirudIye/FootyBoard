@@ -23,7 +23,11 @@ npm --prefix server run cluster
 PORT+1… and round-robins both HTTP and WebSocket traffic across them from
 :8787. `GET /api/health` reports which instance answered.
 
-In production, skip step 1 and point `DATABASE_URL` at a managed Postgres.
+In production, skip step 1 and point `DATABASE_URL` at a managed Postgres. Do
+not point it at a superuser: provision the restricted role with
+`sql/runtime-role.sql` and require TLS with `sslmode=verify-full`. See **The
+database credential** below, which is also where the migration-role question is
+settled.
 
 ## Endpoints
 
@@ -124,6 +128,238 @@ which is why the default is a modest 10 rather than "as many as possible".
 not atomic against concurrent DDL: two instances booting together can both find
 a table missing and then collide inserting into the system catalogue. The lock
 serialises them — one migrates, the rest wait and find the work done.
+
+## The database credential
+
+`DATABASE_URL` is the most powerful secret this service holds, and for most of
+its life it was worth considerably more than anyone using it assumed.
+
+The API connects as `soccerboard`, which is SUPERUSER, and CREATEROLE, CREATEDB,
+BYPASSRLS and REPLICATION besides, and which owns every table. So the string is
+not a grant to read and write the application's data. It is control of the
+Postgres host: the same credential the API uses for `SELECT` will serve
+`DROP TABLE boards`, `TRUNCATE`, `ALTER`, `CREATE ROLE`, and `COPY ... TO
+PROGRAM`, which is a shell. **There is no backup behind board data**, so the
+destructive half of that list is not an incident anyone recovers from, and the
+ways a connection string escapes are mundane: a log line, a screenshot, a stack
+trace in a bug report, an environment variable copied into the wrong project.
+
+### The runtime role
+
+`sql/runtime-role.sql` provisions the role production should actually connect
+as. Run it once against the database, as a superuser or as the role that owns
+the tables:
+
+```bash
+psql "$ADMIN_DATABASE_URL" -f server/sql/runtime-role.sql
+# then set the password out of band, so it never lands in a file or a history:
+psql "$ADMIN_DATABASE_URL" -c "ALTER ROLE soccerboard_app PASSWORD '…'"
+```
+
+It creates a role with `CONNECT` on the database, `USAGE` on the schema,
+`SELECT/INSERT/UPDATE/DELETE` on the tables, `USAGE` on sequences, and nothing
+else. No superuser, no ownership, no `CREATE`. Point `DATABASE_URL` at it and a
+leaked connection string is worth what people already thought it was worth.
+
+The grants are `ON ALL TABLES IN SCHEMA public` plus `ALTER DEFAULT PRIVILEGES`
+rather than a list of table names, and that is not tidiness. A list is correct on
+the day it is written and wrong at the next migration, and it fails in
+production rather than in the test that added the table. `ALTER DEFAULT
+PRIVILEGES` attaches to the role that creates objects, which is why the file
+asks who that is: name the wrong one and every table added after today lands
+outside the default, with the failure arriving a release later.
+
+`src/databasePrivileges.test.js` holds the whole boundary as assertions against
+the real database, including a table created after provisioning to prove the
+default privileges actually work.
+
+**What it does not buy.** `DELETE FROM boards` still works, and no arrangement of
+grants can prevent it while the application is still able to delete a board: the
+hourly sweeps and the cascade behind account deletion are unqualified deletes the
+API issues itself. The role confines the damage to rows, inside a schema that
+survives, by a credential that cannot then rewrite the tables or reach the host.
+That is a real reduction and it is not the same thing as safety. The control that
+would close it is a backup, which this deployment does not have.
+
+### Why the runtime role is not the migration role
+
+`migrate()` runs DDL on every boot, so a role without `CREATE` cannot start the
+app at all. It fails on the first statement:
+
+```
+migrate() as the runtime role
+  ERROR:  permission denied for schema public
+  SQLSTATE: 42501
+```
+
+The tempting objection is that the statements are all `IF NOT EXISTS`, so against
+an existing schema they change nothing and ought to be free. They are not.
+Postgres checks the schema privilege **before** it checks existence, so
+`CREATE TABLE IF NOT EXISTS users` is refused even though `users` is right there
+and the statement would have done nothing. `ALTER TABLE ... ADD COLUMN IF NOT
+EXISTS` and `CREATE INDEX IF NOT EXISTS` fail the same way, on ownership. There
+is no arrangement of grants that lets a role run this migration without also
+letting it drop the tables, because they are the same privilege.
+
+So the two cannot be one role, and the question is what to do about it.
+
+### What to do at deploy time
+
+**The recommendation is two roles: a privileged one that migrates and a
+restricted one that serves.** It is the only option that actually closes the
+finding, because any arrangement where the serving credential can run `migrate()`
+is one where the serving credential can drop the tables.
+
+The cost, stated plainly rather than buried: **the deploy gains an ordered
+step.** The migration runs first,
+under the privileged URL, and only then do the instances roll with the restricted
+one. What you are spending is the property `migrate()` was built for, which is
+that several instances can boot simultaneously and the advisory lock sorts them
+out, with no separate migration stage to forget or to sequence. You also lose
+atomicity between schema and code: skip the step and the instances come up
+against an old schema and fail at query time, later and further from the cause
+than a failed boot would have been.
+
+**The switch that makes it possible now exists**, and the sequence is:
+
+```bash
+# 1. Apply the schema, under the URL that owns the tables. Once, before any
+#    instance rolls.
+DATABASE_URL="$ADMIN_DATABASE_URL" npm --prefix server run migrate
+
+# 2. Roll the instances with the restricted URL and the boot migration off.
+RUN_MIGRATIONS=false DATABASE_URL="$RUNTIME_DATABASE_URL" npm --prefix server start
+```
+
+`RUN_MIGRATIONS` is read the way `RUN_MAINTENANCE` is: anything but the literal
+`false` migrates, so an unset value is exactly today's behaviour and nobody who
+ignores this pays anything. `scripts/migrate.js` deliberately does **not**
+consult it — whoever runs that command is precisely the person who has set it to
+`false` on that host, so honouring it there would turn the migration step into a
+no-op reporting success, which is the one failure that would make this
+arrangement worse than not having it.
+
+Proved rather than reasoned about: `databasePrivileges.test.js` starts a real
+instance as the restricted role with `RUN_MIGRATIONS=false` and asserts it
+serves, beside the older test asserting that the same role cannot run
+`migrate()`. The two together are the whole argument.
+
+**What is deployable today, with no code change at all, is the middle rung:
+connect as a non-superuser role that owns the tables.** That keeps boot-time
+migration exactly as it is, and it still removes most of the finding. Verified
+against the real database rather than assumed: such a role runs `migrate()` to
+completion, and is refused `pg_authid`, `COPY ... TO PROGRAM`,
+`ALTER ROLE ... SUPERUSER`, and every table belonging to any other role. What it
+keeps is `DROP`, `TRUNCATE` and `ALTER` on its own tables, which is precisely the
+part that needs the two-role split to remove. It is strictly better than a
+superuser and strictly worse than the runtime role, and it is one `ALTER TABLE
+... OWNER TO` away.
+
+**The test suite stays on a privileged URL, deliberately.** Twenty-one of the
+twenty-nine files in `src/*.test.js` call `migrate()`, so pointing the suite at
+the runtime role would fail every one of them for the right reason. The suite
+runs against the development database as `soccerboard`; that is not the thing
+being hardened. The one test that does connect as the runtime role starts its
+own instance with `RUN_MIGRATIONS=false`, which is the deployment being
+described rather than the suite changing roles.
+
+### TLS on the connection
+
+`pg` does not negotiate TLS unless it is asked to, and nothing in this repo asks.
+Against a managed Postgres that means the password and every board row cross
+somebody else's network in cleartext, which undoes the encryption at rest that
+`ENCRYPTION_KEY` provides in the one place the data is easiest to intercept.
+
+Set it in the connection string, which is the only place it can be set without
+changing `db.js`:
+
+```
+DATABASE_URL=postgres://soccerboard_app:…@db.example.com:5432/app?sslmode=verify-full
+```
+
+**`sslmode` does not mean here what it means in `psql`**, and that is worth
+knowing before you go and test a connection string. libpq reads `require` as
+"encrypt but verify nothing", which stops passive capture and not an active
+attacker who can answer for the host. node-postgres does not follow libpq:
+`pg-connection-string` treats `prefer`, `require` and `verify-ca` as aliases for
+`verify-full`, and emits a security warning asking you to say what you mean. So a
+URL proved out with `psql` has proved nothing about what this process will
+accept, and the discrepancy runs in both directions. Write `verify-full` and the
+two agree.
+
+`verify-full` requires the server certificate to chain to a trusted CA and to
+match the hostname; add `&sslrootcert=/path/to/ca.pem` where the system trust
+store does not carry the provider's CA. `uselibpqcompat=true` switches the driver
+back to libpq's weaker reading, and is named here only so it is not mistaken for
+a fix. Local development stays plain: it is a loopback socket to a database this
+repo started, so there is no network to protect.
+
+### The deploy checklist now mentions all of this
+
+This section used to be a complaint, and it is kept as a resolved one because the
+gap it described is the kind that reopens. `handoff.md` treated four environment
+variables as the deploy (`APP_ENV`, `SESSION_SECRET`, `ENCRYPTION_KEY` and
+`TRUST_PROXY`) and **`DATABASE_URL` was not among them**, which is how the most
+powerful secret here ended up being the one nobody was asked to think about. That
+checklist now carries it, says which role it should name, and says the two-role
+split makes the migration an ordered step rather than a boot-time convenience.
+
+**If you add an environment variable that has to be right in production, add it
+to that checklist in the same change.** The failure mode is not that the variable
+is undocumented; it is that a list which looks complete is trusted as complete.
+
+## Generating the secrets
+
+Two values have to be generated before a production boot, and one of them cannot
+be regenerated later. Both are 32 random bytes as hex, and one command makes
+either:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Run it twice and use the two outputs for the two variables. Do not reuse one
+value for both: they protect different things, and a single string means one
+disclosure costs you both.
+
+| Variable | What it must be | Enforced by | If it changes |
+| --- | --- | --- | --- |
+| `SESSION_SECRET` | at least 32 characters, not the committed placeholder | `env.js`, refuses to boot in production | everyone signs in again; recovery questions reshuffle |
+| `ENCRYPTION_KEY` | **exactly** 32 bytes of hex, so 64 characters | `crypto.js`, refuses to boot unless `APP_ENV` is development or test | **every stored board becomes permanently unreadable** |
+
+**`ENCRYPTION_KEY` is the one to be careful with, and the care is not technical.**
+It is the AES-256-GCM key every board is sealed under. There is no re-encryption
+path in this tree, so rotating it and losing it are the same operation from the
+data's point of view: the old boards decrypt with a key you no longer have, and
+nothing in the process will tell you until somebody opens one. Nothing can
+enforce that you kept it, which is exactly why it is written down here. Put it in
+whatever your host calls a secret store before the first deploy, and put a copy
+somewhere that survives the host.
+
+`SESSION_SECRET` is safe to rotate whenever you like; the cost is that live
+sessions stop resolving and people sign in again. Its name undersells it: it
+signs nothing (sessions are opaque random tokens stored as SHA-256) but it keys
+the HMAC deciding which security question an address with **no** account is
+shown, and that has to be uncomputable offline or recovery step one becomes a way
+to test which addresses are registered.
+
+Two more credentials are not generated by that command:
+
+- **The database password.** See "the runtime role" above, which sets it out of
+  band so it never lands in a file or a shell history. In production this is the
+  restricted role, not the owner, and the URL carries `sslmode=verify-full`.
+- **`GEMINI_API_KEY`** is issued rather than generated, free, from
+  <https://aistudio.google.com/apikey>. It is entirely optional: unset, the
+  assistant is offline, instant and costs nothing, and the only thing it loses is
+  the fallback for phrasings the parser does not know and the tactical advice
+  that rides on it. It is read server-side only and never reaches the browser.
+
+The remaining production settings are not secrets and cannot be generated, but
+three of them will stop a boot or quietly weaken it if they are wrong:
+`APP_ENV=production`, `CORS_ORIGIN` as the exact scheme-host-port the frontend is
+served from with no trailing slash, and `TRUST_PROXY` set if and only if
+something in front overwrites `X-Forwarded-For`. `handoff.md`'s "Before a deploy"
+has the full list and what each failure looks like.
 
 ## Security
 

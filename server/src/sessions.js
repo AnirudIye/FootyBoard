@@ -35,6 +35,26 @@ import { closeSessionSockets } from './realtime.js'
  * here therefore leaves a `session_revocations` row behind, and an instance
  * catching up after its listener reopens reads those rows and sweeps its rooms
  * again. See the reconciliation in `realtime.js` for the reading half.
+ *
+ * **There is a second rule now, and it is about lock order: the account row
+ * first, then anything hanging off it.** Every transaction here touches several
+ * of one account's tables, and two of them used to take `password_resets` and
+ * `users` in opposite orders — `consumeResetToken` claimed the token and then
+ * updated the password, while `POST /api/auth/password` updated the password and
+ * then voided the tokens. Each ends up holding what the other is waiting for,
+ * which is a deadlock, and Postgres resolves it by killing one of them with
+ * `40P01`. On the password-recovery path that surfaces as a 500, and it is a
+ * reset that did not happen, at the moment somebody believes an intruder is in
+ * their account.
+ *
+ * The order is forced rather than chosen. `DELETE /api/auth/me` deletes the
+ * users row and lets the cascade take `sessions`, `password_resets`, `boards`
+ * and the rest; a parent delete cannot be made to take a child row first, so any
+ * order putting a child ahead of `users` is one that account deletion is
+ * structurally unable to obey. Users-first is the only order all of them can
+ * share, so `destroyAllSessions` takes that row as its transaction's first
+ * statement, and takes it here rather than asking each caller to remember —
+ * which is the argument the eviction rule above already makes.
  */
 
 /** The socket half, applied on this instance and published to every other. */
@@ -63,10 +83,19 @@ const evict = (rows) => closeSessionSockets(rows.map((row) => row.id))
  * The moment of revocation is the database's own clock rather than this
  * process's, because it is what another instance's watermark is compared
  * against and those two must be reading the same clock.
+ *
+ * **`doomed` exists to fix an order, not to select anything the delete could not
+ * select itself.** The three shapes below scan three different indexes — by
+ * token, by account, by expiry — so two of them deleting an overlapping set of
+ * rows could take those rows in opposite orders and deadlock. Locking by primary
+ * key first means they cannot, whatever their scans do. It costs the hot path
+ * (one sign-out, one row) a second indexed lookup.
  */
 const endingSessions = (where) => `
-  WITH gone AS (
-    DELETE FROM sessions WHERE ${where} RETURNING id, user_id
+  WITH doomed AS (
+    SELECT id FROM sessions WHERE ${where} ORDER BY id FOR UPDATE
+  ), gone AS (
+    DELETE FROM sessions WHERE id IN (SELECT id FROM doomed) RETURNING id, user_id
   ), recorded AS (
     INSERT INTO session_revocations (session_id, user_id, revoked_at)
     SELECT id, user_id, ${DB_NOW_MS} FROM gone
@@ -88,35 +117,59 @@ export async function destroySession(token) {
   return rows.length
 }
 
+/** Takes the account row, which is the first thing any of these transactions does. */
+const LOCK_ACCOUNT = 'SELECT id FROM users WHERE id = $1 FOR UPDATE'
+
 /**
  * End every session for an account, along with whatever else has to happen in
  * the same breath.
  *
- * `within` runs inside the transaction that deletes them and returns the
- * account's id, or null to abandon the whole thing. That shape is the point:
+ * `within` runs inside the transaction that deletes them and returns a truthy
+ * value to go on, or null to abandon the whole thing. That shape is the point:
  * the password change and the session destruction commit together, so a failure
  * cannot leave a changed password with the old sessions still live, and there
  * is no arrangement of these statements in which a caller destroys sessions and
  * forgets to evict them.
  *
+ * **The account is named up front rather than learned from `within`**, and that
+ * is the whole of the lock-order rule at the top of this file. The id used to
+ * arrive as `within`'s return value, which meant this function could not
+ * possibly take the users row first: it did not know which row until the
+ * caller's own statements had already run and taken their locks. Now it does,
+ * so `LOCK_ACCOUNT` runs first and every transaction on one account is
+ * serialized at its first statement. Two of them can no longer each be holding
+ * a row the other is waiting for.
+ *
+ * `FOR UPDATE` rather than the weaker `FOR NO KEY UPDATE`: the weak mode does
+ * not conflict with the `FOR KEY SHARE` a foreign-key check takes, so
+ * `createResetToken` inserting a child row would still be able to overtake the
+ * cascade in `DELETE /api/auth/me`. The cost is that a concurrent sign-in for
+ * this one account waits, for the length of this transaction, while its
+ * password or its sessions are being changed. That is milliseconds, on the
+ * account being changed, and is arguably what you want anyway.
+ *
  * The eviction is published **after** the commit, never inside it. A rolled-back
  * transaction that had already thrown everyone out would sign people out of an
  * account whose password never actually changed.
  *
- * Returns whatever `within` returned, so a caller that was already answering
- * "which account was this?" keeps answering it.
+ * Returns the account's id, or null, exactly as it always did.
  */
-export async function destroyAllSessions(within) {
+export async function destroyAllSessions(userId, within = () => userId) {
+  if (!userId) return null
+
   const outcome = await transaction(async (client) => {
-    const userId = await within(client)
-    if (!userId) return null
+    await client.query(LOCK_ACCOUNT, [userId])
+    // `within` still decides whether to go on: a reset token that lost the race
+    // returns null here and the whole transaction rolls back, taking the lock
+    // with it rather than committing an account lock and nothing else.
+    if (!(await within(client))) return null
     const { rows } = await client.query(endingSessions('user_id = $1'), [userId])
-    return { userId, rows }
+    return { rows }
   })
 
   if (!outcome) return null
   evict(outcome.rows)
-  return outcome.userId
+  return userId
 }
 
 /**

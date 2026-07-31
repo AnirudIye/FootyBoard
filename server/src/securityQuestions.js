@@ -1,6 +1,7 @@
 import { createHmac, randomBytes } from 'node:crypto'
 import { hashPassword, verifyPassword } from './auth.js'
 import { BadRequest } from './validate.js'
+import { SESSION_SECRET } from './env.js'
 
 /**
  * The security question, which is what proves identity when a password is
@@ -142,8 +143,12 @@ export const DECOY_ANSWER = { salt: randomBytes(16).toString('hex'), hash: 'ff' 
  * SESSION_SECRET stops an attacker computing the mapping offline and spotting
  * the accounts whose question does not match the one their own arithmetic
  * predicts.
+ *
+ * Read through `env.js` rather than off `process.env` here, because that is
+ * where the floor lives: production refuses to boot on the committed
+ * placeholder, precisely so this key cannot be the public one.
  */
-const HMAC_KEY = `security-question:${process.env.SESSION_SECRET ?? 'dev'}`
+const HMAC_KEY = `security-question:${SESSION_SECRET}`
 
 export function derivedQuestionId(email) {
   const mac = createHmac('sha256', HMAC_KEY).update(email).digest()

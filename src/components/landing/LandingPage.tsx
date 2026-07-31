@@ -1,7 +1,9 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, useScroll, useTransform } from 'framer-motion'
+import { applyTheme } from '../../theme/theme'
+import { useThemeStore } from '../../store/themeStore'
 import ScrollProgress from './ScrollProgress'
 import FloodlitBackdrop from './FloodlitBackdrop'
 import TacticalLoop from './TacticalLoop'
@@ -337,6 +339,30 @@ function BandRule({ children }: { children: ReactNode }) {
 export default function LandingPage() {
   const heroRef = useRef<HTMLElement>(null)
 
+  /**
+   * The landing page is floodlit, whatever the reader has chosen.
+   *
+   * Not an oversight and not laziness about converting it. This page *is* the
+   * identity: a full-screen hero over a WebGL plasma wash, a dot field, a
+   * faded video layer and a flood-lit backdrop, all of which are light on
+   * black and none of which have a daylight counterpart that means the same
+   * thing. Half-converting it would give a white page with dark decorations
+   * burnt into it, which is worse than either theme.
+   *
+   * So the preference governs the *application* — the board, the account pages,
+   * the policies — and this one page opts out for as long as it is mounted. The
+   * chosen palette is put back on the way out, so somebody in daylight who
+   * visits the marketing page and returns to their board finds it as they left
+   * it.
+   */
+  useEffect(() => {
+    const root = document.documentElement
+    root.dataset.theme = 'dark'
+    return () => {
+      applyTheme(useThemeStore.getState().preference)
+    }
+  }, [])
+
   // Scroll-linked hero hand-off: the copy drifts up and dims while the
   // backdrop trails behind it, so the section leaves deliberately rather than
   // just sliding under the fold. Transform and opacity only — both composited.
@@ -572,6 +598,9 @@ export default function LandingPage() {
               </Link>
               <Link to="/terms" className="transition-colors hover:text-accent">
                 Terms
+              </Link>
+              <Link to="/accessibility" className="transition-colors hover:text-accent">
+                Accessibility
               </Link>
             </nav>
             <span className="font-mono text-[11px] tracking-[0.08em] text-foreground/40">

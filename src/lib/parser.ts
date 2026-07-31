@@ -89,6 +89,18 @@ export interface ParseContext {
 export interface ParseResult {
   command: Command | null
   reply: string
+  /**
+   * True when the message asked about the game rather than instructing the
+   * board, so there was never a command to find and `reply` is standing in for
+   * an answer the offline half cannot give.
+   *
+   * Carried because the two ways of having no command need different words when
+   * the AI is reachable but the network is not: "I didn't understand that" is
+   * wrong for a question, and "turn the online assistant on" is wrong for
+   * somebody who already has. `runAssistant` is the only caller that can tell
+   * those apart, because only it knows whether the AI was switched on.
+   */
+  asking?: boolean
 }
 
 const BLOCK_LABEL: Record<BlockHeight, string> = {
@@ -137,16 +149,93 @@ const CANT_DO =
   'bench a number or bring one back on, clear the arrows, reset the board, flip the pitch, ' +
   'turn the channels on, take a frame, play the sequence, fit the view, or tell you what I see.'
 
+/**
+ * Asking about the game rather than asking for the board to change.
+ *
+ * This is checked before every command rule, and the reason is a bug rather than
+ * a preference. A tactical question almost always contains the exact thing a
+ * command rule matches on: "how do I play against a 4-3-3" carries a formation
+ * code, and every rule below it needs nothing more than that. So the board used
+ * to answer the question by becoming a 4-3-3, which is both the wrong answer and
+ * a destructive one, since it moved eleven players the coach had placed.
+ *
+ * Each cue therefore has to be specific enough that an instruction cannot trip
+ * it. A bare "what" would swallow "what do you see", which is a board command;
+ * a bare "press" would swallow "4-3-3 high press". Where a phrasing is genuinely
+ * both ("how do I set up a 4-3-3"), it goes here: with the online assistant on,
+ * the model can still call `setFormation` and does, so nothing is lost, and
+ * offline the reply below names the shape it saw so the coach can ask for it in
+ * one more word.
+ */
+const ASKING: RegExp[] = [
+  /\bhow (?:do|does|did|can|could|should|would|to)\b/,
+  /\b(?:best|worst|right|quickest) way\b/,
+  /\bwhat (?:beats?|stops?|works?|formation|shape|sort of|kind of)\b/,
+  /\bwhat(?:'s| is| are)? the (?:best|weakness|strength|risk|danger|problem|downside|trade[-\s]?off)/,
+  /\bwhy\b/,
+  /\bshould (?:i|we|you)\b/,
+  /\b(?:advice|advise|tips?|pros and cons)\b/,
+  /\b(?:strengths?|weakness(?:es)?|vulnerab\w+)\b/,
+  // "playing against a 3-5-2", "set up against them". The trailing word is what
+  // keeps these out of "play the animation" and "set up a 4-3-3".
+  /\b(?:play|playing|line up|lining up|set up|setting up|defend|defending|attack|attacking|press|pressing|build|building) (?:up )?against\b/,
+  // A verb that only makes sense pointed at somebody, so it needs an object.
+  /\b(?:beat|beating|break down|breaking down|exploit|exploiting|nullify|neutralis[ez]e|deal with|cope with|get at|stop|stopping) (?:a|an|the|their|them|this|that|it)\b/,
+  /\bcounter(?:ing)? (?:a|an|the|their|them|this|that)\b/,
+  /\b(?:explain|talk me through|walk me through|thoughts on|what about)\b/,
+  /\bget the best out of\b/,
+]
+
+/**
+ * Asking what is already on the pitch.
+ *
+ * Checked ahead of `ASKING`, because these are questions the offline half can
+ * answer: they are about the board rather than about the game. "How does it
+ * look" is the one that forced the split, since the question guard's "how
+ * does" cue caught it and sent a `readBoard` off to an assistant that may not
+ * be switched on, to answer something `describeBoard` already knows for free.
+ */
+const SEES_BOARD =
+  /\b(?:read the board|what do you see|how does (?:this|it) look|what.?s the shape)\b/
+
+/** What the offline half can honestly say to a question it cannot answer. */
+const NEEDS_AI = (formation: string | null) =>
+  'Tactics talk goes to the online assistant, which wants an account and your say-so in the panel. ' +
+  (formation
+    ? `Offline I can set a team up in a ${formation}, move players about and tell you what I see.`
+    : 'Offline I can set shapes up, move players about and tell you what I see.')
+
 function detectSide(msg: string, fallback: Side): Side {
   if (/\b(away|opponent|opposition|them|their|other team)\b/.test(msg)) return 'away'
   if (/\b(home|us|our|we|ourselves|my team)\b/.test(msg)) return 'home'
   return fallback
 }
 
+/**
+ * How high up the pitch the team sits.
+ *
+ * The three heights are `default`, `mid` and `high`; the toolbar calls them
+ * Base, Mid and High, and `BLOCK_LABEL` calls the first one a deep block, which
+ * is what it is. A coach names them three ways and this used to know only one of
+ * them, the noun phrase: **the bare adjective on the end of a shape was ignored
+ * entirely**, so "put them in a 4-3-3 high" set the shape at the base height and
+ * said nothing about having dropped the word. The comparative was missing too,
+ * and less obviously: `\bdeep\b` does not match "deeper", so "drop them deeper"
+ * was not a height at all.
+ *
+ * Each line is now the bare word plus whatever cannot be reached from it. Every
+ * noun phrase already contains its own adjective ("high press" contains "high",
+ * "low block" contains "low"), so spelling those out again would be three ways
+ * to say the same thing and one place to forget to update.
+ *
+ * Checked high, mid, then default, and the order carries weight at the bottom:
+ * `deep` and `low` are the loosest words here and would otherwise swallow a
+ * message that also names one of the other two.
+ */
 function detectBlock(msg: string): BlockHeight | null {
-  if (/\b(high line|high block|press high|push up|high press)\b/.test(msg)) return 'high'
-  if (/\b(mid[-\s]?block|medium block|halfway)\b/.test(msg)) return 'mid'
-  if (/\b(deep|low block|drop off|sit back|deep block)\b/.test(msg)) return 'default'
+  if (/\b(?:high(?:er)?|push(?:ed)? up|up the pitch)\b/.test(msg)) return 'high'
+  if (/\b(?:mid(?:block)?|medium|halfway)\b/.test(msg)) return 'mid'
+  if (/\b(?:low|deep(?:er)?|drop off|sit back|sit deep)\b/.test(msg)) return 'default'
   return null
 }
 
@@ -165,6 +254,16 @@ export function parseCommand(message: string, ctx: ParseContext): ParseResult {
 
   const side = detectSide(msg, ctx.defaultSide ?? 'home')
   const sideLabel = side === 'home' ? 'home' : 'away'
+
+  if (SEES_BOARD.test(msg)) return { command: { type: 'readBoard' }, reply: '' }
+
+  // A question goes no further. Every rule below it acts on the board, and a
+  // question is the one input where acting is the wrong answer however well the
+  // words match. The command stays null, so `runAssistant` hands it to the AI
+  // half when that is available and shows this reply when it is not.
+  if (ASKING.some((re) => re.test(msg))) {
+    return { command: null, reply: NEEDS_AI(detectFormation(msg, ctx)), asking: true }
+  }
 
   // Reset must be checked before "clear", since "clear the board" is a reset.
   if (/\b(reset|clear the board|clear everything|start over|wipe|new board)\b/.test(msg)) {
@@ -220,9 +319,18 @@ export function parseCommand(message: string, ctx: ParseContext): ParseResult {
     }
   }
 
-  // Block height on its own (re-applies the current shape at a new height).
+  // Block height on its own (re-applies that team's shape at a new height).
+  //
+  // There used to be a second regex here requiring a block-ish word before this
+  // rule would fire, guarding against `detectBlock` matching a bare "deep" in a
+  // message that was about something else. It never rejected anything: every
+  // word `detectBlock` triggers on was already in the guard's own list, so the
+  // condition was a restatement of the line above it. Once the heights learned
+  // the comparatives it turned from redundant to wrong, because `\bhigh\b` and
+  // `\bdeep\b` do not match "higher" and "deeper", so the guard started
+  // rejecting the very phrasings that had just been added.
   const block = detectBlock(msg)
-  if (block && /\b(block|line|press|push|drop|sit|deep|high|mid|halfway)\b/.test(msg)) {
+  if (block) {
     return {
       command: { type: 'setBlock', side, block },
       reply: `Moved the ${sideLabel} team into a ${BLOCK_LABEL[block]}.`,
@@ -258,7 +366,12 @@ export function parseCommand(message: string, ctx: ParseContext): ParseResult {
     return { command: { type: 'fit' }, reply: 'Fit the pitch to the view.' }
   }
 
-  if (/\b(read the board|describe|analyse|analyze|what do you see|how does (this|it) look|what.?s the shape)\b/.test(msg)) {
+  // The looser half of the board-description phrasings. `SEES_BOARD` above runs
+  // before the question guard because those wordings can only mean the pitch;
+  // these three take an object, and "analyse how we beat a 4-3-3" is a question
+  // about the game rather than a request to read out the shapes, so they sit
+  // here where the guard has already had its say.
+  if (/\b(?:describe|analyse|analyze)\b/.test(msg)) {
     return { command: { type: 'readBoard' }, reply: '' }
   }
 

@@ -193,7 +193,10 @@ export default function PitchCanvas() {
             // Locked: panning, zooming and selecting stay available, because
             // watching a session is not a passive activity — you still want to
             // look where you like. Only drawing is withheld.
-            if (!locked && draw.onPointerDown(e.evt.clientX, e.evt.clientY)) return
+            // The event travels with the press because the text branch has to
+            // cancel it: see `useDrawGesture` for why that cancellation belongs
+            // to one branch and not to every draw gesture.
+            if (!locked && draw.onPointerDown(e.evt.clientX, e.evt.clientY, e.evt)) return
             if (e.target !== e.target.getStage()) return
             const p = relPointer()
             if (!p) return
@@ -235,7 +238,15 @@ export default function PitchCanvas() {
           </Layer>
           <Layer listening={!locked}>
             <DrawingLayer mapping={mapping} test={isMark} />
-            <DrawingLayer mapping={mapping} test={isText} />
+            {/* Double-click a label to fix its words. Only while `select` is
+                the tool: with a draw tool armed the same double-click is two
+                presses of that tool, and a label opening under them would be
+                the board arguing with itself about what the gesture meant. */}
+            <DrawingLayer
+              mapping={mapping}
+              test={isText}
+              onEditText={draw.drawing ? undefined : draw.editText}
+            />
           </Layer>
           <Layer listening={false}>
             <PeerLayer mapping={mapping} />
@@ -262,9 +273,13 @@ export default function PitchCanvas() {
       {draw.textDraft && (
         <input
           autoFocus
+          // Controlled, so the words survive the box being replaced rather than
+          // blurred. See `setTextValue` in `useDrawGesture`.
+          value={draw.textDraft.value}
+          onChange={(e) => draw.setTextValue(e.currentTarget.value)}
           placeholder="Type a label, then Enter"
           style={{ left: draw.textDraft.screenX, top: draw.textDraft.screenY }}
-          onBlur={(e) => draw.commitText(e.currentTarget.value)}
+          onBlur={(e) => draw.blurText(e.currentTarget.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') draw.commitText(e.currentTarget.value)
             if (e.key === 'Escape') draw.cancel()

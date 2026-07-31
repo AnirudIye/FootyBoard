@@ -131,8 +131,10 @@ export function useRealtime() {
           return
 
         case 'peer-present':
-          // An answer to someone else's join. Never replied to, or every join
-          // would set off an endless round of introductions.
+          // An answer to someone else's join, or a peer who has just changed
+          // their name. Never replied to, or every join would set off an
+          // endless round of introductions — which is also why a rename is
+          // announced with this type rather than as a fresh `peer-joined`.
           store.peerJoined(message.peerId, message.email, message.displayName)
           return
 
@@ -180,9 +182,52 @@ export function useRealtime() {
           return
         }
 
-        case 'lock':
+        case 'lock': {
           store.setLocked(message.locked)
-          if (message.locked && store.role !== 'owner') {
+
+          /**
+           * **The owner hands over their board, not just the permission.**
+           *
+           * This is the half that was missing, and it is why toggling instructor
+           * mode on and off left two people looking at different boards. A lock
+           * changes who may edit; it says nothing about *contents*. But a member
+           * answers one by re-reading over REST, and REST serves the stored row
+           * — which holds whatever the owner's debounced autosave last wrote,
+           * not the ops they have broadcast since. So the member snapped back to
+           * the last save while the owner kept their live board, and nothing
+           * afterwards corrected it: ordinary ops announce nothing, and
+           * unlocking re-read nothing at all.
+           *
+           * The owner is the one client whose edits the relay never drops, so
+           * the owner's board is the only authoritative one and the owner is who
+           * must publish. `replacing` is what moves the generation, which is
+           * what supersedes the base every member is holding; without it their
+           * next write would be refused for a base that quietly stopped being
+           * current. It is the same save-and-announce every other whole-board
+           * change already uses rather than a second mechanism beside it.
+           *
+           * **On both transitions.** Unlocking hands editing back, and handing
+           * editing back to people whose board is behind is how the two diverge
+           * for good rather than for a moment.
+           *
+           * Deliberately no re-read here: the owner already has the truth, and
+           * reading would replace it with the stored row, which is the same
+           * divergence reached from the other side.
+           */
+          if (store.role === 'owner') {
+            try {
+              if (await flushSave(currentId!, { replacing: true })) {
+                connection.send({ type: 'replaced' })
+              }
+            } catch {
+              // A write that did not land leaves the board writable and the
+              // room on its previous contents, which the next op or the next
+              // toggle repairs. Nothing standing to report.
+            }
+            return
+          }
+
+          if (message.locked) {
             toast('The owner has locked editing on this board.')
             // Anything edited in the moments before the lock arrived was dropped
             // by the server, so it exists only here. Go back to the truth. If
@@ -209,6 +254,7 @@ export function useRealtime() {
             }
           }
           return
+        }
 
         case 'cursor':
           store.setCursor(message.peerId, message.x, message.y)

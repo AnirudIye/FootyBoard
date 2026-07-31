@@ -1,5 +1,6 @@
 import pg from 'pg'
-import { codeExpiryFrom, withFreshCode } from './joinCode.js'
+import { codeExpiryFrom, withFreshCode, CODE_TTL_MS } from './joinCode.js'
+import { DATABASE_URL } from './env.js'
 
 /**
  * Postgres, reached through a connection pool.
@@ -11,14 +12,16 @@ import { codeExpiryFrom, withFreshCode } from './joinCode.js'
  * opening one each. `max` is per API instance — with N instances behind the
  * balancer the server sees up to N * max, which is why it is deliberately
  * modest rather than "as many as possible".
+ *
+ * The string itself lives in `env.js`, beside the other variables a production
+ * boot refuses to go without. This file used to carry its own copy and so did
+ * `realtime.js`, which is two spellings of one credential.
  */
 
 const { Pool } = pg
 
 export const pool = new Pool({
-  connectionString:
-    process.env.DATABASE_URL ??
-    'postgres://soccerboard:soccerboard@127.0.0.1:55432/soccerboard',
+  connectionString: DATABASE_URL,
   max: Number(process.env.PG_POOL_MAX ?? 10),
   idleTimeoutMillis: 30_000, // release sockets that nobody is using
   connectionTimeoutMillis: 5_000, // fail fast rather than hanging a request
@@ -150,6 +153,46 @@ async function applySchema(client) {
       session_id TEXT PRIMARY KEY,
       user_id    TEXT NOT NULL,
       revoked_at BIGINT NOT NULL
+    );
+
+    -- One row per person removed from a board, and the same argument as the
+    -- table above it, arrived at from the other direction.
+    --
+    -- Removing a member deletes their board_members row, which stops their next
+    -- REST call everywhere immediately and says nothing at all to a socket that
+    -- is already open: a socket is authorized once, at the handshake, and the
+    -- evict NOTIFY is the only thing that ever closes it. An instance whose
+    -- LISTEN connection was down when that NOTIFY was published never heard it,
+    -- so the removed member kept a live, authorized socket -- receiving every op
+    -- and sending their own -- while their REST calls correctly 404'd. This is
+    -- what that instance reads when its listener comes back. Written in the same
+    -- data-modifying CTE as the DELETE, in shares.js, and read in realtime.js.
+    --
+    -- **It is also the reason a removal is not undone by re-typing the code.**
+    -- The code is meant to be read aloud to a room, so revoking it outright
+    -- would punish everybody to exclude one person; instead the two redemption
+    -- paths compare revoked_at against the moment the credential being offered
+    -- was issued. So the removal stands against the code the person already
+    -- holds, and the owner issuing a fresh one -- which happens at the start of
+    -- every session anyway -- is what lets them back in. That is one table
+    -- serving two readers rather than two mechanisms: both only ever read it,
+    -- and neither can pull the row out from under the other.
+    --
+    -- (board_id, user_id) is the key rather than a row per event, because both
+    -- readers want the same thing: the most recent removal. Somebody removed,
+    -- re-admitted and removed again is one standing fact, not a history, and a
+    -- history would make the second removal collide with the first.
+    --
+    -- Neither column is a foreign key, for exactly the reason written on
+    -- session_revocations: a cascade would delete these rows at the moment the
+    -- deletion they record is the reason they exist. Dropping a board takes its
+    -- board_members rows with it, and that is precisely when an instance still
+    -- holding the room needs to be told.
+    CREATE TABLE IF NOT EXISTS board_member_revocations (
+      board_id   TEXT   NOT NULL,
+      user_id    TEXT   NOT NULL,
+      revoked_at BIGINT NOT NULL,
+      PRIMARY KEY (board_id, user_id)
     );
 
     -- Ten ways back into an account whose authenticator is gone, hashed exactly
@@ -394,10 +437,30 @@ async function applySchema(client) {
   // characters it carries little enough entropy that hashing would protect
   // almost nothing against anyone holding the table. What actually defends it
   // is the rate limit on redemption, not the storage.
+  //
+  // `code_issued_at` is when the code on this row started being the code, and it
+  // is stored rather than derived from `code_expires_at - CODE_TTL_MS`. The two
+  // agree exactly today, and the derivation would go silently wrong the day the
+  // twelve hours are tuned or an expiry is ever set by anything but
+  // `codeExpiryFrom()` -- and the reader is an authorization decision ("were you
+  // removed after this code was handed out?"), which is not a place to keep a
+  // value that is right by coincidence.
   await client.query(`
     ALTER TABLE board_shares ADD COLUMN IF NOT EXISTS code TEXT;
     ALTER TABLE board_shares ADD COLUMN IF NOT EXISTS code_expires_at BIGINT;
+    ALTER TABLE board_shares ADD COLUMN IF NOT EXISTS code_issued_at BIGINT;
   `)
+
+  // Rows that already carry a code predate the column, and for those the
+  // derivation *is* exact: every expiry this codebase has ever written came from
+  // `codeExpiryFrom()`. Doing it once here rather than at every read is what
+  // keeps the coincidence out of the authorization decision above. Anything the
+  // backfill below issues sets the column properly.
+  await client.query(
+    `UPDATE board_shares SET code_issued_at = code_expires_at - $1
+      WHERE code_expires_at IS NOT NULL AND code_issued_at IS NULL`,
+    [CODE_TTL_MS],
+  )
 
   await backfillJoinCodes(client)
 
@@ -415,6 +478,14 @@ async function applySchema(client) {
     -- hourly sweep asks for rows older than the retention. Nothing ever looks a
     -- revocation up by session or by user, which is why neither has an index.
     CREATE INDEX        IF NOT EXISTS idx_revocations_at ON session_revocations(revoked_at);
+
+    -- An instance catching up asks for member revocations newer than its
+    -- watermark, and the statement that writes one prunes everything past the
+    -- retention in the same breath. Both filter on this and nothing else. The
+    -- third reader, "was this person removed from this board", reaches the row
+    -- by primary key and needs no index of its own.
+    CREATE INDEX        IF NOT EXISTS idx_member_revocations_at
+      ON board_member_revocations(revoked_at);
 
     -- Looked up on every reset attempt, so it must not be a sequential scan.
     CREATE UNIQUE INDEX IF NOT EXISTS idx_resets_token  ON password_resets(token_hash);
@@ -489,11 +560,11 @@ async function backfillJoinCodes(client) {
 
   for (const row of rows) {
     await withFreshCode((code) =>
-      client.query('UPDATE board_shares SET code = $1, code_expires_at = $2 WHERE id = $3', [
-        code,
-        codeExpiryFrom(),
-        row.id,
-      ]),
+      client.query(
+        `UPDATE board_shares SET code = $1, code_expires_at = $2, code_issued_at = $3
+          WHERE id = $4`,
+        [code, codeExpiryFrom(), Date.now(), row.id],
+      ),
     )
   }
 }

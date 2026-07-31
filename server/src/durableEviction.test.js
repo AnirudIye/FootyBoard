@@ -468,7 +468,7 @@ test('a revocation that cannot be recorded takes the whole change down with it',
   )
 
   await assert.rejects(() =>
-    destroyAllSessions(async (client) => {
+    destroyAllSessions(person.id, async (client) => {
       // Stands in for the password change every real caller makes here. It has
       // to be rolled back too, or a failure leaves a changed credential with
       // the sessions it was changed to end still live.

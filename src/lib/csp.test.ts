@@ -63,3 +63,31 @@ describe('content security policy', () => {
     expect(policyFromVercelJson()).toContain("frame-ancestors 'none'")
   })
 })
+
+function hstsFromVercelJson(): string {
+  const hsts = vercelConfig.headers
+    .flatMap((rule) => rule.headers)
+    .find((header) => header.key === 'Strict-Transport-Security')
+  if (!hsts) throw new Error('vercel.json sends no Strict-Transport-Security header')
+  return hsts.value
+}
+
+/**
+ * The header with no second copy anywhere.
+ *
+ * The CSP has the `<meta>` tag to fall back on, so a `vercel.json` that lost it
+ * would still ship something. This one has no `<meta>` form, nothing in the
+ * built output mentions it, and `verify:deployed` can only see it after a
+ * deploy has already happened. So this file is the only place its removal can
+ * be caught beforehand.
+ *
+ * It asserts the number rather than the header's presence because `max-age=0`
+ * is not a weaker header: it is the instruction to drop the pin, and a browser
+ * that has been told once will honour it.
+ */
+describe('strict transport security', () => {
+  it('is declared, with a max-age that pins rather than forgets', () => {
+    const maxAge = Number(hstsFromVercelJson().match(/max-age\s*=\s*(\d+)/i)?.[1] ?? NaN)
+    expect(maxAge).toBeGreaterThan(0)
+  })
+})

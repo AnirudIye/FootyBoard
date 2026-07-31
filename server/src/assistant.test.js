@@ -172,6 +172,78 @@ test('an em dash before a new sentence becomes a full stop', async () => {
   assert.equal(result.reply, 'That shape is risky. Keep a holding player deep.')
 })
 
+test('the shape a coach asks about is described in the prompt', async () => {
+  // Without this the model answers "how do I beat a 5-4-1" from recall, about
+  // whichever 5-4-1 it happens to hold, rather than about the one this board
+  // draws. The note is what makes the answer this product's answer.
+  stubGemini([{ text: 'ok' }])
+  await askAssistant('how do i beat a 5-4-1', context)
+
+  const system = lastRequest.body.systemInstruction.parts[0].text
+  assert.match(system, /^5-4-1:/m)
+  assert.match(system, /Playing against it:/)
+})
+
+test('a shape only on the board is described too', async () => {
+  // "how do I get at them" names nothing, and the board is the only thing that
+  // knows what "them" is.
+  stubGemini([{ text: 'ok' }])
+  await askAssistant('how do i get at them', context)
+
+  const system = lastRequest.body.systemInstruction.parts[0].text
+  assert.match(system, /^4-3-3:/m, 'the shape described on the board should carry its note')
+})
+
+test('an instruction that names no shape carries no notes', async () => {
+  // The notes are roughly a hundred words each, and most messages are
+  // instructions. They should not pay for a paragraph they will never use.
+  stubGemini([{ text: 'ok' }])
+  await askAssistant('clear the arrows', { ...context, board: 'This is an 11-a-side board.' })
+
+  const system = lastRequest.body.systemInstruction.parts[0].text
+  assert.equal(/Playing against it:/.test(system), false)
+})
+
+test('the prompt says to answer a tactical question rather than act on it', async () => {
+  // The model can still call a function, so nothing but this sentence stops it
+  // answering "how do I play against a 4-3-3" by setting one up, which is the
+  // exact failure the offline parser had.
+  stubGemini([{ text: 'ok' }])
+  await askAssistant('hello', context)
+
+  const system = lastRequest.body.systemInstruction.parts[0].text
+  assert.match(system, /leave the board alone/)
+  assert.match(system, /no bullet points/, 'a list arrives as one mangled line once clean() runs')
+})
+
+test('a tactical answer of several sentences survives intact', async () => {
+  // The one reply worth more than a sentence. `clean()` collapses whitespace,
+  // so what has to be checked is that it collapses rather than truncates.
+  stubGemini([
+    {
+      text:
+        'Their holder is alone in front of the back four.\nPut your 10 either side of him and make a centre-back step out.\n' +
+        'When the full-backs push on, the space behind them is where the game is.',
+    },
+  ])
+
+  const result = await askAssistant('how do i beat a 4-3-3', context)
+  assert.equal(result.command, null)
+  assert.match(result.reply, /holder is alone/)
+  assert.match(result.reply, /space behind them/)
+  assert.equal(result.reply.includes('\n'), false)
+})
+
+test('the answer has room to be written', async () => {
+  // Advice runs to four sentences, and on this model family the cap covers
+  // thinking tokens as well as the reply. A cap sized to the visible answer can
+  // be spent entirely on thinking and come back empty.
+  stubGemini([{ text: 'ok' }])
+  await askAssistant('hello', context)
+
+  assert.ok(lastRequest.body.generationConfig.maxOutputTokens >= 1024)
+})
+
 test('a provider failure throws rather than inventing an answer', async () => {
   // "I did not understand you" and "the AI is down" are different things, and
   // the coach should not be told the first when the second happened.

@@ -1,5 +1,5 @@
 import { useBoardStore } from '../../store/boardStore'
-import type { DrawingType } from '../../lib/types'
+import type { Drawing, DrawingType } from '../../lib/types'
 import DrawingShape from './DrawingShape'
 import type { PitchMapping } from './pitchMapping'
 
@@ -11,9 +11,16 @@ import type { PitchMapping } from './pitchMapping'
 export default function DrawingLayer({
   mapping,
   test,
+  onEditText,
 }: {
   mapping: PitchMapping
   test: (type: DrawingType) => boolean
+  /**
+   * Reopen the typing box over a label. Passed only by the band that draws
+   * text, and only while a label may be edited, so a shape that has no edit
+   * path never carries a handler that would do nothing.
+   */
+  onEditText?: (drawing: Drawing, screenX: number, screenY: number) => void
 }) {
   const drawings = useBoardStore((s) => s.drawings)
   const selection = useBoardStore((s) => s.selection)
@@ -24,7 +31,13 @@ export default function DrawingLayer({
       {drawings
         .filter((d) => test(d.type))
         .map((d) => (
-          <DrawingShape key={d.id} drawing={d} mapping={mapping} selected={selected.has(d.id)} />
+          <DrawingShape
+            key={d.id}
+            drawing={d}
+            mapping={mapping}
+            selected={selected.has(d.id)}
+            onEditText={onEditText}
+          />
         ))}
     </>
   )

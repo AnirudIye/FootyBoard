@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { randomUUID } from 'node:crypto'
 import { get, all, run } from '../db.js'
 import { accessFor } from '../access.js'
+import { publish } from '../realtime.js'
 import {
   validateBoardName,
   validateBoardData,
@@ -293,5 +294,18 @@ boardsRouter.delete('/:id', async (req, res) => {
     req.user.id,
   )
   if (result.changes === 0) return res.status(404).json({ error: 'That board does not exist.' })
+  /**
+   * Everybody in the room is now editing something that does not exist.
+   *
+   * A socket is authorized once, at the handshake, so the delete says nothing
+   * to a connection that is already open: a member went on drawing on a board
+   * whose row was gone, with every REST call they made answering 404, until
+   * they happened to disconnect. `reconcileRooms` already caught it the next
+   * time this instance's listener reopened, which is what makes it survive a
+   * bus outage; this is the other half, which is that it should not have to
+   * wait for one. Published after the row is gone, never before, so a delete
+   * that fails throws nobody out.
+   */
+  publish(req.params.id, { type: 'evict-board' })
   res.status(204).end()
 })

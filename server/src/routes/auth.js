@@ -27,6 +27,7 @@ import {
   readCookie,
 } from '../auth.js'
 import { destroySession, destroyAllSessions } from '../sessions.js'
+import { renameSockets } from '../realtime.js'
 import {
   assertMayAttempt,
   recordFailure,
@@ -434,12 +435,17 @@ authRouter.post('/login/2fa', async (req, res) => {
  * the caller's own row. The limiters here exist to slow guessing down, and there
  * is nothing here to guess.
  *
- * The room hears the new name on the next connection rather than this instant,
- * because `identity()` reads the name off the socket exactly as it reads the
- * address. Worth stating plainly as a cost: rename yourself mid session and the
- * people already in the room keep seeing the old name until you reconnect.
- * Closing that means an eviction-shaped broadcast that re-introduces one peer to
- * every instance, and it is not built.
+ * **The room hears it at once**, which for a while it did not: `identity()`
+ * reads the name off the socket exactly as it reads the address, so writing the
+ * column changed what the *next* connection would be told and nothing about the
+ * rooms already open. Rename yourself mid session and everyone went on seeing
+ * the old name until you reloaded. `renameSockets` is the other half, shaped
+ * like `closeSessionSockets` for the same reason: the process holding somebody's
+ * socket is almost never the one that served their request.
+ *
+ * Published after the write and only if it landed, so a rename that was refused
+ * renames nobody, and the name that goes on the bus is the one the database
+ * returned rather than the one that was asked for.
  */
 authRouter.patch('/display-name', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not signed in.' })
@@ -456,6 +462,7 @@ authRouter.patch('/display-name', async (req, res) => {
   // deleted underneath this request. Nothing to rename and nobody to rename it.
   if (!updated) return res.status(401).json({ error: 'Not signed in.' })
 
+  renameSockets(updated.id, updated.display_name)
   res.json({ user: publicUser(updated) })
 })
 
@@ -588,7 +595,7 @@ authRouter.post('/password', async (req, res) => {
   const next = await hashPassword(nextPassword)
   const answerDigest = await hashAnswer(answer)
 
-  await destroyAllSessions(async (client) => {
+  await destroyAllSessions(req.user.id, async (client) => {
     await client.query(
       `UPDATE users
           SET password_hash = $1, password_salt = $2,
@@ -665,7 +672,7 @@ authRouter.post('/sessions', async (req, res) => {
    * Inside the transaction, so a rollback cannot leave the tokens voided and the
    * sessions alive, or the reverse.
    */
-  await destroyAllSessions(async (client) => {
+  await destroyAllSessions(req.user.id, async (client) => {
     await client.query('DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NULL', [
       req.user.id,
     ])
@@ -1190,7 +1197,7 @@ authRouter.delete('/me', async (req, res) => {
    * of. The two statements are not one transaction on purpose: if the second
    * fails, an account survives with no sessions, and its owner signs in again.
    */
-  await destroyAllSessions(() => req.user.id)
+  await destroyAllSessions(req.user.id)
   await run('DELETE FROM users WHERE id = $1', req.user.id)
   signOut(res)
   res.status(204).end()

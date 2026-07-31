@@ -47,7 +47,10 @@ function RoomReadout() {
 
 export default function HUD() {
   const zoom = useBoardStore((s) => s.zoom)
-  const lastFormation = useBoardStore((s) => s.lastFormation)
+  // The shape of the team being worked on, not of whoever was arranged last:
+  // the readout sits beside the controls that act on the active team, so naming
+  // the other side's shape there is naming the wrong thing.
+  const lastFormation = useBoardStore((s) => s.lastFormation[s.activeTeam])
   const kind = useBoardStore((s) => s.view.kind)
   const selectionCount = useBoardStore((s) => s.selection.length)
   const locked = useRealtimeStore((s) => s.locked)

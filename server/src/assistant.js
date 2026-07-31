@@ -12,9 +12,18 @@
  * schema below *is* the capability boundary: the AI can ask for a formation or
  * a view change, and there is no shape in which it can ask for anything else.
  *
+ * It also answers tactical questions in prose, which is the one thing here that
+ * is not a command: "how do I play against a 4-3-3" wants an answer rather than
+ * a rearranged board. That path adds no function and no capability, only
+ * context. See `tactics.js` for what it is given to answer from, and the
+ * question guard in `src/lib/parser.ts` for what stops the offline half
+ * answering the question by setting up the shape it names.
+ *
  * Called over HTTP with `fetch` rather than through an SDK: one
  * dependency-free function, no build step.
  */
+
+import { tacticalBrief } from './tactics.js'
 
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models'
 
@@ -72,7 +81,10 @@ const FUNCTIONS = [
         block: {
           type: 'STRING',
           enum: ['default', 'mid', 'high'],
-          description: 'How high the team sits. "high" for a press, "mid" for a mid block, otherwise "default".',
+          description:
+            'How high up the pitch the team sits. "high" for a high line or a press, "mid" for a mid block, ' +
+            '"default" for a low or deep block, which is also the deepest of the three. There is no "low" value: ' +
+            'a coach asking for a low block wants "default".',
         },
       },
       required: ['side', 'name', 'block'],
@@ -80,12 +92,17 @@ const FUNCTIONS = [
   },
   {
     name: 'setBlock',
-    description: 'Move a team higher or deeper while keeping its current shape.',
+    description:
+      'Move a team higher or deeper while keeping its current shape. Use when the coach names a depth and no formation.',
     parameters: {
       type: 'OBJECT',
       properties: {
         side: { type: 'STRING', enum: ['home', 'away'] },
-        block: { type: 'STRING', enum: ['default', 'mid', 'high'] },
+        block: {
+          type: 'STRING',
+          enum: ['default', 'mid', 'high'],
+          description: '"high" for a high line or press, "mid" for a mid block, "default" for a low or deep block.',
+        },
       },
       required: ['side', 'block'],
     },
@@ -208,7 +225,10 @@ const checkArgs = (declaration, raw) => {
   return (declaration.parameters.required ?? []).every((key) => args[key] !== undefined) ? args : null
 }
 
-const systemPrompt = (context) =>
+// Takes the message as well as the context because the tactical notes are
+// chosen from what was asked, not only from what is drawn: "how do I beat a
+// 5-4-1" deserves the 5-4-1 note whether or not anybody has set one up.
+const systemPrompt = (message, context) =>
   [
     'You are the assistant inside FootyBoard, a soccer tactics board.',
     'A coach types instructions; you either call exactly one function to act on the board, or answer in prose.',
@@ -217,7 +237,16 @@ const systemPrompt = (context) =>
     'want an explanation, or want something the functions cannot do. In that case say briefly what you can do instead.',
     'Never claim to have changed the board unless you called a function.',
     '',
-    'Keep replies to one or two sentences. Write like a coach talking to a coach: plain, specific, no preamble.',
+    // The tactical answer is the one reply that is worth more than a sentence,
+    // and the one most likely to come back as a bulleted handout. `clean()`
+    // collapses every run of whitespace, so a list arrives as one line with
+    // stray hyphens in it; prose is not a preference here, it is the only shape
+    // the panel can render.
+    'When the coach asks how to play with or against a shape, answer the question and leave the board alone.',
+    'Name the space that opens, who gets into it, and what to do about it. Two to four sentences, plain prose:',
+    'no bullet points, no numbered lists, no headings. If they ask for a shape as well as advice, call the function too.',
+    '',
+    'Otherwise keep replies to one or two sentences. Write like a coach talking to a coach: plain, specific, no preamble.',
     'Never use em dashes. Use a full stop, a comma, or a colon instead.',
     '',
     // The board description is deliberately coordinate-free and names no shirt
@@ -233,7 +262,14 @@ const systemPrompt = (context) =>
     `Formations available on this pitch: ${context.formationNames.join(', ')}.`,
     `Pitch format: ${context.kind}. Active team: ${context.activeTeam}.`,
     context.board ? `\nWhat is on the board right now:\n${context.board}` : '',
+    // Read from the message first and the board second, so a question about a
+    // shape nobody has set up yet still gets its note. Empty for the ordinary
+    // instruction, which names no shape and should not pay for a paragraph.
+    prefixed(tacticalBrief(message, context.board)),
   ].join('\n')
+
+/** A block of context, or nothing at all when there is none. */
+const prefixed = (block) => (block ? `\n${block}` : '')
 
 /**
  * House style, enforced rather than requested.
@@ -252,6 +288,38 @@ const clean = (text) =>
     .trim()
 
 /**
+ * Why the provider said no, in a form that cannot be the coach's board.
+ *
+ * This used to be the first 200 characters of the response body, and
+ * `routes/assistant.js` logs `err.message`. What the body of a provider error
+ * contains is the provider's opinion of the request that caused it, and they
+ * routinely quote the offending field straight back — so a 400 on a malformed
+ * request wrote part of the board into the server log. The request carries the
+ * formation names and up to 4000 characters of board description, on the one
+ * route a coach has to explicitly consent to before anything is sent to Google
+ * at all. Logging it back out is not something that consent covers.
+ *
+ * Dropping the detail entirely would make an outage undebuggable, and "Gemini
+ * refused the request (400)" is not enough to tell a dead API key from a
+ * revoked one from a quota. So what survives is Google's `status` field, which
+ * is a fixed enum — `INVALID_ARGUMENT`, `PERMISSION_DENIED`,
+ * `RESOURCE_EXHAUSTED`, `UNAVAILABLE` — and is checked against that shape here
+ * rather than trusted to be one. An upstream that put free text in the field
+ * would find it dropped, which is the correct direction to fail: the numeric
+ * status is already on the line, so the worst case is less detail rather than
+ * a leak. `message`, the field that actually holds the quoted request, is never
+ * read.
+ */
+const failureReason = async (response) => {
+  const status = await response
+    .json()
+    .then((body) => body?.error?.status)
+    .catch(() => null)
+
+  return typeof status === 'string' && /^[A-Z][A-Z_]{1,40}$/.test(status) ? ` ${status}` : ''
+}
+
+/**
  * Ask the model what to do. Returns `{ reply, command }`, where `command` is
  * either null or one of the parser's own command objects.
  *
@@ -267,18 +335,24 @@ export async function askAssistant(message, context) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt(context) }] },
+        systemInstruction: { parts: [{ text: systemPrompt(message, context) }] },
         contents: [{ role: 'user', parts: [{ text: message }] }],
         tools: [{ functionDeclarations: FUNCTIONS }],
         toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
-        generationConfig: { temperature: 0.2, maxOutputTokens: 400 },
+        // The visible answer is at most four sentences, so most of this ceiling
+        // is headroom rather than budget. It is deliberate: on the 2.5 flash
+        // family this cap covers thinking tokens as well as the reply, and a cap
+        // sized to the reply can be spent entirely on thinking, which comes back
+        // as a 200 with no parts in it. That reads as "the assistant said
+        // nothing" rather than as a limit being hit, and it got likelier the
+        // moment tactical questions started arriving.
+        generationConfig: { temperature: 0.2, maxOutputTokens: 1024 },
       }),
     },
   )
 
   if (!response.ok) {
-    const detail = await response.text().catch(() => '')
-    throw new Error(`Gemini refused the request (${response.status}) ${detail.slice(0, 200)}`)
+    throw new Error(`Gemini refused the request (${response.status}${await failureReason(response)})`)
   }
 
   const body = await response.json()

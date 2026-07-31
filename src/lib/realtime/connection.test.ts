@@ -258,6 +258,7 @@ describe('losing the connection', () => {
   it.each([
     [4401, 'Sign in'],
     [4403, 'no longer shared'],
+    [4404, 'has been deleted'],
   ])('stops retrying after a %i, which retrying cannot fix', (code, fragment) => {
     connect()
     latest().serverClosed(code)

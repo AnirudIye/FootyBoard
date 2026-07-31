@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { migrate, run, get, all, closePool } from './db.js'
+import { migrate, run, get, all, pool, closePool } from './db.js'
 import { createSession, COOKIE_NAME } from './auth.js'
 import { hashAnswer } from './securityQuestions.js'
 import { answerKey, addressKey } from './rateLimit.js'
@@ -450,6 +450,81 @@ test('completing a reset destroys every session', async () => {
   for (const cookie of cookies) {
     assert.equal((await call('/auth/me', { headers: { Cookie: cookie } })).status, 401)
   }
+})
+
+/**
+ * A dedicated connection holding one lock, released by being destroyed.
+ *
+ * The same shape `realtimeCache.test.js` uses and for the same reason:
+ * destroyed rather than committed, because a test that fails early would
+ * otherwise leave a row locked for every other suite in the run, and a pending
+ * statement sits in front of any `ROLLBACK` sent after it. Rows for this test's
+ * own user only, never a table.
+ */
+async function holder(sql, ...params) {
+  const client = await pool.connect()
+  let released = false
+  await client.query('BEGIN')
+  const granted = client.query(sql, params).catch(() => {})
+  return {
+    ready: () => granted,
+    run: (text, values) => client.query(text, values),
+    release: () => {
+      if (released) return
+      released = true
+      client.release(true)
+    },
+  }
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * The deadlock, made deterministic.
+ *
+ * `consumeResetToken` used to claim the token and *then* update the password,
+ * while `POST /api/auth/password` updates the password and then voids the
+ * tokens. Two transactions taking `password_resets` and `users` in opposite
+ * orders is a cycle: each holds what the other is waiting for, Postgres kills
+ * one with `40P01`, and on this path that is a 500 — a reset that did not
+ * happen, at the moment somebody believes an intruder is in their account. It
+ * was reported as a flake at roughly one run in six and nobody had traced it.
+ *
+ * The held connection stands in for `/auth/password`, taking the two row locks
+ * that route takes, in that route's order. Against the unfixed code this fails
+ * every time rather than one time in six, because the interleaving is forced
+ * rather than raced: step 2 claims the reset row and parks on the users row,
+ * then step 3 parks on the reset row. After the fix the request takes the users
+ * row *first*, so it queues there, touches nothing else, and step 3 finds the
+ * reset row free.
+ */
+test('a reset takes the account row before the token, so a password change cannot cross it', async () => {
+  const user = await makeUser({ answer: 'Blue Sky' })
+  const { body } = await json(
+    await post('/auth/forgot/verify', { email: user.email, answer: user.answer }),
+  )
+
+  // 1. What `/auth/password` locks first: the account row, at the same strength
+  //    that route takes it (an ordinary UPDATE, not a stronger explicit lock).
+  const account = await holder('UPDATE users SET display_name = display_name WHERE id = $1', user.id)
+  await account.ready()
+
+  // 2. The reset, which now has to queue on that same row before touching anything.
+  const reset = post('/auth/reset', { token: body.token, password: 'brand-new-password' })
+  await wait(250)
+
+  // 3. The second statement `/auth/password` makes. Against the unfixed code
+  //    the reset is already holding this row, and the two are deadlocked.
+  let crossed = null
+  try {
+    await account.run('DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NULL', [user.id])
+  } catch (err) {
+    crossed = err.code
+  }
+  account.release()
+
+  assert.equal(crossed, null, `the two transactions deadlocked (SQLSTATE ${crossed})`)
+  assert.equal((await json(await reset)).status, 200, 'the reset did not complete')
 })
 
 test('a reset token works exactly once', async () => {

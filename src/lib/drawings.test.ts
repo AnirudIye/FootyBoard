@@ -5,6 +5,8 @@ import {
   isMark,
   isText,
   isDragType,
+  isClickType,
+  CLICK_CORNERS,
   shiftDrawing,
   shiftAttached,
 } from './drawings'
@@ -33,15 +35,34 @@ describe('drawing classification', () => {
 
   /**
    * Not a restatement of the classification above. Being a zone decides which
-   * band a triangle is painted in; being a drag type is what makes the release
-   * commit one at all, and a shape that is only the first is drawn to the
-   * screen during the gesture and then silently thrown away on pointer up.
+   * band a shape is painted in; being a drag type is what makes the release
+   * commit one at all. A shape that is neither a drag type nor a click type is
+   * drawn to the screen during its gesture and then silently thrown away.
+   *
+   * The triangle is a **click** type: three presses, one corner each. It was a
+   * drag type for a few hours, storing the two ends of a box and deriving its
+   * apex, and this is the assertion that changed when that did.
    */
-  it('commits a triangle on release, the way a box and an oval do', () => {
-    expect(isDragType('zoneTriangle')).toBe(true)
+  it('places a triangle by clicking, and a box by dragging', () => {
+    expect(isClickType('zoneTriangle')).toBe(true)
+    expect(isDragType('zoneTriangle')).toBe(false)
+
     expect(isDragType('zoneRect')).toBe(true)
-    // The polygon is the exception, and stays one: it closes on Enter.
+    expect(isClickType('zoneRect')).toBe(false)
+
+    // The polygon is the other click type and differs only in when it ends.
+    expect(isClickType('zonePoly')).toBe(true)
     expect(isDragType('zonePoly')).toBe(false)
+  })
+
+  /**
+   * The number is what makes a triangle end without a keystroke, so it is worth
+   * asserting rather than trusting: at three corners the gesture closes itself.
+   * A polygon has no entry here, which is what "close on Enter instead" means.
+   */
+  it('closes a triangle at three corners and leaves a polygon open', () => {
+    expect(CLICK_CORNERS.zoneTriangle).toBe(3)
+    expect(CLICK_CORNERS.zonePoly).toBeUndefined()
   })
 })
 

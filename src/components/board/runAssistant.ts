@@ -14,6 +14,10 @@ interface Outcome {
   undoable: boolean
 }
 
+/** What a tactical question gets when the assistant it needs cannot be reached. */
+const UNREACHABLE =
+  "I couldn't reach the assistant to answer that. The board still works: try again in a moment."
+
 type Board = ReturnType<typeof useBoardStore.getState>
 
 /**
@@ -58,7 +62,12 @@ type Runners = {
 const RUN: Runners = {
   setFormation: (c, s) => s.applyFormation(c.side, c.name, c.block),
   setBlock: (c, s) => {
-    if (s.lastFormation) s.applyFormation(c.side, s.lastFormation, c.block)
+    // That side's own shape. This read used to be the board's single
+    // `lastFormation`, so pushing the away team up applied whatever formation
+    // home had been put in last: the depth changed and so did the shape, which
+    // is not what was asked for.
+    const shape = s.lastFormation[c.side]
+    if (shape) s.applyFormation(c.side, shape, c.block)
   },
   clearDrawings: (_c, s) => s.deleteDrawings(s.drawings.map((d) => d.id)),
   resetBoard: (_c, s) => s.resetBoardAction(),
@@ -109,8 +118,14 @@ function execute(command: Command, fallbackReply: string): Outcome {
 
   switch (command.type) {
     case 'setBlock':
-      if (!s.lastFormation) {
-        return { reply: 'Apply a formation first, then I can change its block height.', undoable: false }
+      // Per side, because the shape it would re-apply is per side. A board where
+      // home is in a preset and away is on a saved shape can answer for one and
+      // not the other, and saying so is better than moving the wrong team.
+      if (!s.lastFormation[command.side]) {
+        return {
+          reply: `Set the ${command.side} team up in a formation first, then I can change its block height.`,
+          undoable: false,
+        }
       }
       break
 
@@ -232,7 +247,7 @@ export function runAssistant(text: string) {
     kind: board.view.kind,
     defaultSide: board.activeTeam,
   }
-  const { command, reply } = parseCommand(trimmed, ctx)
+  const { command, reply, asking } = parseCommand(trimmed, ctx)
 
   if (command) {
     commit(command, reply)
@@ -249,5 +264,9 @@ export function runAssistant(text: string) {
   }
 
   assistant.setThinking(true)
-  void askAI(trimmed, reply).finally(() => useAssistantStore.getState().setThinking(false))
+  // Past this line the AI is on, so the parser's reply has stopped being true
+  // for a question: it says to turn on a thing that is already on. What is left
+  // to go wrong here is the network, and that is what the fallback should say.
+  const fallback = asking ? UNREACHABLE : reply
+  void askAI(trimmed, fallback).finally(() => useAssistantStore.getState().setThinking(false))
 }

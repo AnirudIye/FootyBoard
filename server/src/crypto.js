@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto'
-import { APP_ENV, allowsDerivedKey } from './env.js'
+import { APP_ENV, allowsDerivedKey, SESSION_SECRET } from './env.js'
 
 /**
  * Encryption at rest for board contents.
@@ -52,7 +52,10 @@ export function initEncryption() {
     )
   }
 
-  key = createHash('sha256').update(`dev-key:${process.env.SESSION_SECRET ?? 'dev'}`).digest()
+  // Through `env.js` rather than `process.env`, so there is one reading of this
+  // variable and one place the production floor sits. This branch is
+  // unreachable in production anyway, because `allowsDerivedKey` is false there.
+  key = createHash('sha256').update(`dev-key:${SESSION_SECRET}`).digest()
   console.warn(
     `ENCRYPTION_KEY is not set — using a key derived from SESSION_SECRET, allowed because APP_ENV is "${APP_ENV}".`,
   )

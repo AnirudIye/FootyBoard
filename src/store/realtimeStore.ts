@@ -123,8 +123,23 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
       ),
     }),
 
+  /**
+   * A peer arrived, answered somebody else's arrival, or changed their name.
+   *
+   * **Merged over whoever is already there rather than replacing them**, which
+   * matters now that a rename is re-announced as `peer-present`. Replacing put
+   * a `blankPeer` in the slot, so a renamed peer's cursor and selection were
+   * dropped on every other client and their pointer vanished from the pitch
+   * until they next moved it. Nothing about being told a name should take away
+   * what is known about where somebody is.
+   */
   peerJoined: (peerId, email, displayName) =>
-    set((s) => ({ peers: { ...s.peers, [peerId]: blankPeer(peerId, email, displayName) } })),
+    set((s) => ({
+      peers: {
+        ...s.peers,
+        [peerId]: { ...(s.peers[peerId] ?? blankPeer(peerId, email, displayName)), email, displayName: shownName(displayName ?? email) },
+      },
+    })),
 
   peerLeft: (peerId) =>
     set((s) => {

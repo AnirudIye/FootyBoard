@@ -28,3 +28,10 @@ pnpm-debug.log*
 
 # graphify knowledge-graph output, regenerable
 graphify-out/
+
+# Working notes, deliberately untracked. It was tracked until 2026-07-30, so its
+# history up to that point is still there: `git log -- handoff.md` reads it back.
+# What stops is future versions being recorded, which is the trade being made.
+# It was never in the published mirror either way, since the shipped set in
+# "Shipping" enumerates its paths and this is not one of them.
+handoff.md

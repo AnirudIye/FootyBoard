@@ -7,6 +7,7 @@ import Inspector from './Inspector'
 import Toasts from './Toasts'
 import HUD from './HUD'
 import Assistant from './Assistant'
+import NameNotice from './NameNotice'
 import { useKeyboard } from '../../hooks/useKeyboard'
 import { useAutosave } from '../../hooks/useAutosave'
 import { usePlayback } from '../../hooks/usePlayback'
@@ -30,6 +31,10 @@ export default function BoardPage() {
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-paper">
       <Toolbar />
+      {/* A row in the column rather than a floating bar, for the reason above:
+          it appears and disappears, and anything overlaying the band would have
+          to be measured against a toolbar that wraps. */}
+      <NameNotice />
 
       <div className="relative flex-1 overflow-hidden">
         <PitchCanvas />

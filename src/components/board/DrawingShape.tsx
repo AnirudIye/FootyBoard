@@ -10,12 +10,15 @@ interface Props {
   drawing: Drawing
   mapping: PitchMapping
   selected: boolean
+  /** See `DrawingLayer`. Absent for every kind but text, and while a tool is armed. */
+  onEditText?: (drawing: Drawing, screenX: number, screenY: number) => void
 }
 
-export default function DrawingShape({ drawing: d, mapping: m, selected }: Props) {
+export default function DrawingShape({ drawing: d, mapping: m, selected, onEditText }: Props) {
   const setSelection = useBoardStore((s) => s.setSelection)
   const toggleSelection = useBoardStore((s) => s.toggleSelection)
   const updateDrawing = useBoardStore((s) => s.updateDrawing)
+  const commit = useBoardStore((s) => s.commit)
 
   // Stroke weight tracks the pitch so annotations stay proportional at any zoom.
   const unit = Math.max(0.5, m.ppm * 0.13 * (m.L / 105))
@@ -168,16 +171,29 @@ export default function DrawingShape({ drawing: d, mapping: m, selected }: Props
     // would think to look for.
     case 'zoneTriangle':
     case 'zonePoly': {
+      /**
+       * A triangle stores its three corners, so it is a polygon that stopped at
+       * three and there is nothing left here to tell them apart.
+       *
+       * It used to store the two points of a drag and grow its apex on the way
+       * to the screen, which is what `triangleCorners` was for. Three clicks
+       * replaced that, and with the corners actually in `points` the derivation
+       * went with it.
+       *
+       * The four-number arm is a shim for boards drawn in the hours between the
+       * two designs, before either had reached anybody. Nothing produces such a
+       * shape now, and this can be deleted along with `triangleCorners` as soon
+       * as the dev database is known not to hold one. Without it, an old
+       * triangle renders as a stray two-point line rather than as a triangle,
+       * which is the sort of quiet wrongness that is hard to trace back.
+       */
       const corners =
-        d.type === 'zoneTriangle'
+        d.type === 'zoneTriangle' && mapped.length === 4
           ? triangleCorners(mapped[0], mapped[1], mapped[2], mapped[3])
           : mapped
       return (
         <Group>
           <Line points={corners} closed fill={d.color} opacity={d.fillOpacity ?? 0.18} {...common} />
-          {/* Drawn from `mapped`, not from `corners`, and correct either way:
-              the triangle is inscribed in the drag it was made with, so the two
-              have the same bounds. */}
           {selectionOutline()}
         </Group>
       )
@@ -188,6 +204,36 @@ export default function DrawingShape({ drawing: d, mapping: m, selected }: Props
       // Labels are sized off the pitch, not the stroke weight, so they stay
       // readable at every format and zoom level.
       const size = Math.max(11, m.ppm * (m.L / 105) * (0.9 + d.thickness * 0.35))
+      /**
+       * Double-click reopens the typing box over the label. It is the only
+       * editable thing on a label that a style patch cannot reach: colour,
+       * weight and attachment all go through `updateDrawing` already, and the
+       * words did not, so a typo meant delete and retype.
+       *
+       * The box is positioned from the event rather than from `x`/`y`, because
+       * those are stage coordinates under the current pan and zoom and the
+       * input is a `fixed` DOM node that wants client ones.
+       */
+      const openEditor =
+        onEditText &&
+        ((e: { evt: MouseEvent | TouchEvent }) => {
+          // A touch carries its coordinates one level down, and `changedTouches`
+          // rather than `touches` because by the time the tap is recognised the
+          // finger has already lifted and `touches` is empty.
+          const at = 'changedTouches' in e.evt ? e.evt.changedTouches[0] : e.evt
+          if (at) onEditText(d, at.clientX, at.clientY)
+        })
+      /**
+       * Editing a label and moving one are the same gesture in one respect that
+       * decides both: they are what a press on a label means *while `select` is
+       * the tool*, and with a draw tool armed the same press means "start drawing
+       * here". The layer passes `onEditText` only in select mode, so its presence
+       * is the one signal for both rather than two props that could disagree.
+       *
+       * Konva's drag threshold is what keeps these two apart in practice: a
+       * double-click that does not travel never becomes a drag.
+       */
+      const editable = onEditText !== undefined
       return (
         <Group>
           <Text
@@ -199,6 +245,19 @@ export default function DrawingShape({ drawing: d, mapping: m, selected }: Props
             fontStyle="500"
             fill={d.color}
             onPointerDown={common.onPointerDown}
+            onDblClick={openEditor || undefined}
+            onDblTap={openEditor || undefined}
+            draggable={editable}
+            /**
+             * Konva has already moved the node, so this writes where it landed
+             * back to the store in pitch coordinates. Deferred, so the whole
+             * drag is one undo step; `commit()` closes it when the drag ends.
+             */
+            onDragMove={(e) => {
+              const n = m.toNorm(e.target.x(), e.target.y())
+              updateDrawing(d.id, { points: [n.x, n.y] }, true)
+            }}
+            onDragEnd={() => commit()}
           />
           {selectionOutline()}
         </Group>

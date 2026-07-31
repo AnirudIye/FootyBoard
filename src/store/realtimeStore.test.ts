@@ -98,6 +98,26 @@ describe('presence', () => {
     expect(Object.keys(useRealtimeStore.getState().peers)).toHaveLength(1)
   })
 
+  /**
+   * A rename arrives as a `peer-present`, which is the same announcement a join
+   * is answered with. Counting keys did not catch this: the peer was not
+   * duplicated, they were replaced by a blank one, so their pointer disappeared
+   * from the pitch until they next moved it.
+   */
+  it('keeps where a peer is when it is told what they are now called', () => {
+    welcomeAs('owner', false)
+    useRealtimeStore.getState().peerJoined('them', 'them@example.com')
+    useRealtimeStore.getState().setCursor('them', 40, 60)
+    useRealtimeStore.getState().setPeerSelection('them', ['t7'])
+
+    useRealtimeStore.getState().peerJoined('them', 'Coach Ellis', 'Coach Ellis')
+
+    const peer = useRealtimeStore.getState().peers.them
+    expect(peer.displayName).toBe('Coach Ellis')
+    expect(peer.cursor).toEqual({ x: 40, y: 60 })
+    expect(peer.selection).toEqual(['t7'])
+  })
+
   it('labels a peer by the part of their address in front of the @', () => {
     // What the relay discloses on a board that names people normally is the
     // whole address, and a cursor label is not the place for a domain.

@@ -504,3 +504,88 @@ describe('re-reads settle in the order the messages arrived', () => {
     expect(heldTag()).toBe('from-replaced')
   })
 })
+
+/**
+ * Instructor mode has to hand over a board, not just a permission.
+ *
+ * **The reported symptom was that toggling it on and off left two people
+ * looking at different boards**, and the cause is that a lock change was
+ * treated as a permission change alone. A member answers a lock by re-reading
+ * over REST, and REST serves the *stored* row. A lock does not bump the
+ * generation, so the read adopts, and every op the owner has broadcast since
+ * their debounced autosave last fired is not in that row. The member snaps back
+ * to the last save while the owner keeps their live board, and nothing
+ * afterwards corrects it: ordinary ops announce nothing, and unlocking used to
+ * re-read nothing at all.
+ *
+ * The fix is that the owner publishes the truth on either transition, because
+ * the owner is the only client whose edits the relay never drops and therefore
+ * the only one whose board is authoritative. It is the same save-and-announce
+ * every other whole-board change already uses.
+ */
+describe('a lock hands the room the owner’s board', () => {
+  const ownerInRoom = async () => {
+    await holdingBoardInRoom()
+    await serverSays({ type: 'welcome', peerId: 'me', role: 'owner', locked: false, peers: [] })
+    mockApi.saveBoard.mockClear()
+  }
+
+  const sentTypes = () => latest().sent.map((raw) => JSON.parse(raw).type)
+
+  it('saves and announces when the owner locks the board', async () => {
+    await ownerInRoom()
+
+    await serverSays({ type: 'lock', locked: true, peerId: 'me' })
+
+    expect(mockApi.saveBoard).toHaveBeenCalled()
+    // `replacing` is the fifth argument, and it is what moves the generation
+    // and so supersedes the base every member is holding. Without it their next
+    // write is refused for a base that quietly stopped being current.
+    expect(mockApi.saveBoard.mock.calls[0][4]).toBe(true)
+    expect(sentTypes()).toContain('replaced')
+  })
+
+  /**
+   * Unlocking is the half the original report was about, and it used to do
+   * nothing but flip a boolean. Everything the owner demonstrated while the
+   * room was locked lived only in their own store and in whatever ops peers had
+   * applied, so handing editing back without handing over the board is how two
+   * people end up on different boards with no way back.
+   */
+  it('saves and announces when the owner unlocks it again', async () => {
+    await ownerInRoom()
+
+    await serverSays({ type: 'lock', locked: false, peerId: 'me' })
+
+    expect(mockApi.saveBoard).toHaveBeenCalled()
+    expect(sentTypes()).toContain('replaced')
+  })
+
+  /**
+   * The owner must not answer their own lock by re-reading. They are the client
+   * that has the truth, so a read would replace it with the stored row, which is
+   * precisely the divergence being fixed, arrived at from the other side.
+   */
+  it('does not make the owner re-read their own board', async () => {
+    await ownerInRoom()
+    mockApi.getBoard.mockClear()
+
+    await serverSays({ type: 'lock', locked: true, peerId: 'me' })
+
+    expect(mockApi.getBoard).not.toHaveBeenCalled()
+  })
+
+  /** A member is untouched: they still go back to the truth, and they do not announce. */
+  it('leaves a member re-reading and announcing nothing', async () => {
+    await holdingBoardInRoom()
+    await serverSays({ type: 'welcome', peerId: 'me', role: 'member', locked: false, peers: [] })
+    mockApi.saveBoard.mockClear()
+    mockApi.getBoard.mockClear()
+
+    await serverSays({ type: 'lock', locked: true, peerId: 'owner' })
+
+    expect(mockApi.getBoard).toHaveBeenCalled()
+    expect(mockApi.saveBoard).not.toHaveBeenCalled()
+    expect(sentTypes()).not.toContain('replaced')
+  })
+})

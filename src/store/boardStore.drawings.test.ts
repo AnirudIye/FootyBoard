@@ -24,6 +24,74 @@ describe('board drawings', () => {
     expect(d.thickness).toBe(5)
   })
 
+  /**
+   * Dragging a label, which is one gesture and has to be one undo step.
+   *
+   * The drag writes a new position on every pointer move, so without the
+   * deferred history push a single drag spent a handful of the fifty slots and
+   * a `structuredClone` of the whole board each time, and undo walked the label
+   * back a few pixels at a time. This is `updateToken`'s rule applied to
+   * drawings, and the assertions are the same two: one step for the run, and
+   * the run really did land where it was dropped.
+   */
+  describe('moving a label', () => {
+    const steps = () => useBoardStore.getState().history.past.length
+    const at = () => useBoardStore.getState().drawings[0].points
+
+    const placeLabel = () => {
+      const s = useBoardStore.getState()
+      return s.addDrawing(createDrawing('text', [20, 30], style, { text: 'PRESS HIGH' }))
+    }
+
+    it('spends one undo step for a whole drag, not one per pointer move', () => {
+      const id = placeLabel()
+      const before = steps()
+
+      for (const [x, y] of [[22, 31], [26, 34], [31, 38], [35, 41]]) {
+        useBoardStore.getState().updateDrawing(id, { points: [x, y] }, true)
+      }
+      expect(steps()).toBe(before)
+
+      useBoardStore.getState().commit()
+      expect(steps()).toBe(before + 1)
+    })
+
+    it('leaves the label where it was dropped', () => {
+      const id = placeLabel()
+      useBoardStore.getState().updateDrawing(id, { points: [26, 34] }, true)
+      useBoardStore.getState().updateDrawing(id, { points: [35, 41] }, true)
+      useBoardStore.getState().commit()
+
+      expect(at()).toEqual([35, 41])
+    })
+
+    it('puts it back where it started in one undo', () => {
+      const id = placeLabel()
+      useBoardStore.getState().updateDrawing(id, { points: [26, 34] }, true)
+      useBoardStore.getState().updateDrawing(id, { points: [35, 41] }, true)
+      useBoardStore.getState().commit()
+
+      useBoardStore.getState().undoAction()
+
+      expect(at()).toEqual([20, 30])
+    })
+
+    /**
+     * The other direction, which is the one that would be worse: a style patch
+     * has no gesture around it and no `commit()` coming, so if it ever started
+     * deferring, its undo step would be pushed by whatever gesture happened
+     * next, or never.
+     */
+    it('still pushes immediately for an ordinary patch', () => {
+      const id = placeLabel()
+      const before = steps()
+
+      useBoardStore.getState().updateDrawing(id, { color: '#2c5b8a' })
+
+      expect(steps()).toBe(before + 1)
+    })
+  })
+
   it('deletes a mixed selection of chips and annotations', () => {
     const s = useBoardStore.getState()
     const drawingId = s.addDrawing(createDrawing('pen', [1, 1, 2, 2], style))

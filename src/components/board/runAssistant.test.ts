@@ -43,7 +43,7 @@ describe('the offline parser comes first', () => {
     await settle()
 
     expect(askAssistant).not.toHaveBeenCalled()
-    expect(useBoardStore.getState().lastFormation).toBeTruthy()
+    expect(useBoardStore.getState().lastFormation.home).toBeTruthy()
   })
 
   it('moves one player from a phrasing it knows, still without the network', async () => {
@@ -107,6 +107,160 @@ describe('the AI gate', () => {
   })
 })
 
+describe('block height', () => {
+  const awayPlayer = (number: number) =>
+    useBoardStore.getState().tokens.find((t) => t.type === 'player' && t.teamId === 'away' && t.number === number)
+
+  it('pushes the team up the pitch when the depth rides on the shape', () => {
+    // The reported bug: "4-3-3 high" set the shape and dropped the height, so
+    // the board looked identical to a plain "4-3-3" and nothing said why.
+    runAssistant('set up a 4-3-3')
+    const base = homePlayer(9)!.x
+
+    runAssistant('set up a 4-3-3 high')
+    expect(homePlayer(9)!.x).toBeGreaterThan(base)
+  })
+
+  it('leaves the keeper in goal at every height', () => {
+    // `applyBlock` skips index 0 on purpose. A high line that takes the keeper
+    // with it is not a high line.
+    runAssistant('set up a 4-3-3')
+    const keeper = homePlayer(1)!.x
+
+    runAssistant('set up a 4-3-3 high')
+    expect(homePlayer(1)!.x).toBe(keeper)
+  })
+
+  it('reads mid and low as their own heights, not as the base', () => {
+    runAssistant('set up a 4-3-3 low')
+    const low = homePlayer(9)!.x
+    runAssistant('set up a 4-3-3 mid')
+    const mid = homePlayer(9)!.x
+    runAssistant('set up a 4-3-3 high')
+    const high = homePlayer(9)!.x
+
+    expect(low).toBeLessThan(mid)
+    expect(mid).toBeLessThan(high)
+  })
+
+  it('moves the named team without changing its shape', () => {
+    // The order matters: away is set first, then home, so the board's last
+    // formation is home's. That is exactly the case the old single
+    // `lastFormation` got wrong, handing the away team home's 3-5-2 in answer
+    // to a request about how deep they sit.
+    runAssistant('put the away team in a 4-4-2 high')
+    runAssistant('set us up in a 3-5-2')
+    const before = awayPlayer(9)!.x
+
+    runAssistant('drop the away team deeper')
+
+    expect(useBoardStore.getState().lastFormation).toEqual({ home: '3-5-2', away: '4-4-2' })
+    // Away attacks toward 0, so deeper is a larger x.
+    expect(awayPlayer(9)!.x).toBeGreaterThan(before)
+  })
+
+  it('leaves the other team alone entirely', () => {
+    runAssistant('put the away team in a 4-4-2')
+    runAssistant('set us up in a 3-5-2')
+    const home = useBoardStore
+      .getState()
+      .tokens.filter((t) => t.teamId === 'home')
+      .map((t) => `${t.id}:${t.x},${t.y}`)
+
+    runAssistant('push the away team higher')
+
+    expect(
+      useBoardStore
+        .getState()
+        .tokens.filter((t) => t.teamId === 'home')
+        .map((t) => `${t.id}:${t.x},${t.y}`),
+    ).toEqual(home)
+  })
+
+  it('asks for a shape first per side, not for the board', () => {
+    runAssistant('set us up in a 3-5-2')
+    useBoardStore.setState({ lastFormation: { home: '3-5-2', away: null } })
+
+    runAssistant('drop the away team deeper')
+
+    expect(lastReply()).toMatch(/away team up in a formation first/)
+    expect(lastMessage().undoable).toBeFalsy()
+  })
+})
+
+describe('a tactical question', () => {
+  const question = 'how do i play against a 4-3-3'
+
+  it('does not rearrange the board in answer to it', async () => {
+    // The regression this feature is built on. Every parser rule matched on the
+    // formation code in that sentence, so asking how to beat a 4-3-3 set one
+    // up: eleven of the coach's players moved, and the question went unanswered.
+    useAssistantStore.setState({ aiAvailable: true, aiConsented: true })
+    askAssistant.mockResolvedValue({ reply: 'Their holder is alone. Play either side of him.', command: null })
+    const before = JSON.stringify(useBoardStore.getState().tokens)
+
+    runAssistant(question)
+    await settle()
+
+    expect(JSON.stringify(useBoardStore.getState().tokens)).toBe(before)
+    expect(useBoardStore.getState().history.past).toHaveLength(0)
+  })
+
+  it('reaches the AI half, which is the only half that can answer it', async () => {
+    useAssistantStore.setState({ aiAvailable: true, aiConsented: true })
+    askAssistant.mockResolvedValue({ reply: 'Their holder is alone. Play either side of him.', command: null })
+
+    runAssistant(question)
+    await settle()
+
+    expect(askAssistant).toHaveBeenCalledOnce()
+    expect(askAssistant.mock.calls[0][0].message).toBe(question)
+    // The board goes with it, because "against a 4-3-3" is half the question
+    // and what is already drawn is the other half.
+    expect(askAssistant.mock.calls[0][0].board.length).toBeGreaterThan(0)
+    expect(lastReply()).toMatch(/holder is alone/)
+  })
+
+  it('says where the answer would have to come from when the AI is off', async () => {
+    runAssistant(question)
+    await settle()
+
+    expect(askAssistant).not.toHaveBeenCalled()
+    expect(lastReply()).toMatch(/online assistant/)
+    expect(lastReply()).toContain('4-3-3')
+    expect(useBoardStore.getState().history.past).toHaveLength(0)
+  })
+
+  it('does not tell somebody who already turned it on to turn it on', async () => {
+    // Past that gate the offline reply has stopped being true. What is left to
+    // go wrong is the network, and that is what the failure has to say.
+    useAssistantStore.setState({ aiAvailable: true, aiConsented: true })
+    askAssistant.mockRejectedValue(new Error('network down'))
+
+    runAssistant(question)
+    await settle()
+
+    expect(lastReply()).not.toMatch(/online assistant/)
+    expect(lastReply().length).toBeGreaterThan(0)
+  })
+
+  it('still lets the AI act when the coach asked for both', async () => {
+    // "how should we set up against a 3-5-2" is a question the model can answer
+    // by moving the board, and the schema still allows it.
+    useAssistantStore.setState({ aiAvailable: true, aiConsented: true })
+    askAssistant.mockResolvedValue({
+      reply: 'Wide forwards pin their wing-backs, so a back four holds up.',
+      command: { type: 'setFormation', side: 'home', name: '4-4-2', block: 'default' },
+    })
+
+    runAssistant('how should we set up against a 3-5-2')
+    await settle()
+
+    expect(useBoardStore.getState().lastFormation.home).toBe('4-4-2')
+    expect(lastReply()).toMatch(/wing-backs/)
+  })
+})
+
 describe('acting on what comes back', () => {
   beforeEach(() => useAssistantStore.setState({ aiAvailable: true, aiConsented: true }))
 
@@ -119,7 +273,7 @@ describe('acting on what comes back', () => {
     runAssistant('make the away side aggressive')
     await settle()
 
-    expect(useBoardStore.getState().lastFormation).toBe('4-4-2')
+    expect(useBoardStore.getState().lastFormation.away).toBe('4-4-2')
     expect(lastReply()).toBe('Away are pressing high.')
   })
 

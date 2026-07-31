@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
-import { run, transaction } from './db.js'
+import { get, run, transaction } from './db.js'
 import { hashPassword } from './auth.js'
 import { destroyAllSessions } from './sessions.js'
 
@@ -41,6 +41,10 @@ const digest = (token) => createHash('sha256').update(token).digest('hex')
 export async function createResetToken(userId) {
   const token = randomBytes(32).toString('base64url')
   await transaction(async (client) => {
+    // The account row first, for the reason `sessions.js` gives at length: this
+    // transaction touches a child table of `users`, and everything else that
+    // touches that pair takes the parent first. Two orders is a deadlock.
+    await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId])
     await client.query('DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NULL', [userId])
     await client.query(
       `INSERT INTO password_resets (id, user_id, token_hash, expires_at, created_at)
@@ -66,7 +70,31 @@ export async function consumeResetToken(token, newPassword) {
   // scrypt. It also costs an invalid token the same work as a valid one.
   const { hash, salt } = await hashPassword(newPassword)
 
-  return destroyAllSessions(async (client) => {
+  /**
+   * **This read is not the check, and it must never be turned into one.**
+   *
+   * It answers one question — which account's row to lock — and it decides
+   * nothing at all. The `UPDATE ... WHERE used_at IS NULL` below is still the
+   * only thing that spends the token, so two requests carrying the same one
+   * still cannot both pass: they queue on the account lock, the first moves
+   * `used_at`, and the second's UPDATE matches no row and returns null through
+   * the same path an expired token takes. The endpoint still cannot be used to
+   * tell a token that never existed from one already spent.
+   *
+   * It exists because `destroyAllSessions` has to take the users row as its
+   * first statement, and it cannot do that until somebody has said which row.
+   * Claiming the token first is what put this transaction in the opposite order
+   * to `POST /api/auth/password` and made the pair deadlock.
+   */
+  const claimant = await get(
+    `SELECT user_id FROM password_resets
+      WHERE token_hash = $1 AND used_at IS NULL AND expires_at > $2`,
+    digest(token),
+    Date.now(),
+  )
+  if (!claimant) return null
+
+  return destroyAllSessions(claimant.user_id, async (client) => {
     /**
      * The claim *is* the check.
      *

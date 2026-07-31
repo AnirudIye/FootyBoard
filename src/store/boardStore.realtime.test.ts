@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { useBoardStore } from './boardStore'
 import { registerSinks, clearSinks, isApplyingRemote, runAsRemote } from '../lib/realtime/bridge'
+import { createDrawing } from '../lib/drawings'
 import type { Op } from '../lib/realtime/protocol'
 
 /**
@@ -153,6 +154,47 @@ describe('an edit that arrives a character at a time', () => {
 
     expect(useBoardStore.getState().history.past).toHaveLength(2)
     expect(opsOfType('patch')).toHaveLength(2)
+  })
+})
+
+/**
+ * A label being dragged, which is the same rule from the other end.
+ *
+ * The reason it is worth its own case rather than trusting the token one: the
+ * resting position is the last op here rather than a separate `emitFinal`,
+ * because these patches are unthrottled. If they ever start being throttled,
+ * peers keep whichever position the throttle happened to let through and
+ * nothing corrects it, which is exactly what `commit()`'s bulk op exists to
+ * stop for chips.
+ */
+describe('a label being dragged', () => {
+  const style = { color: '#9c3b22', thickness: 2, fillOpacity: 0.2, curve: 'right' as const }
+
+  it('broadcasts every move, ending on where it came to rest, as one undo step', () => {
+    const id = useBoardStore
+      .getState()
+      .addDrawing(createDrawing('text', [20, 30], style, { text: 'PRESS HIGH' }))
+    sent.length = 0
+
+    for (const [x, y] of [[26, 34], [31, 38], [35, 41]]) {
+      useBoardStore.getState().updateDrawing(id, { points: [x, y] }, true)
+    }
+
+    expect(opsOfType('patch')).toHaveLength(3)
+    expect(sent.at(-1)!.op).toMatchObject({
+      type: 'patch',
+      entity: 'drawing',
+      id,
+      patch: { points: [35, 41] },
+    })
+    // Unthrottled, which is what makes the last op the resting one.
+    expect(sent.every((s) => s.key === undefined)).toBe(true)
+
+    const before = useBoardStore.getState().history.past.length
+    useBoardStore.getState().commit()
+    expect(useBoardStore.getState().history.past).toHaveLength(before + 1)
+    // And no bulk correction, because there is nothing left to correct.
+    expect(finals).toHaveLength(0)
   })
 })
 

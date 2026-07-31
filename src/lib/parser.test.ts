@@ -39,7 +39,74 @@ describe('parseCommand — formations', () => {
   })
 })
 
+describe('parseCommand — a depth named with a shape', () => {
+  /**
+   * The bug: only the noun phrases were recognised, so the bare adjective on the
+   * end of a shape was dropped and the team was set up at the base height with
+   * nothing said about it. Every case here names a formation *and* a depth, and
+   * both have to survive into the command.
+   */
+  const cases: [string, string, string][] = [
+    ['set up a 4-3-3 high', '4-3-3', 'high'],
+    ['put them in a 4-4-2 mid', '4-4-2', 'mid'],
+    ['set up a 4-2-3-1 low', '4-2-3-1', 'default'],
+    ['4-3-3 higher up the pitch', '4-3-3', 'high'],
+    ['line them up in a 5-4-1 deep', '5-4-1', 'default'],
+    ['3-5-2 low block', '3-5-2', 'default'],
+    ['4-1-4-1 mid block', '4-1-4-1', 'mid'],
+    ['set up a 4-3-3 high press', '4-3-3', 'high'],
+    ['put us in a 3-4-3 with a high line', '3-4-3', 'high'],
+    ['4-4-1-1 sitting deep', '4-4-1-1', 'default'],
+  ]
+  for (const [input, name, block] of cases) {
+    it(`reads "${input}" as a ${name} at ${block}`, () => {
+      expect(parseCommand(input, ctx).command).toMatchObject({ type: 'setFormation', name, block })
+    })
+  }
+
+  it('still defaults to the base height when no depth is named', () => {
+    expect(parseCommand('set up a 4-3-3', ctx).command).toMatchObject({ block: 'default' })
+  })
+
+  it('says the depth back, so a dropped one is visible in the reply', () => {
+    expect(parseCommand('set up a 4-3-3 high', ctx).reply).toMatch(/high line/)
+    expect(parseCommand('put them in a 4-4-2 mid', ctx).reply).toMatch(/mid block/)
+  })
+})
+
 describe('parseCommand — block height alone', () => {
+  const bare: [string, string][] = [
+    ['push them high', 'high'],
+    ['go higher', 'high'],
+    ['push up', 'high'],
+    ['move them up the pitch', 'high'],
+    ['sit mid', 'mid'],
+    ['drop them deeper', 'default'],
+    ['go low', 'default'],
+    ['sit deep', 'default'],
+  ]
+  for (const [input, block] of bare) {
+    it(`reads "${input}" as ${block}`, () => {
+      expect(parseCommand(input, ctx).command).toMatchObject({ type: 'setBlock', block })
+    })
+  }
+
+  it('reads the comparatives, which the old guard rejected', () => {
+    // `\bhigh\b` does not match "higher" and `\bdeep\b` does not match "deeper",
+    // so the second regex that used to sit on this rule threw both away right
+    // after detectBlock had recognised them.
+    expect(parseCommand('push the away team higher', ctx).command).toEqual({
+      type: 'setBlock',
+      side: 'away',
+      block: 'high',
+    })
+    expect(parseCommand('drop the away team deeper', ctx).command).toEqual({
+      type: 'setBlock',
+      side: 'away',
+      block: 'default',
+    })
+  })
+
   it('switches to a mid block without a formation', () => {
     expect(parseCommand('switch to a mid block', ctx).command).toEqual({
       type: 'setBlock',
@@ -184,6 +251,91 @@ describe('zonePosition', () => {
   it('leaves the centre circle where it is for both sides', () => {
     expect(zonePosition('center-circle', 'home')).toEqual({ x: 50, y: 50 })
     expect(zonePosition('center-circle', 'away')).toEqual({ x: 50, y: 50 })
+  })
+})
+
+describe('parseCommand — a question is not an instruction', () => {
+  /**
+   * The bug this guard exists for: every one of these names a formation, and
+   * every rule in the parser needed nothing more than that. So the board used
+   * to answer "how do I play against a 4-3-3" by becoming a 4-3-3, moving
+   * eleven players the coach had placed, and calling that a reply.
+   */
+  const questions = [
+    'how do i play against a 4-3-3',
+    'how do we beat a 4-2-3-1',
+    'how should we set up against a 3-5-2',
+    "what's the best way to break down a 5-4-1",
+    'how do you counter a 4-4-2',
+    'what beats a 4-4-2',
+    'weaknesses of a 4-3-3',
+    'what are the strengths of a 3-4-3',
+    'why does a 4-3-3 struggle against a 3-5-2',
+    'should i play 4-3-3 or 4-2-3-1',
+    'tips for playing a 4-1-4-1',
+    'advice on the 3-5-2',
+    'explain the 4-2-3-1',
+    'how do i stop their 9',
+  ]
+  for (const q of questions) {
+    it(`leaves the board alone for "${q}"`, () => {
+      const r = parseCommand(q, ctx)
+      expect(r.command).toBeNull()
+      expect(r.asking).toBe(true)
+    })
+  }
+
+  it('says where a tactical answer has to come from, and what is left offline', () => {
+    const r = parseCommand('how do i play against a 4-3-3', ctx)
+    expect(r.reply).toMatch(/online assistant/)
+    // The shape it recognised, so asking for it is one more word rather than a
+    // rephrasing of the whole message.
+    expect(r.reply).toContain('4-3-3')
+  })
+
+  it('does not name a shape it did not find', () => {
+    expect(parseCommand('how do we press higher', ctx).reply).not.toMatch(/\d-\d/)
+  })
+
+  /**
+   * The other half of the guard, and the half that would break the product if
+   * it got this wrong: an instruction that happens to contain a word a question
+   * also uses must still reach the board.
+   */
+  const instructions: [string, string][] = [
+    ['set up a 4-3-3', 'setFormation'],
+    ['set the away team up in a 4-4-2 mid block', 'setFormation'],
+    ['put them in a 4-2-3-1 high line', 'setFormation'],
+    ['4-3-3 high press', 'setFormation'],
+    ['4231 for the opponent', 'setFormation'],
+    ['play the animation', 'play'],
+    ['what do you see', 'readBoard'],
+    ['read the board', 'readBoard'],
+    ['show the attacking half', 'setView'],
+    ['switch to a mid block', 'setBlock'],
+    ['push the away team onto a high line', 'setBlock'],
+    ['move 9 to the left wing', 'movePlayer'],
+    ['drop 6 deeper', 'movePlayer'],
+    ['clear the arrows', 'clearDrawings'],
+    ['reset the board', 'resetBoard'],
+    ['bring 12 back on', 'returnPlayer'],
+  ]
+  for (const [input, type] of instructions) {
+    it(`still runs "${input}"`, () => {
+      const r = parseCommand(input, ctx)
+      expect(r.command?.type).toBe(type)
+      expect(r.asking).toBeFalsy()
+    })
+  }
+
+  it('sends a phrasing that is both to the half that can do both', () => {
+    // "how do I set up a 4-3-3" is a question wearing an instruction, and it
+    // goes to the AI on purpose: the model can call setFormation and does, so
+    // nothing is lost there. Offline the reply names the shape it saw, which is
+    // the whole reason NEEDS_AI carries one.
+    const r = parseCommand('how do i set up a 4-3-3', ctx)
+    expect(r.command).toBeNull()
+    expect(r.reply).toContain('4-3-3')
   })
 })
 

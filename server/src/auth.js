@@ -171,12 +171,42 @@ export const signIn = (res, token) =>
 
 export const signOut = (res) => res.clearCookie(COOKIE_NAME, SESSION_COOKIE)
 
+/**
+ * A value that is not valid percent-encoding, handed back as it arrived.
+ *
+ * `decodeURIComponent('%')` throws a URIError, and this parser runs on every
+ * request in the middleware that resolves `req.user` — so `Cookie: sb_session=%`
+ * from anybody at all threw out of that middleware, reached the error handler
+ * with no `status` on it, and was answered 500 with a stack printed beside it.
+ * A stranger could pick how much went into the log stream, and the server
+ * reported its own fault for a header the client sent.
+ *
+ * **Tolerating it rather than answering 400, and the reason is next door.**
+ * `POST /api/auth/logout` is the only endpoint that clears this cookie, and it
+ * reads it first — so refusing every request carrying an undecodable cookie
+ * would also refuse the one call that would fix it, and a browser cannot delete
+ * an httpOnly cookie from JavaScript. A 400 would therefore turn a mangled
+ * cookie into a permanent one. Handing the raw value back cannot let anybody in:
+ * tokens are base64url and stored as SHA-256, so a string that failed to decode
+ * hashes to something no row holds, and the request is simply unauthenticated.
+ *
+ * This is also what the `cookie` package Express itself uses does, for the same
+ * reason, which is worth knowing before anyone decides it is too lenient.
+ */
+const decodeCookieValue = (value) => {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
 /** Minimal cookie parser — we only ever need our own key. */
 export function readCookie(header, name) {
   if (!header) return null
   for (const part of header.split(';')) {
     const [key, ...rest] = part.trim().split('=')
-    if (key === name) return decodeURIComponent(rest.join('='))
+    if (key === name) return decodeCookieValue(rest.join('='))
   }
   return null
 }

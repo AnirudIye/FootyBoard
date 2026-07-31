@@ -360,6 +360,85 @@ test('the setting reaches an instance holding a room it was not set on', async (
   await setAnonymous(false)
 })
 
+/**
+ * A rename reaches a room that is already open, on an instance that was not
+ * asked.
+ *
+ * `identity()` reads the chosen name off the socket exactly as it reads the
+ * address, and a socket is authorized once at the handshake, so writing the
+ * column used to change what the *next* connection was told and nothing about
+ * the room somebody was sitting in. Whoever the room had been calling by the
+ * local part of their address went on being called that until they reloaded.
+ *
+ * The room is held by A and the rename is made against B, so the bus is the
+ * only route between them, which is the same reason the anonymity test above is
+ * shaped this way.
+ */
+test('a rename reaches a room already open on another instance', async () => {
+  const watcher = await openSocket(A, boardId, owner.cookie)
+  const renamed = await openSocket(A, boardId, guest.cookie)
+  const arrival = await waitForMessage(watcher, (m) => m.type === 'peer-joined')
+
+  // Before: the room knows them by their address, which is what this closes.
+  assert.match(arrival.displayName, /@test\.invalid$/)
+
+  const patched = await json(
+    await call(B, '/auth/display-name', guest.cookie, {
+      method: 'PATCH',
+      body: JSON.stringify({ displayName: 'Coach Ellis' }),
+    }),
+  )
+  assert.equal(patched.status, 200)
+
+  const announced = await waitForMessage(
+    watcher,
+    (m) => m.type === 'peer-present' && m.peerId === arrival.peerId,
+  )
+  assert.equal(announced.displayName, 'Coach Ellis')
+
+  // Announced to the room and not to the person it describes: a client handed a
+  // `peer-present` for its own peer id would add itself to its own peer list.
+  assert.equal(
+    renamed.received.filter((m) => m.type === 'peer-present' && m.peerId === arrival.peerId).length,
+    0,
+    'the renamed socket was told about itself',
+  )
+
+  await Promise.all([closed(watcher), closed(renamed)])
+  await run('UPDATE users SET display_name = NULL WHERE id = $1', guest.id)
+})
+
+/**
+ * And the owner's switch still outranks it, which is rule 1 of `identity()`
+ * rather than anything about renaming. A name chosen by a member must not be a
+ * way around a room the owner has asked to be anonymous.
+ */
+test('a rename on an anonymous board still says the animal', async () => {
+  await setAnonymous(true)
+  const watcher = await openSocket(A, boardId, owner.cookie)
+  const renamed = await openSocket(A, boardId, guest.cookie)
+  const arrival = await waitForMessage(watcher, (m) => m.type === 'peer-joined')
+
+  const patched = await json(
+    await call(B, '/auth/display-name', guest.cookie, {
+      method: 'PATCH',
+      body: JSON.stringify({ displayName: 'Coach Ellis' }),
+    }),
+  )
+  assert.equal(patched.status, 200)
+
+  const announced = await waitForMessage(
+    watcher,
+    (m) => m.type === 'peer-present' && m.peerId === arrival.peerId,
+  )
+  assert.match(announced.displayName, ANONYMOUS_NAME)
+  assert.equal(announced.email, announced.displayName, 'the address rode along beside the animal')
+
+  await Promise.all([closed(watcher), closed(renamed)])
+  await setAnonymous(false)
+  await run('UPDATE users SET display_name = NULL WHERE id = $1', guest.id)
+})
+
 test('neither owner-only switch can be thrown by a member', async () => {
   const anonymity = await json(
     await call(B, `/boards/${boardId}/anonymous`, guest.cookie, {

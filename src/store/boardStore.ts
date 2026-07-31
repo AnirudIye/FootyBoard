@@ -136,7 +136,21 @@ interface BoardState extends BoardData {
   /** Ephemeral viewport/readout state for the HUD. */
   zoom: number
   setZoom: (zoom: number) => void
-  lastFormation: string | null
+  /**
+   * The last preset shape applied to each side, kept per side rather than once
+   * for the board.
+   *
+   * It reads like a HUD readout, and it was one until the assistant's "drop them
+   * deeper" started re-applying it: a single string means the last shape applied
+   * to *anybody*, so asking for the away team to sit deeper handed them whichever
+   * formation home was last put in. A depth change has to keep the team in the
+   * shape it is already playing, and the only way to do that from a preset is to
+   * know which preset that side is on.
+   *
+   * Not part of `PersistedBoard`, so this shape is free to change: nothing is
+   * stored, and there is no schema version to carry.
+   */
+  lastFormation: Record<Side, string | null>
   /** The team new formations, saved shapes, and assistant commands act on. */
   activeTeam: Side
   setActiveTeam: (side: Side) => void
@@ -189,7 +203,8 @@ interface BoardState extends BoardData {
   drawStyle: DrawStyle
   setDrawStyle: (patch: Partial<DrawStyle>) => void
   addDrawing: (drawing: Omit<Drawing, 'id'>) => string
-  updateDrawing: (drawingId: string, patch: Partial<Drawing>) => void
+  /** `defer` holds the undo step open the way `updateToken`'s does; see there. */
+  updateDrawing: (drawingId: string, patch: Partial<Drawing>, defer?: boolean) => void
   deleteDrawings: (ids: string[]) => void
 
   /** Flip a player to the other team: recolours and renumbers to fit. */
@@ -392,7 +407,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   inspector: null,
   formationEpoch: 0,
   zoom: 1,
-  lastFormation: null,
+  lastFormation: { home: null, away: null },
   activeTeam: 'home',
   drawStyle: { color: '#2ae07a', thickness: 2.4, fillOpacity: 0.18, curve: 'right' },
   playback: { position: -1, playing: false, speed: 1, loop: true, eased: true },
@@ -450,12 +465,31 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     return newId
   },
 
-  updateDrawing: (drawingId, patch) => {
-    const before = get()._snapshot()
+  updateDrawing: (drawingId, patch, defer = false) => {
+    const before = defer ? null : get()._snapshot()
+    // `defer` is `updateToken`'s, for the same reason and with the same rule:
+    // a drag is one gesture and should be one undo step, so the snapshot is
+    // parked in `_pending` at the first move and `commit()` at the end turns
+    // the whole run into a single step. Without it, dragging a label spends one
+    // of the fifty history slots and one `structuredClone` of the entire board
+    // per pointer move, and undo walks the label back a few pixels at a time.
+    //
+    // **Only the history push is deferred.** The `set` and the `emit` run on
+    // every call either way, which is what keeps this invisible to everything
+    // else: peers see the label move continuously, and autosave still fires for
+    // the originator because it watches the drawings array's identity rather
+    // than the history. Anything else that starts deferring has to leave those
+    // two where they are.
+    //
+    // The emit is deliberately not throttled, so the last op of a drag *is* the
+    // resting position and there is nothing left to correct afterwards. That is
+    // why this needs no `emitFinal` counterpart the way the token drag does,
+    // and it is the same choice the curve control point already makes.
+    if (defer && !get()._pending) set({ _pending: get()._snapshot() })
     set((s) => ({
       drawings: s.drawings.map((d) => (d.id === drawingId ? { ...d, ...patch } : d)),
     }))
-    get()._pushPast(before)
+    if (before) get()._pushPast(before)
     emit({ type: 'patch', entity: 'drawing', id: drawingId, patch })
   },
 
@@ -863,7 +897,10 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         selection: [],
         inspector: null,
         formationEpoch: s.formationEpoch + 1,
-        lastFormation: formationCode(FORMATION_NAMES[kind][0]),
+        // Both sides are rebuilt from this format's first preset, so both are
+        // on it. Recording one and leaving the other stale would make the next
+        // depth change put a team back into an 11-a-side shape on a futsal court.
+        lastFormation: { home: formationCode(FORMATION_NAMES[kind][0]), away: formationCode(FORMATION_NAMES[kind][0]) },
       }
     })
     get()._pushPast(before)
@@ -881,7 +918,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     set((s) => ({
       tokens: assignPositions(s.tokens, side, positions),
       formationEpoch: s.formationEpoch + 1,
-      lastFormation: formationCode(name),
+      lastFormation: { ...s.lastFormation, [side]: formationCode(name) },
     }))
     get()._pushPast(before)
     emit({ type: 'bulk', tokens: bulkFor(get().tokens, sideIds(get().tokens, side)) })
@@ -911,6 +948,10 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     set((s) => ({
       tokens: assignPositions(s.tokens, side, positions),
       formationEpoch: s.formationEpoch + 1,
+      // A saved shape is not one of the presets, so this side is no longer on
+      // one. Leaving the old code here would let the next depth change throw the
+      // custom shape away and put the team back into the preset it replaced.
+      lastFormation: { ...s.lastFormation, [side]: null },
     }))
     get()._pushPast(before)
     emit({ type: 'bulk', tokens: bulkFor(get().tokens, sideIds(get().tokens, side)) })
