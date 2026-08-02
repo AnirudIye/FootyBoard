@@ -31,11 +31,16 @@ import { useBoardsStore } from '../../store/boardsStore'
  * what it has to say plainly is the new cost: the account holding their work has
  * no password yet.
  *
- * A share *link* is deliberately still refused, and that is not an oversight: it
- * is a credential rather than six letters read off a screen, and there is no
- * version of redeeming one without an account that does not put it back in a URL.
+ * A share *link* used to be refused here, and that was the third fix. The
+ * argument was that a token is a credential and there is no redeeming one
+ * without an account that does not put it back in a URL — but it is already in a
+ * URL, because that is what a share link is, and the person arrived holding it
+ * in `next`. Refusing them unsent nothing. What it produced was "continue as a
+ * guest" handing them a blank board of their own while the shared board never
+ * opened: no error, and every appearance of having worked. The same reasoning
+ * that corrected the code door applies unchanged, so both doors now redeem.
  *
- * These assert on the rendered page rather than on any helper, because both
+ * These assert on the rendered page rather than on any helper, because all three
  * defects were entirely in what the page offered.
  */
 
@@ -45,11 +50,16 @@ vi.mock('../../lib/api', () => ({
       .fn()
       .mockResolvedValue({ questions: [{ id: 'first-pet', label: 'First pet?' }] }),
     joinAsGuest: vi.fn(),
+    redeemShareAsGuest: vi.fn(),
     me: vi.fn(),
   },
 }))
 
-const mockApi = api as unknown as { joinAsGuest: Mock; me: Mock }
+const mockApi = api as unknown as {
+  joinAsGuest: Mock
+  redeemShareAsGuest: Mock
+  me: Mock
+}
 
 const NEXT = '/join?code=SLSDUB'
 const ENTRY = `/login?next=${encodeURIComponent(NEXT)}`
@@ -111,6 +121,9 @@ beforeEach(() => {
     restore: real.restore,
   })
   mockApi.joinAsGuest.mockResolvedValue({ board: { id: 'shared-board', name: 'Session board' } })
+  mockApi.redeemShareAsGuest.mockResolvedValue({
+    board: { id: 'linked-board', name: 'Linked session' },
+  })
   mockApi.me.mockResolvedValue({ user: GUEST })
   useBoardsStore.setState({ boards: [], currentId: null, nextCursor: null, saveState: 'idle' })
   localStorage.clear()
@@ -258,25 +271,122 @@ describe('AuthPage and a next that only looks like a join', () => {
 
 describe('AuthPage with a share link pending', () => {
   /**
-   * The same screen is where a share *link* sends a signed-out visitor, so the
-   * same door dropped the same way in. The token is a credential rather than
-   * six letters read off a screen, so it is deliberately not carried: putting
-   * it back in the address bar is what `useShareLink` strips it to avoid, and
-   * a guest sent to `/board?share=…` would only be bounced straight back here.
-   * Being told is the whole of the fix for this one.
+   * The same screen is where a share *link* sends a signed-out visitor, and the
+   * door used to drop them the same way the code door once did — onto a blank
+   * board of their own, with the shared board never opened and nothing said.
+   *
+   * The reported symptom was exactly that, and the reason it was reported rather
+   * than noticed is that it looks like success: a board appears, it works, and
+   * only the person who sent the link ever finds out it was the wrong one.
    */
-  const shareEntry = `/login?next=${encodeURIComponent('/board?share=tok_abcdef')}`
+  const TOKEN = 'tok_abcdef'
+  const shareEntry = `/login?next=${encodeURIComponent(`/board?board=b1&share=${TOKEN}`)}`
 
-  it('says the guest board is not the board they were opening', () => {
+  it('takes the guest to the board the link opens', async () => {
     at(shareEntry)
-    expect(guestCopy()).toMatch(/needs an account/i)
-    expect(guestCopy()).toMatch(/do not join the one you were opening/i)
+    await act(async () => {
+      fireEvent.click(guestButton())
+    })
+
+    expect(mockApi.redeemShareAsGuest).toHaveBeenCalledWith(TOKEN)
+    expect(screen.getByTestId('where')).toHaveTextContent('/board')
+    expect(useBoardsStore.getState().currentId).toBe('linked-board')
   })
 
-  it('does not put the share token back in a URL', () => {
+  it('redeems the link rather than the code path', async () => {
+    // The two doors are one button and pick their call from `next`. Sending a
+    // share token to `joinAsGuest` would be a 404 that reads like a dead link.
     at(shareEntry)
-    expect(guestDoor()).toHaveAttribute('href', '/board')
-    expect(guestDoor().getAttribute('href')).not.toContain('tok_abcdef')
+    await act(async () => {
+      fireEvent.click(guestButton())
+    })
+
+    expect(mockApi.redeemShareAsGuest).toHaveBeenCalledTimes(1)
+    expect(mockApi.joinAsGuest).not.toHaveBeenCalled()
+  })
+
+  it('is signed in as the guest before the board page is reached', async () => {
+    at(shareEntry)
+    await act(async () => {
+      fireEvent.click(guestButton())
+    })
+
+    expect(mockApi.me).toHaveBeenCalled()
+    expect(useAuthStore.getState().user?.isGuest).toBe(true)
+  })
+
+  it('does not put the share token back in a URL', async () => {
+    // The reason `useShareLink` strips it, and the reason the old refusal
+    // existed. Redeeming has to end somewhere clean, or the token survives in
+    // history and gets handed straight back to be redeemed a second time.
+    at(shareEntry)
+    await act(async () => {
+      fireEvent.click(guestButton())
+    })
+
+    const where = screen.getByTestId('where').textContent ?? ''
+    expect(where).toBe('/board')
+    expect(where).not.toContain(TOKEN)
+  })
+
+  it('says plainly what continuing as a guest costs, and no longer says it fails', async () => {
+    at(shareEntry)
+    const copy = guestCopy()
+
+    expect(copy).toMatch(/board the link opens/i)
+    expect(copy).toMatch(/no password/i)
+    // The two sentences the old refusal used. Their absence is the fix.
+    expect(copy).not.toMatch(/needs an account/i)
+    expect(copy).not.toMatch(/do not join the one you were opening/i)
+  })
+
+  it('is a button now, not a link to a board of your own', () => {
+    at(shareEntry)
+    // It performs a redemption, so it cannot be an anchor to `/board`. The old
+    // one was, and that anchor *was* the bug.
+    expect(guestButton()).toBeInTheDocument()
+    expect(guestDoor()).not.toHaveAttribute('href')
+  })
+
+  it('says a dead link is dead, and lets them try another door', async () => {
+    mockApi.redeemShareAsGuest.mockRejectedValueOnce(
+      new AppError('That link is not valid any more.', 404),
+    )
+    at(shareEntry)
+    await act(async () => {
+      fireEvent.click(guestButton())
+    })
+
+    expect(await screen.findByText(/not valid any more/i)).toBeInTheDocument()
+    // Still on the auth page, with the door usable again: a revoked link is the
+    // one case where signing in properly is the actual answer, and the form is
+    // right there.
+    expect(screen.getByTestId('where')).not.toHaveTextContent('/board')
+    expect(guestButton()).not.toBeDisabled()
+  })
+
+  it('carries a token through `next` unmangled, whatever is in it', async () => {
+    // `next` is percent-encoded, so a token with URL-significant bytes arrives
+    // escaped and has to be handed to the server as the original.
+    const awkward = 'a+b/c=d'
+    const entry = `/login?next=${encodeURIComponent(`/board?share=${encodeURIComponent(awkward)}`)}`
+    at(entry)
+    await act(async () => {
+      fireEvent.click(guestButton())
+    })
+
+    expect(mockApi.redeemShareAsGuest).toHaveBeenCalledWith(awkward)
+  })
+
+  it('still honours `next` when they sign in properly instead', async () => {
+    // The other two doors are unchanged, and this is the one that puts the token
+    // back in the address bar on purpose — for `useShareLink` to redeem and then
+    // strip, which is the signed-in journey and was never broken.
+    at(shareEntry)
+    fill()
+    await submit()
+
+    expect(screen.getByTestId('where')).toHaveTextContent(TOKEN)
   })
 })
 

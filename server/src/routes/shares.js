@@ -517,7 +517,37 @@ async function admit(share, user) {
  * protection exactly as strict and costs a real room nothing.
  */
 redeemRouter.post('/:token/redeem', async (req, res) => {
-  if (!req.user) return res.status(401).json({ error: 'Sign in to open a shared board.' })
+  /**
+   * Redeeming without an account, on the same terms `/join` already offers.
+   *
+   * This used to be `if (!req.user) return 401`, on the argument that a token is
+   * a credential and there is no way to redeem one without an account that does
+   * not put it back in a URL. Two things are wrong with that, and the second is
+   * the one that matters.
+   *
+   * The token is already in a URL and this endpoint is what gets it out. A share
+   * link *is* `?share=<token>`; the person arrived holding it, `useShareLink`
+   * bounced them to `/login?next=` still holding it, and refusing them here does
+   * not unsend the link — it only means they never reach the board and the
+   * token stays in their history either way. Redeeming strips it, which is
+   * strictly better than leaving it there unredeemed.
+   *
+   * And the gate stops nobody, which is the argument `/join` was corrected by:
+   * `POST /api/auth/signup` verifies no address at all, so anyone refused here
+   * makes an account in five seconds and redeems the same token. What the refusal
+   * actually bought was a guest clicking "continue as a guest" and silently
+   * landing on a blank board of their own — the shared board never opened, no
+   * error, nothing to act on. A door that stops no attacker and loses every
+   * ordinary visitor is not a security boundary.
+   *
+   * `asGuest` is explicit for the reason it is on `/join`: a missing cookie is
+   * also what an expired session looks like, and minting a fresh empty account
+   * for somebody whose thirty days ran out would walk them away from every board
+   * they own without saying so.
+   */
+  const asGuest = req.body?.asGuest === true
+  if (!req.user && !asGuest)
+    return res.status(401).json({ error: 'Sign in to open a shared board.' })
 
   const share = await get(
     `SELECT s.id, s.board_id, s.created_at, b.name
@@ -540,8 +570,24 @@ redeemRouter.post('/:token/redeem', async (req, res) => {
   // share is the only thing that produces a newer one. Not charged the
   // allowance, because this is a real credential correctly presented rather than
   // a guess, and the counter above exists to stop guessing.
-  if (await removedSince(share.board_id, req.user.id, Date.parse(share.created_at))) {
+  if (await removedSince(share.board_id, req.user?.id, Date.parse(share.created_at))) {
     return res.status(403).json(REMOVED)
+  }
+
+  // Only now, with a live token in hand, is an account made — the same ordering
+  // `/join` uses and for the same reason: creating the guest any earlier would
+  // make this endpoint a way to fill the users table by presenting rubbish, and
+  // every failure above returns having created nobody.
+  //
+  // `chargeGuestMinting` is keyed on the share rather than the caller's address,
+  // so it answers "how many accounts may this one link bring into existence?"
+  // and not "is somebody guessing?". The guessing counter above is untouched:
+  // this is a real credential correctly presented.
+  if (!req.user) {
+    await chargeGuestMinting(share.id)
+    const guestId = await admitAsGuest(share)
+    signIn(res, await createSession(guestId))
+    return res.json({ board: { id: share.board_id, name: share.name } })
   }
 
   res.json({ board: await admit(share, req.user) })

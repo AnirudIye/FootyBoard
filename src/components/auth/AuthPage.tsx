@@ -7,6 +7,7 @@ import { useAuthStore } from '../../store/authStore'
 import { useBoardsStore } from '../../store/boardsStore'
 import { toUserMessage } from '../../lib/errors'
 import { codeInNext } from '../../lib/joinCode'
+import { shareTokenInNext } from '../../lib/shareLink'
 import { AuthShell, field, submitBtn, FormError } from './AuthShell'
 import SecurityQuestionFields, { useSecurityQuestions } from './SecurityQuestionFields'
 
@@ -70,33 +71,53 @@ export default function AuthPage({ mode }: { mode: Mode }) {
    * not a barrier. A guest gets an account now, with no address and no password,
    * and real membership of the board the code names.
    *
-   * A share token still cannot travel. It is a credential rather than six letters
-   * read off a screen, `useShareLink` strips it from the address bar for exactly
-   * that reason, and there is no equivalent of "redeem this without an account"
-   * that would not put it back in a URL. That case keeps the sentence and the
-   * blank board.
+   * A share token now travels too, and the sentence that used to say it could not
+   * was wrong in a way worth recording. It argued that a token is a credential
+   * and there is no redeeming one without an account that would not put it back
+   * in a URL. But it is already in a URL — that is what a share link is — and the
+   * person arrived here holding it in `next`, so refusing them did not unsend the
+   * link. It only meant "continue as a guest" handed them a blank board of their
+   * own while the shared board never opened: no error, nothing to act on, and the
+   * appearance of having worked. Redeeming ends with the token stripped from the
+   * address bar, which is strictly better than leaving it unredeemed in history.
+   *
+   * The same account gate applies to both doors and stops nobody through either:
+   * `POST /api/auth/signup` verifies no address, so anyone refused makes an
+   * account in five seconds and redeems the same token.
    */
   const pendingCode = codeInNext(next)
-  const shareNext = pendingCode === null && (next?.startsWith('/board?') ?? false)
+  const pendingShare = pendingCode === null ? shareTokenInNext(next) : null
 
   const [guestBusy, setGuestBusy] = useState(false)
 
   const continueAsGuest = async () => {
-    if (!pendingCode || guestBusy) return
+    if ((!pendingCode && !pendingShare) || guestBusy) return
     setGuestBusy(true)
     setError(null)
     try {
-      const { board } = await api.joinAsGuest(pendingCode)
+      const { board } = pendingCode
+        ? await api.joinAsGuest(pendingCode)
+        : await api.redeemShareAsGuest(pendingShare!)
       // The session cookie came back on that response, so the board is ours to
       // open. `restore` is what turns it into signed-in state for the rest of
       // the app, and it has to happen before navigating or the board page
       // mounts as nobody and loads nothing.
       await useAuthStore.getState().restore()
       useBoardsStore.getState().select(board.id)
+      // `/board` without the query, deliberately. Navigating back to `next` would
+      // put the token in the address bar again and hand it to `useShareLink` to
+      // redeem a second time, having just spent it.
       navigate('/board', { replace: true })
     } catch (err) {
       setGuestBusy(false)
-      setError(toUserMessage(err, 'That code did not work. Check it and try again.'))
+      setError(
+        toUserMessage(
+          err,
+          pendingCode
+            ? 'That code did not work. Check it and try again.'
+            : 'That link is not valid any more.',
+        ),
+      )
     }
   }
 
@@ -372,7 +393,7 @@ export default function AuthPage({ mode }: { mode: Mode }) {
         answer to your security question, which is what proves it is you if you forget the password.
       </p>
 
-      {pendingCode ? (
+      {pendingCode || pendingShare ? (
         <p className="mt-4 text-[12px] leading-relaxed text-ink-3">
           <button
             type="button"
@@ -382,18 +403,9 @@ export default function AuthPage({ mode }: { mode: Mode }) {
           >
             {guestBusy ? 'Joining…' : 'Continue as a guest'}
           </button>{' '}
-          and you go straight to the board your code names. Your work is saved, but the account it
-          is saved to has no password, so it lives in this browser only until you give it one.
-        </p>
-      ) : shareNext ? (
-        <p className="mt-4 text-[12px] leading-relaxed text-ink-3">
-          Opening a shared link needs an account, because the link is a credential and cannot be
-          redeemed without one.{' '}
-          <Link to="/board" className={guestLink}>
-            Continue as a guest
-          </Link>{' '}
-          and you get a board of your own instead, which is never saved, and you do not join the one
-          you were opening.
+          and you go straight to the board {pendingCode ? 'your code names' : 'the link opens'}. Your
+          work is saved, but the account it is saved to has no password, so it lives in this browser
+          only until you give it one.
         </p>
       ) : (
         <p className="mt-4 text-[12px] text-ink-3">

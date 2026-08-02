@@ -604,6 +604,22 @@ export const api = {
       { method: 'POST' },
     ),
 
+  /**
+   * The same redemption, for somebody who has no account yet.
+   *
+   * Separate from `redeemShare` rather than an argument to it, exactly as
+   * `joinAsGuest` is separate from joining: the server takes `asGuest` as an
+   * explicit statement of intent and never infers it from a missing cookie,
+   * because a missing cookie is also what an expired session looks like. Two
+   * named methods make the caller say which one it means, and there is only one
+   * caller of this — the guest door on the auth page.
+   */
+  redeemShareAsGuest: (token: string) =>
+    request<{ board: { id: string; name: string } }>(
+      `/shares/${encodeURIComponent(token)}/redeem`,
+      { method: 'POST', body: JSON.stringify({ asGuest: true }) },
+    ),
+
   /** Whether the AI fallback is configured on the server. */
   assistantStatus: () => request<{ enabled: boolean }>('/assistant/status'),
 
