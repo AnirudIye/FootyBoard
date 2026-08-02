@@ -29,9 +29,16 @@ export default function BenchRail({ side }: { side: Side }) {
 
   return (
     <div
-      className={`absolute top-1/2 -translate-y-1/2 z-10 ${isHome ? 'left-3' : 'right-3'}
-        flex w-[52px] flex-col items-center gap-1.5 rounded-lg border border-rule
-        bg-surface/95 px-1.5 py-2 shadow-2`}
+      /* Narrower and closer to the edge on a phone, because these float *over*
+         the pitch. At 375px the two rails covered 104px — 28% of the board's
+         width — and the pitch is width-constrained at that size, so that is 28%
+         of actual playing surface, not of empty canvas. 42px still clears the
+         32px chips inside. On `sm` and up the original 52px and `left-3`
+         return, where the same rails cost about 8% of a desktop canvas and are
+         not worth crowding. */
+      className={`absolute top-1/2 -translate-y-1/2 z-10 ${isHome ? 'left-1 sm:left-3' : 'right-1 sm:right-3'}
+        flex w-[42px] sm:w-[52px] flex-col items-center gap-1.5 rounded-lg border border-rule
+        bg-surface/95 px-1 sm:px-1.5 py-2 shadow-2`}
     >
       <span className="font-mono text-[10px] tracking-[0.1em] text-ink-3">
         {isHome ? 'H' : 'A'}

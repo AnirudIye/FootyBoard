@@ -72,6 +72,9 @@ export default function Toolbar() {
   const [formation, setFormation] = useState(names[0])
   const current = names.includes(formation) ? formation : names[0]
 
+  // Closed by default, and only ever consulted below `sm` — see the toggle.
+  const [toolsOpen, setToolsOpen] = useState(false)
+
   // Every group in here wraps, and that is load-bearing rather than tidy.
   // `flex-wrap` on the outer row alone only ever moved whole groups onto new
   // lines; a group that was itself wider than the viewport simply overflowed,
@@ -105,9 +108,40 @@ export default function Toolbar() {
         <BoardPicker />
         <SaveStatus />
 
+        {/* The phone toggle, and why the groups below hide behind it.
+         *
+         * Wrapping fixed reachability and cost height. Measured on a 375×812
+         * phone: this bar wrapped to **308px**, so the pitch started at y=309
+         * and got 453px of an 812px screen — the toolbar was 38% of the
+         * display before the board began.
+         *
+         * `contents` is what makes this safe. The wrapper below is not a box:
+         * on `sm` and up it is `display: contents`, so the formation and
+         * history groups stay *direct children of the same flex row* and the
+         * desktop layout is byte-identical to what it was. Below `sm` it
+         * becomes `hidden`, which hides its children, and the toggle brings
+         * them back.
+         *
+         * Deliberately not `overflow-x-auto`, for the reason written above:
+         * every popover in this bar is an absolutely positioned child rather
+         * than a portal, and scrolling x computes y to `auto`, which clips all
+         * four of them open downwards at every width. This adds no overflow
+         * anywhere.
+         */}
+        <Button
+          className="sm:hidden"
+          aria-expanded={toolsOpen}
+          onClick={() => setToolsOpen((open) => !open)}
+        >
+          {toolsOpen ? 'Fewer tools' : 'More tools'}
+        </Button>
+
+        <div className={`${toolsOpen ? 'contents' : 'hidden'} sm:contents`}>
         {/* View and format change what the board *is*, so they follow the lock.
             Everything below that only changes what you are looking at stays
-            available to a viewer. */}
+            available to a viewer. Both are set once for a session rather than
+            reached for repeatedly, which is why they sit behind the phone
+            toggle: on a 375px row each one costs a whole 32px line. */}
         <Segmented
           options={VIEWS}
           value={view.view}
@@ -173,6 +207,7 @@ export default function Toolbar() {
           >
             Export
           </Button>
+        </div>
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">

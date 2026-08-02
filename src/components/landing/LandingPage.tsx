@@ -275,12 +275,19 @@ function Navbar() {
               </Link>
             </>
           )}
+          {/* Hidden below `sm`, and the phone loses nothing by it. Measured at
+              375px: the wordmark ended at x=172 and "Log in" began at x=172 —
+              flush, with no gap, because four items were sharing a 375px row.
+              "Open board" is the one that can go: the hero directly beneath it
+              carries "Open the board" as the page's primary call to action, so
+              dropping it here removes a duplicate rather than a route. That
+              gives the wordmark ~64px of clearance instead of none. */}
           <Link
             to="/board"
-            className="rounded-full bg-accent px-4 py-2 text-[14px] font-medium text-paper
+            className="hidden rounded-full bg-accent px-4 py-2 text-[14px] font-medium text-paper
               transition-colors duration-200 hover:bg-accent-hover
               focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
-              focus-visible:outline-accent"
+              focus-visible:outline-accent sm:inline-block"
           >
             Open board
           </Link>
