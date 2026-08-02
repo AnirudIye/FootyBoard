@@ -1,25 +1,54 @@
-# Register the nightly backup as a scheduled task. Run once, elevated.
+# Register the nightly backup as a scheduled task. Run once, from an already
+# elevated shell, on the deployment:
 #
-#     powershell -ExecutionPolicy Bypass -File .\scripts\install-backup-task.ps1
+#     A:\FootyBoard\scripts\install-backup-task.ps1
 #
-# **This exists because the task did not.** handoff.md recorded the backup as
-# "nightly at 04:00 as SYSTEM" from 2026-08-01. Checked on 2026-08-02 against
-# all 204 scheduled tasks on the deployment: not one of them referenced
-# `backup.ps1` or FootyBoard, and `C:\FootyBoardBackups` held two dumps, at
-# 18:45 and 12:44, neither of which is a 04:00 run. The script had been written
-# and rehearsed by hand and never scheduled. Prose in a runbook is how that
-# happens; a script that either registers the task or fails is how it stops.
+# It exists so that registration is reproducible and self-checking, and so the
+# task points at the tracked `scripts/backup.ps1` that arrives with a pull
+# rather than at a loose file beside it. A fresh clone used to come up with a
+# backup script and no way to know whether anything was scheduled to run it.
 #
-# -StartWhenAvailable is the setting handoff.md's outstanding item 5 asked for,
-# and it is the difference between a backup policy and a backup wish. Task
-# Scheduler's default is to *skip* a missed run rather than catch up, so on a
-# machine that is off or asleep at 04:00 the job simply never happens, and says
-# nothing at all about it. With this, the run fires as soon as the machine is
-# next available.
+# **The comment that stood here said this existed "because the task did not",
+# and that was false.** It cited a check across all 204 scheduled tasks finding
+# nothing referencing backup.ps1, and concluded there had never been an
+# automatic backup. Both halves were wrong, and the way they were wrong is the
+# reason this paragraph is longer than the code it introduces:
 #
-# -WakeToRun is deliberately NOT set. Waking a desktop at 04:00 to take a
-# 36 KB dump is a worse trade than taking it at breakfast, and the site is down
-# while the machine sleeps anyway, so nothing has changed in the meantime.
+#   A task had existed since 2026-08-01: \FootyBoardBackup, SYSTEM, daily at
+#   04:00, already with StartWhenAvailable set. It ran. The 12:44 dump on
+#   2026-08-02 is owned by NT AUTHORITY\SYSTEM, which is the scheduler catching
+#   up the 04:00 run a sleeping machine missed.
+#
+#   The enumeration could not have found it. A task registered by an
+#   administrator with a SYSTEM principal is invisible to an unelevated shell:
+#   Get-ScheduledTask -TaskName reports no objects found, the full enumeration
+#   omits it *silently* rather than erroring, and C:\Windows\System32\Tasks is
+#   unlistable. "None of 204 tasks" was a measurement with one possible answer.
+#
+#   And "no dump at 04:00" was read as "no automatic run", when the whole point
+#   of StartWhenAvailable is that a missed run lands at some other time.
+#   Get-Acl on the dumps distinguishes a hand-run from a scheduled one in one
+#   command, and it was available the entire time.
+#
+# So: verify this task from an elevated shell. If you are stuck in an unelevated
+# one, Test-Path inside that unlistable directory is the only discriminator that
+# works — a made-up name returns a clean $false, a real one returns access
+# denied.
+#
+# -StartWhenAvailable is set because Task Scheduler's default is to *skip* a
+# missed run rather than catch it up, so on a machine that is off or asleep at
+# 04:00 the job never happens and says nothing about it. The predecessor task
+# had this too; it is the reason there was a backup at all.
+#
+# -WakeToRun is deliberately NOT set. Waking a desktop at 04:00 to take a 36 KB
+# dump is a worse trade than taking it at breakfast, and the site is down while
+# the machine sleeps anyway, so nothing has changed in the meantime.
+#
+# The battery settings are left at the cmdlet's defaults, which are
+# DisallowStartIfOnBatteries and StopIfGoingOnBatteries both true. Checked
+# rather than assumed, and they match the predecessor task exactly; this host
+# reports no battery device, so neither can bite. On a host that has one, both
+# would need reconsidering.
 
 [CmdletBinding()]
 param(
