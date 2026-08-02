@@ -141,6 +141,24 @@ export default function AccessibilityStatement() {
         </p>
       </Clause>
 
+      <Clause heading="Touch and target size">
+        <p>
+          On a touch screen every control on the board is at least 44 by 44 pixels, and none of
+          them overlaps another. That is the size a fingertip needs rather than the size a mouse
+          needs, so it is keyed to the kind of pointer you are using and not to how wide the window
+          is: a tablet gets the larger targets and a narrow desktop window does not. Where the
+          controls no longer all fit at that size, the drawing bar keeps the four tools a session
+          actually turns on and puts the rest one tap away, rather than shrinking anything back
+          down.
+        </p>
+        <p>
+          <strong className="text-ink">One known shortfall:</strong> a phone held sideways is a poor
+          experience. The bars are laid out across the top and bottom, which is most of a 375 pixel
+          tall screen, and the board is left with very little room. Held upright it is fine. We know
+          the numbers and have not fixed it yet.
+        </p>
+      </Clause>
+
       <Clause heading="Where we know we fall short">
         <p>Gathered in one place rather than spread through the page:</p>
         <ul className="ml-5 list-disc space-y-1.5">
@@ -148,6 +166,7 @@ export default function AccessibilityStatement() {
           <li>An individual player cannot be selected without a pointer.</li>
           <li>The marketing page is dark only, whatever your theme setting says.</li>
           <li>Two decorative colour dots on the landing page are below the contrast floor.</li>
+          <li>A phone held sideways leaves the board very little room.</li>
           <li>Nothing here has been checked by an independent auditor.</li>
         </ul>
       </Clause>

@@ -160,6 +160,58 @@
   }
 }
 
+/* A finger is not a mouse, and the difference being made is the input device
+   rather than the screen — so `pointer: coarse` and not a width breakpoint. A
+   1280px tablet needs these and a 380px desktop window does not.
+
+   One floor rather than sixty-two classes. Every interactive control on the
+   board failed 44px and the smallest was 41x26, so this is not a handful of
+   exceptions to fix: it is every control, and a per-component pass would have
+   been sixty-two chances to miss one and no defence at all against the
+   sixty-third being added next week. The `touch:` variant exists for the few
+   places where this shape is wrong and the component has to say so itself.
+
+   Padding, never font size. The floor raises the box and leaves the type where
+   the desktop set it, so a phone gets the same interface with more room around
+   it rather than a scaled-up one.
+
+   `min-height` and `min-width` do not apply to non-replaced inline boxes, and
+   that is doing real work here: it keeps this rule off the prose links in the
+   legal pages and the landing copy, while still catching every link that is a
+   flex item or otherwise laid out as a box. A link that reads as a button is
+   sized like one; a link in a sentence is left alone. */
+@media (pointer: coarse) {
+  button,
+  select,
+  summary,
+  a[href],
+  [role='button'],
+  input:not([type='range']):not([type='checkbox']):not([type='radio']) {
+    min-height: 44px;
+  }
+
+  button,
+  select,
+  summary,
+  [role='button'],
+  input[type='color'] {
+    min-width: 44px;
+  }
+
+  /* A range is the one control whose box and whose target are different
+     things. Growing the box to 44px would drag a 2px track into the middle of
+     a 44px slab and leave the row it sits in twice as tall; the thumb is what
+     a finger goes for, so the padding goes on the input and the track stays
+     where it was. `background-clip: content-box` keeps the visible track the
+     height it is drawn at while the element itself is 44 tall. */
+  input[type='range'] {
+    min-height: 44px;
+    padding-block: 18px;
+    box-sizing: border-box;
+    background-clip: content-box;
+  }
+}
+
 /* Reduced motion needs more than switching the animations off here, because
    these two are drawn *by* their animations. tokens.css cuts every animation to
    0.01ms, which leaves each pass line at its pre-animation state: fully offset

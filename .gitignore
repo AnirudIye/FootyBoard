@@ -29,6 +29,11 @@ pnpm-debug.log*
 # graphify knowledge-graph output, regenerable
 graphify-out/
 
+# Playwright MCP's scratch directory, plus the measurement rigs for plan 009
+# that live in it. Regenerable, and they need a Playwright the project does not
+# depend on, so they are notes rather than checks the repo can run.
+.playwright-mcp/
+
 # Working notes, deliberately untracked. It was tracked until 2026-07-30, so its
 # history up to that point is still there: `git log -- handoff.md` reads it back.
 # What stops is future versions being recorded, which is the trade being made.

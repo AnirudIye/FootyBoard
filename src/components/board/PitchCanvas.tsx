@@ -165,6 +165,23 @@ export default function PitchCanvas() {
   const ready = size.w > 0 && size.h > 0
   const cursor = pz.panning ? 'grabbing' : draw.drawing ? 'crosshair' : 'default'
 
+  /**
+   * Close an open polygon, on a mouse and on a finger.
+   *
+   * Konva fires `dblclick` for a mouse and `dbltap` for a finger, and those are
+   * two events rather than one with two names — `DrawingShape` wires both for
+   * the label editor. The stage carried only `dblclick`, and the polygon's only
+   * other exit is the Enter key, so on a phone the Shape tool could be started
+   * and never finished: every polygon a touch user drew was abandoned, with the
+   * tooltip that says "Enter to close" unreachable behind a hover it does not
+   * have either. Escape has the same shape of problem and needs no fix, because
+   * `Select` in the bar already says "put this tool away" without a keyboard.
+   */
+  const closePolygon = () => {
+    if (locked) return
+    draw.commitPoly()
+  }
+
   return (
     <div
       ref={containerRef}
@@ -182,10 +199,8 @@ export default function PitchCanvas() {
           x={pz.position.x}
           y={pz.position.y}
           onWheel={pz.onWheel}
-          onDblClick={() => {
-            if (locked) return
-            draw.commitPoly()
-          }}
+          onDblClick={closePolygon}
+          onDblTap={closePolygon}
           onPointerDown={(e) => {
             pz.onPointerDown(e)
             const panning = pz.spaceHeldRef.current || e.evt.button === 1

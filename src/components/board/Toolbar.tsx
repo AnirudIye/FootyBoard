@@ -116,11 +116,16 @@ export default function Toolbar() {
          * display before the board began.
          *
          * `contents` is what makes this safe. The wrapper below is not a box:
-         * on `sm` and up it is `display: contents`, so the formation and
+         * where there is room it is `display: contents`, so the formation and
          * history groups stay *direct children of the same flex row* and the
-         * desktop layout is byte-identical to what it was. Below `sm` it
-         * becomes `hidden`, which hides its children, and the toggle brings
+         * desktop layout is byte-identical to what it was. Where there is not,
+         * it becomes `hidden`, which hides its children, and the toggle brings
          * them back.
+         *
+         * `roomy` rather than `sm`, because a phone held sideways is 812px
+         * wide and 375px tall: wide enough to clear `sm` and far too short to
+         * spend 181px of the screen on this bar. See the variant in
+         * `tailwind.config.ts`.
          *
          * Deliberately not `overflow-x-auto`, for the reason written above:
          * every popover in this bar is an absolutely positioned child rather
@@ -129,14 +134,14 @@ export default function Toolbar() {
          * anywhere.
          */}
         <Button
-          className="sm:hidden"
+          className="roomy:hidden"
           aria-expanded={toolsOpen}
           onClick={() => setToolsOpen((open) => !open)}
         >
           {toolsOpen ? 'Fewer tools' : 'More tools'}
         </Button>
 
-        <div className={`${toolsOpen ? 'contents' : 'hidden'} sm:contents`}>
+        <div className={`${toolsOpen ? 'contents' : 'hidden'} roomy:contents`}>
         {/* View and format change what the board *is*, so they follow the lock.
             Everything below that only changes what you are looking at stays
             available to a viewer. Both are set once for a session rather than

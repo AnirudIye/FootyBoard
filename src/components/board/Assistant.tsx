@@ -237,6 +237,11 @@ export default function Assistant() {
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
                 placeholder="Ask the board to do something"
+                // The placeholder is not a name: it is gone the moment anybody
+                // types, and several screen readers never announce it at all.
+                // This was the one control on the whole board with no
+                // accessible name of any kind.
+                aria-label="Ask the board to do something"
                 className="flex-1 rounded border border-rule bg-paper px-2.5 py-1.5 text-[13px]
                   focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               />

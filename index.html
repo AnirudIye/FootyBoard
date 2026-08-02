@@ -5,11 +5,64 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#080a09" />
+
+    <!--
+      Brand first, then the words people type. "FootyBoard" on its own told a
+      search engine nothing and was ten characters of a sixty-character slot.
+      A colon rather than an em dash: no em dash appears in anything a user
+      reads, and a title is read in a tab and in a result.
+    -->
+    <title>FootyBoard: free online soccer tactics board</title>
     <meta
       name="description"
       content="FootyBoard is an animated, collaborative soccer tactics board. Open a pitch, pick a formation, and move players in seconds."
     />
-    <title>FootyBoard</title>
+
+    <!--
+      Open Graph and the Twitter card, static and in the shipped HTML.
+
+      Not injected from React, and that is the whole point rather than a
+      preference: social crawlers fetch this file and do not execute JavaScript,
+      so a tag added by a component is a tag no crawler will ever see. Until
+      these existed, every link posted to Reddit, Discord, WhatsApp, iMessage or
+      Slack rendered as a bare grey URL, which for a product whose entire value
+      is a picture of a pitch is the difference between a post people click and
+      a post they scroll past.
+
+      `og:image` is absolute because a crawler resolves it against nothing. It
+      is a photograph of the real board with two real shapes and three real
+      arrows on it, not the logo: a logo says a brand exists, a pitch says what
+      the thing does before anyone reads a word.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="FootyBoard" />
+    <meta property="og:url" content="https://www.footyboard.me/" />
+    <meta property="og:title" content="FootyBoard: free online soccer tactics board" />
+    <meta
+      property="og:description"
+      content="An animated, collaborative soccer tactics board. Open a pitch, pick a formation, and move players in seconds."
+    />
+    <meta property="og:image" content="https://www.footyboard.me/og.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="A floodlit tactics board: a 4-3-3 against a 4-4-2, with passing and running arrows drawn between them."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!--
+      There is deliberately no `<link rel="canonical">` here, and no per-page
+      `og:url`. Express serves this one file for every route, so anything
+      absolute in it is served at `/board` and `/join` too: a canonical pointing
+      at `/` would tell Google those two are duplicates of the home page and
+      drop them, which is the exact opposite of what `sitemap.xml` is for. The
+      `og:url` above is the one absolute address kept, because the card is
+      site-wide by design and a share of any page is a share of the product.
+      Per-page tags need the server to fill them in per path, which is the same
+      job as per-board preview images: plan 010, phase 4.
+    -->
   </head>
   <body>
     <div id="root"></div>

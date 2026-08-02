@@ -1,0 +1,25 @@
+# FootyBoard. Everything worth reading is open; the account plumbing is not.
+#
+# This is an SPA, so every path below returns the same shell HTML. That is why
+# the account pages are disallowed rather than left alone: a crawler fetching
+# /reset or /2fa gets the same page as /, and indexing eight copies of one
+# document is how a small site teaches a search engine to distrust it. None of
+# them is a page anybody could arrive at from a search and use.
+#
+# Disallow is not a security control and is not being used as one. Everything
+# behind these paths is already gated by a session on the server.
+
+User-agent: *
+Allow: /
+Disallow: /2fa
+Disallow: /claim
+Disallow: /delete-account
+Disallow: /forgot
+Disallow: /login
+Disallow: /name
+Disallow: /password
+Disallow: /reset
+Disallow: /sessions
+Disallow: /signup
+
+Sitemap: https://www.footyboard.me/sitemap.xml

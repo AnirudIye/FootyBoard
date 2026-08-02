@@ -35,10 +35,17 @@ export default function BenchRail({ side }: { side: Side }) {
          of actual playing surface, not of empty canvas. 42px still clears the
          32px chips inside. On `sm` and up the original 52px and `left-3`
          return, where the same rails cost about 8% of a desktop canvas and are
-         not worth crowding. */
+         not worth crowding.
+
+         Under a finger the chips are 44px, so the rail has to be 46 to hold
+         one: 44 of content plus the two 1px rules, with the horizontal padding
+         given up to pay for it. That takes the pair from 84px over the pitch
+         back to 92px — 22% to 24.5% — which is the price of a substitution a
+         coach can actually make, and still short of the 104px this started at.
+         There is no version of this that keeps both. */
       className={`absolute top-1/2 -translate-y-1/2 z-10 ${isHome ? 'left-1 sm:left-3' : 'right-1 sm:right-3'}
-        flex w-[42px] sm:w-[52px] flex-col items-center gap-1.5 rounded-lg border border-rule
-        bg-surface/95 px-1 sm:px-1.5 py-2 shadow-2`}
+        flex w-[42px] touch:w-[46px] sm:w-[52px] flex-col items-center gap-1.5 rounded-lg border
+        border-rule bg-surface/95 px-1 touch:px-0 sm:px-1.5 py-2 shadow-2`}
     >
       <span className="font-mono text-[10px] tracking-[0.1em] text-ink-3">
         {isHome ? 'H' : 'A'}
@@ -61,6 +68,8 @@ export default function BenchRail({ side }: { side: Side }) {
             title={`Bring on number ${t.number}`}
             onClick={() => unbenchToken(t.id, isHome ? 22 : 78, 92)}
             style={{ background: t.color }}
+            /* 32px to a mouse, 44 to a finger — the floor in index.css raises
+               it, and the rail above widens to hold it. */
             className="grid h-8 w-8 place-items-center rounded-full border border-black/25
               font-mono text-[12px] text-paper shadow-1"
           >

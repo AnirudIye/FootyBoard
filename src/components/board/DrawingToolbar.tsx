@@ -23,11 +23,39 @@ const TOOLS: { id: ToolMode; label: string; hint: string }[] = [
   { id: 'zoneEllipse', label: 'Oval', hint: 'Elliptical zone' },
   // The hint carries the one thing a triangle does that the two zones above it
   // do not, because it is not guessable from a button that looks like theirs:
-  // the apex follows the start of the drag, so dragging upwards inverts it.
+  // it is placed a corner at a time rather than dragged out. The comment here
+  // described the drag it replaced — an apex that followed the direction of the
+  // drag — for as long as the hint beside it said otherwise.
   { id: 'zoneTriangle', label: 'Triangle', hint: 'Triangular zone: click its three corners' },
-  { id: 'zonePoly', label: 'Shape', hint: 'Free polygon: click points, Enter to close' },
+  // Double-click and Enter both close it, and naming the double-click first is
+  // not arbitrary: it is the half that works without a keyboard.
+  {
+    id: 'zonePoly',
+    label: 'Shape',
+    hint: 'Free polygon: click points, then double-click or press Enter to close',
+  },
   { id: 'text', label: 'Text', hint: 'Text label' },
 ]
+
+/**
+ * What stays on the bar below `sm`. Everything else is a tap away.
+ *
+ * Raising every target to 44px took this bar from 138px to 262px on a 375x812
+ * phone — a third of the screen, floating over the pitch, leaving 295px of
+ * clear playing surface and colliding with the bench rails on the way. The
+ * targets are not negotiable and neither is the pitch, so what gives is how
+ * much of the kit is on screen at once. Plan 009 lists this as the first of its
+ * options for the vertical budget, and the top bar already works this way.
+ *
+ * These four are the ones a coach changes constantly: a way to stop drawing,
+ * and the three marks a tactics board is mostly made of. Zones, curves, text
+ * and the polygon are chosen once for a diagram and then drawn with. The ink
+ * and the weight go behind the toggle for the same reason.
+ *
+ * The armed tool is always shown even when it is not one of these, because a
+ * bar that hides which tool it is in is a bar that draws the wrong thing.
+ */
+const PRIMARY: ToolMode[] = ['select', 'pen', 'arrow', 'dashedArrow']
 
 // Inks that read on the floodlit pitch; black is kept for the chalk theme.
 const INKS = ['#2ae07a', '#f4f2ef', '#e85c42', '#529ae0', '#e0b23c', '#17191d']
@@ -100,6 +128,9 @@ export default function DrawingToolbar() {
   const pillRef = useRef<HTMLDivElement>(null)
   const [beside, setBeside] = useState(false)
 
+  // Closed by default, and only ever consulted below `sm` — see PRIMARY.
+  const [kitOpen, setKitOpen] = useState(false)
+
   const measure = useCallback(() => {
     const rail = railRef.current
     const bar = barRef.current
@@ -159,13 +190,19 @@ export default function DrawingToolbar() {
         <div className="flex flex-wrap items-center justify-center gap-x-0.5 gap-y-1">
           {TOOLS.map((t) => {
             const active = tool === t.id
+            // Hidden on a narrow screen unless it is armed. `sm:block` rather
+            // than a `contents` wrapper because these are siblings in one flex
+            // group and the armed tool moves between the two sets: a wrapper
+            // would have to render it in both and put two of it on the bar.
+            const tucked = !PRIMARY.includes(t.id) && !active
             return (
               <button
                 key={t.id}
                 title={t.hint}
                 onClick={() => setTool(t.id)}
                 className={`relative rounded px-2 py-1 text-[12px] font-medium transition-colors
-                  duration-150 ease-out ${active ? 'text-paper' : 'text-ink-2 hover:text-ink'}`}
+                  duration-150 ease-out ${active ? 'text-paper' : 'text-ink-2 hover:text-ink'}
+                  ${tucked && !kitOpen ? 'hidden roomy:block' : ''}`}
               >
                 {active && (
                   <motion.span
@@ -180,38 +217,57 @@ export default function DrawingToolbar() {
           })}
         </div>
 
-        <span className="h-5 w-px bg-rule" />
+        {/* The phone toggle, following the top bar's mechanism exactly.
+            `contents` where there is room removes the wrapper from the box tree
+            entirely, so the ink group and the weight slider stay direct flex
+            items of this bar and the desktop layout is what it was. Where there
+            is not, it is `hidden`, and this button brings them back. */}
+        <button
+          onClick={() => setKitOpen((open) => !open)}
+          aria-expanded={kitOpen}
+          aria-label={kitOpen ? 'Fewer drawing tools' : 'More drawing tools, ink and weight'}
+          className="rounded px-2 py-1 text-[12px] font-medium text-ink-2 transition-colors
+            duration-150 ease-out hover:text-ink roomy:hidden"
+        >
+          {kitOpen ? 'Less' : 'More'}
+        </button>
 
-        {/* A 16px swatch is the right size to look at and too small to hit, so
-            the button is 28px and the swatch is what you see inside it. */}
-        <div className="flex items-center">
-          {INKS.map((c) => (
-            <button
-              key={c}
-              aria-label={`Ink ${c}`}
-              aria-pressed={drawStyle.color === c}
-              onClick={() => applyStyle({ color: c })}
-              className="group grid h-7 w-7 place-items-center rounded"
-            >
-              <span
-                style={{ background: c }}
-                className={`h-4 w-4 rounded-sm border transition-transform duration-150 ease-out
-                  group-hover:scale-125
-                  ${drawStyle.color === c ? 'border-ink ring-1 ring-ink' : 'border-rule'}`}
-              />
-            </button>
-          ))}
-        </div>
+        <div className={`${kitOpen ? 'contents' : 'hidden'} roomy:contents`}>
+          <span className="h-5 w-px bg-rule" />
 
-        <div className="w-44">
-          <Slider
-            min={1}
-            max={8}
-            step={0.5}
-            value={selectedDrawings[0]?.thickness ?? drawStyle.thickness}
-            onChange={(v) => applyStyle({ thickness: v })}
-            label="Weight"
-          />
+          {/* A 16px swatch is the right size to look at and too small to hit,
+              so the button is 28px and the swatch is what you see inside it.
+              Under a finger the floor in index.css takes the button to 44 and
+              leaves the swatch alone, which is the same bargain. */}
+          <div className="flex flex-wrap items-center justify-center">
+            {INKS.map((c) => (
+              <button
+                key={c}
+                aria-label={`Ink ${c}`}
+                aria-pressed={drawStyle.color === c}
+                onClick={() => applyStyle({ color: c })}
+                className="group grid h-7 w-7 place-items-center rounded"
+              >
+                <span
+                  style={{ background: c }}
+                  className={`h-4 w-4 rounded-sm border transition-transform duration-150 ease-out
+                    group-hover:scale-125
+                    ${drawStyle.color === c ? 'border-ink ring-1 ring-ink' : 'border-rule'}`}
+                />
+              </button>
+            ))}
+          </div>
+
+          <div className="w-44">
+            <Slider
+              min={1}
+              max={8}
+              step={0.5}
+              value={selectedDrawings[0]?.thickness ?? drawStyle.thickness}
+              onChange={(v) => applyStyle({ thickness: v })}
+              label="Weight"
+            />
+          </div>
         </div>
 
         {/* Anchored to the tool group, never inside it, so nothing conditional

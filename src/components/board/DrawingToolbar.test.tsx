@@ -96,6 +96,71 @@ describe('DrawingToolbar context slot', () => {
 })
 
 /**
+ * What the bar keeps on screen when there is no room for all of it.
+ *
+ * The hiding is a class rather than a branch, because the desktop layout has to
+ * stay byte-identical and `display: contents` is what does that — so these read
+ * `hidden`, which is the whole mechanism. jsdom has no layout and no media
+ * queries, so what is under test is which controls are marked to be hidden, not
+ * the width at which the marking takes effect.
+ */
+describe('DrawingToolbar primary set', () => {
+  beforeEach(() => {
+    useBoardStore.getState().initDefaultBoard()
+    useBoardStore.getState().setTool('select')
+  })
+
+  const tool = (label: string) => screen.getByText(label)
+  const tucked = (label: string) => tool(label).className.includes('hidden')
+
+  it('keeps a way to stop drawing and the three marks a board is made of', () => {
+    render(<DrawingToolbar />)
+    for (const label of ['Select', 'Pen', 'Run', 'Pass']) {
+      expect(tucked(label)).toBe(false)
+    }
+  })
+
+  it('tucks the rest away', () => {
+    render(<DrawingToolbar />)
+    for (const label of ['Line', 'Bend', 'Bent pass', 'Box', 'Oval', 'Triangle', 'Shape', 'Text']) {
+      expect(tucked(label)).toBe(true)
+    }
+  })
+
+  /**
+   * A bar that hides which tool it is in is a bar that draws the wrong thing,
+   * and the armed tool moves between the two sets — which is also why the tucked
+   * ones are marked one by one rather than wrapped in a `contents` div the way
+   * the top bar's groups are. A wrapper would have to render the armed tool in
+   * both halves and put two of it on the bar.
+   */
+  it('never tucks the armed tool away, wherever it belongs', () => {
+    act(() => useBoardStore.getState().setTool('zonePoly'))
+    render(<DrawingToolbar />)
+
+    expect(tucked('Shape')).toBe(false)
+    expect(tucked('Triangle')).toBe(true)
+    // And Select is still there, because it is how you put the tool away
+    // without an Escape key.
+    expect(tucked('Select')).toBe(false)
+  })
+
+  it('brings the whole kit back, ink and weight included', () => {
+    render(<DrawingToolbar />)
+    const toggle = screen.getByLabelText('More drawing tools, ink and weight')
+    // The ink group and the slider are inside the wrapper this toggle controls.
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.click(toggle)
+
+    expect(screen.getByLabelText('Fewer drawing tools')).toHaveAttribute('aria-expanded', 'true')
+    for (const label of ['Line', 'Triangle', 'Shape', 'Text']) {
+      expect(tucked(label)).toBe(false)
+    }
+  })
+})
+
+/**
  * The pill is placed against its measured width, so these are the real numbers,
  * taken from the browser at these viewports: the tool group was a constant
  * 931.11px, centred inside a rail inset 12px from each edge, and a selected
