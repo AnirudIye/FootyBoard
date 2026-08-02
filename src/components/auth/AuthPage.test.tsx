@@ -350,7 +350,7 @@ describe('AuthPage with a share link pending', () => {
 
   it('says a dead link is dead, and lets them try another door', async () => {
     mockApi.redeemShareAsGuest.mockRejectedValueOnce(
-      new AppError('That link is not valid any more.', 404),
+      new AppError('That link is not valid any more.'),
     )
     at(shareEntry)
     await act(async () => {
