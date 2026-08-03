@@ -1,7 +1,42 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import type Konva from 'konva'
-import { exportSequence } from './exportSequence'
+import {
+  exportSequence,
+  frameGeometry,
+  gifSteps,
+  refreshesPalette,
+  videoBitrate, gifDelay } from './exportSequence'
 import { useBoardStore } from '../../store/boardStore'
+
+/**
+ * The GIF path is exercised against a stubbed encoder.
+ *
+ * What is worth asserting about it is which frames compute a palette and which
+ * frames carry one into the file — a policy, not an image — and jsdom has no
+ * canvas to produce pixels for a real encoder to read anyway. Stubbing the
+ * three functions this module calls says exactly that, and nothing about
+ * gifenc's own behaviour, which is not this file's to test.
+ */
+const written: { width: number; height: number; hasPalette: boolean }[] = []
+const quantized: number[] = []
+
+vi.mock('gifenc', () => ({
+  GIFEncoder: () => ({
+    writeFrame: (
+      _index: Uint8Array,
+      width: number,
+      height: number,
+      opts: { palette?: number[][] },
+    ) => written.push({ width, height, hasPalette: Boolean(opts.palette) }),
+    finish: () => {},
+    bytes: () => new Uint8Array([0x47, 0x49, 0x46]),
+  }),
+  quantize: (data: Uint8ClampedArray) => {
+    quantized.push(data.length)
+    return [[0, 0, 0]]
+  },
+  applyPalette: () => new Uint8Array(0),
+}))
 
 /**
  * What a video export has to leave behind, and it is the same list either way.
@@ -38,6 +73,10 @@ class FakeTrack {
 
 class FakeStream {
   readonly tracks = [new FakeTrack()]
+  readonly size: { w: number; h: number }
+  constructor(size: { w: number; h: number }) {
+    this.size = size
+  }
   getTracks() {
     return this.tracks
   }
@@ -48,8 +87,10 @@ class FakeRecorder {
   state: 'inactive' | 'recording' | 'paused' = 'inactive'
   ondataavailable: ((e: { data: Blob }) => void) | null = null
   onstop: (() => void) | null = null
+  readonly options: MediaRecorderOptions
 
-  constructor() {
+  constructor(_stream: unknown, options: MediaRecorderOptions = {}) {
+    this.options = options
     recorders.push(this)
   }
 
@@ -108,10 +149,17 @@ beforeEach(() => {
   useBoardStore.getState().addFrame()
   useBoardStore.getState().setPlayback({ position: 1 })
 
+  written.length = 0
+  quantized.length = 0
+
   vi.stubGlobal('MediaRecorder', FakeRecorder)
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(fakeCtx as never)
-  ;(HTMLCanvasElement.prototype as unknown as CanvasProto).captureStream = () => {
-    const stream = new FakeStream()
+  // A plain function rather than an arrow: the canvas it is called on is what
+  // says how big the recording is, which is half of what these tests check.
+  ;(HTMLCanvasElement.prototype as unknown as CanvasProto).captureStream = function (
+    this: HTMLCanvasElement,
+  ) {
+    const stream = new FakeStream({ w: this.width, h: this.height })
     streams.push(stream)
     return stream
   }
@@ -182,5 +230,155 @@ describe('WebM export teardown', () => {
   it('still produces the file', async () => {
     await exportSequence(workingStage(), CROP, 'webm', { frameCount: 2, speed: 200 })
     expect(downloaded).toEqual(['footyboard.webm'])
+  })
+})
+
+/**
+ * What each format asks for, now that they no longer share one width.
+ *
+ * Both used to be capped at 640 and rendered at the board's on-screen size,
+ * which made the video soft — a wide pitch was shrunk to 640 and then stretched
+ * back out by whoever watched it — and made the GIF pay for a full-size render
+ * it immediately threw most of away.
+ */
+describe('frame geometry', () => {
+  it('holds the width under the cap and keeps both axes even', () => {
+    // Odd on both axes on purpose: encoders want even, and both have to be
+    // rounded rather than only the one being capped.
+    const g = frameGeometry({ x: 0, y: 0, width: 1047, height: 677 }, 640)
+    expect(g.width).toBe(640)
+    expect(g.width % 2).toBe(0)
+    expect(g.height % 2).toBe(0)
+    expect(g.height).toBeLessThan(g.width)
+  })
+
+  it('leaves a board smaller than the cap alone when it is not asked to scale', () => {
+    const g = frameGeometry({ x: 0, y: 0, width: 300, height: 200 }, 640)
+    expect(g).toEqual({ width: 300, height: 200, pixelRatio: 1 })
+  })
+
+  it('renders a small board larger when it is asked to scale, and stops at the cap', () => {
+    const small = frameGeometry({ x: 0, y: 0, width: 400, height: 260 }, 1280, 2)
+    expect(small.width).toBe(800)
+
+    const wide = frameGeometry({ x: 0, y: 0, width: 1048, height: 678 }, 1280, 2)
+    expect(wide.width).toBe(1280)
+  })
+
+  it('reports the pixel ratio that makes the board render at the output width', () => {
+    // This is the number that replaced a hard-coded 1. Multiplied back by the
+    // crop it has to land on the output width, or Konva draws at one size and
+    // the frame is stretched to another.
+    const crop = { x: 0, y: 0, width: 1048, height: 678 }
+    const g = frameGeometry(crop, 640)
+    expect(crop.width * g.pixelRatio).toBeCloseTo(g.width, 6)
+  })
+
+  it('survives a crop with no width', () => {
+    // Dividing by it is how the output size is found, and a board measured
+    // before layout has settled is zero wide.
+    const g = frameGeometry({ x: 0, y: 0, width: 0, height: 0 }, 640, 2)
+    expect(g).toEqual({ width: 2, height: 2, pixelRatio: 1 })
+    expect(Number.isFinite(g.pixelRatio)).toBe(true)
+  })
+})
+
+describe('GIF frame and palette policy', () => {
+  it('writes both ends of the sequence at twenty a second', () => {
+    // Two seconds and a fifth of movement, so 44 steps and 45 frames: the walk
+    // includes the position it starts from as well as the one it ends on.
+    expect(gifSteps(3, 1)).toBe(44)
+    expect(gifSteps(3, 2)).toBe(22)
+  })
+
+  it('never writes a single-frame GIF however fast the playback', () => {
+    expect(gifSteps(2, 1000)).toBe(2)
+  })
+
+  it('computes a palette on the first frame and then once a second', () => {
+    expect(refreshesPalette(0)).toBe(true)
+    expect(refreshesPalette(1)).toBe(false)
+    expect(refreshesPalette(19)).toBe(false)
+    expect(refreshesPalette(20)).toBe(true)
+  })
+
+  it('quantises three times for a forty-five frame sequence, not forty-five', async () => {
+    await exportSequence(workingStage(), CROP, 'gif', { frameCount: 3, speed: 1 })
+
+    expect(written).toHaveLength(45)
+    expect(quantized).toHaveLength(3)
+  })
+
+  it('carries a palette into the file only on the frames that computed one', async () => {
+    // Every frame used to carry its own, and gifenc turns a palette on any
+    // frame but the first into a local colour table: 768 bytes apiece, saying
+    // what the global table already said.
+    await exportSequence(workingStage(), CROP, 'gif', { frameCount: 3, speed: 1 })
+
+    expect(written.flatMap((f, i) => (f.hasPalette ? [i] : []))).toEqual([0, 20, 40])
+  })
+
+  it('does not enlarge the board for a GIF, the way it does for a video', async () => {
+    await exportSequence(workingStage(), CROP, 'gif', { frameCount: 3, speed: 1 })
+    expect(written[0]).toMatchObject({ width: CROP.width, height: CROP.height })
+
+    await exportSequence(workingStage(), CROP, 'webm', { frameCount: 2, speed: 200 })
+    expect(streams[0].size).toEqual({ w: CROP.width * 2, h: CROP.height * 2 })
+  })
+})
+
+describe('video quality', () => {
+  it('records at twice the board rather than at the width a GIF wants', async () => {
+    await exportSequence(workingStage(), CROP, 'webm', { frameCount: 2, speed: 200 })
+    expect(streams[0].size).toEqual({ w: 640, h: 400 })
+  })
+
+  it('hands the recorder a ceiling of its own rather than taking the default', async () => {
+    // Unset, the ceiling is whatever the browser picks, and a browser that
+    // picks a flat number picks it without knowing the frame just quadrupled.
+    await exportSequence(workingStage(), CROP, 'webm', { frameCount: 2, speed: 200 })
+
+    expect(recorders[0].options.videoBitsPerSecond).toBe(videoBitrate(frameGeometry(CROP, 1280, 2)))
+    expect(recorders[0].options.videoBitsPerSecond).toBeGreaterThan(1_000_000)
+  })
+})
+
+/**
+ * The cap, and the delay that has to move with it.
+ *
+ * Every other change here made a frame cheaper; this is the only one that
+ * bounds how many there are, and it is the one that answers a long storyboard.
+ */
+describe('a GIF is bounded however long the sequence is', () => {
+  it('leaves a short sequence exactly as it was', () => {
+    // Three captured frames is 2.2s, which is 44 steps at 20fps: under the cap,
+    // so the cap must not be visible at all here.
+    expect(gifSteps(3, 1)).toBe(44)
+  })
+
+  it('caps a long one rather than letting the cost run with the length', () => {
+    // Twelve frames is 242 steps uncapped, twenty is 418.
+    expect(gifSteps(12, 1)).toBe(150)
+    expect(gifSteps(20, 1)).toBe(150)
+  })
+
+  it('keeps a capped GIF the length of the sequence it pictures', () => {
+    // The whole point of deriving the delay: 20 frames is 20.9s of storyboard,
+    // and it has to still take 20.9s once it is only 150 frames long.
+    const steps = gifSteps(20, 1)
+    const totalMs = gifDelay(20, 1, steps) * steps
+    expect(totalMs / 1000).toBeCloseTo(20.9, 0)
+  })
+
+  it('still runs at 20fps when nothing was capped', () => {
+    const steps = gifSteps(3, 1)
+    expect(gifDelay(3, 1, steps)).toBe(50)
+  })
+
+  it('honours the speed control on both', () => {
+    // Double speed halves the seconds, so it halves the steps too...
+    expect(gifSteps(3, 2)).toBe(22)
+    // ...and the delay stays at the frame rate rather than doubling.
+    expect(gifDelay(3, 2, gifSteps(3, 2))).toBe(50)
   })
 })
