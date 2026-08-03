@@ -4,14 +4,12 @@ import {
   isZone,
   isMark,
   isText,
-  isDragType,
-  isClickType,
-  CLICK_CORNERS,
+  draftMode,
   shiftDrawing,
   shiftAttached,
 } from './drawings'
 import type { DrawStyle } from './drawings'
-import { triangleCorners } from './geometry'
+import { triangleFromDrag } from './geometry'
 import type { Drawing } from './types'
 
 const style: DrawStyle = { color: '#9c3b22', thickness: 2, fillOpacity: 0.2, curve: 'right' }
@@ -35,34 +33,29 @@ describe('drawing classification', () => {
 
   /**
    * Not a restatement of the classification above. Being a zone decides which
-   * band a shape is painted in; being a drag type is what makes the release
-   * commit one at all. A shape that is neither a drag type nor a click type is
-   * drawn to the screen during its gesture and then silently thrown away.
+   * band a shape is painted in; the draft mode is what the press, the move and
+   * the release all read to know which gesture is in flight, and a shape whose
+   * mode is wrong is drawn to the screen and then silently thrown away.
    *
-   * The triangle is a **click** type: three presses, one corner each. It was a
-   * drag type for a few hours, storing the two ends of a box and deriving its
-   * apex, and this is the assertion that changed when that did.
+   * The triangle is a drag again — it was three clicks, one corner each — but a
+   * drag out of a single planted apex, storing three corners rather than the
+   * two ends of a box it stored the first time round.
+   *
+   * The polygon is the one tool that starts in `corners`, and it is the reason
+   * this is a mode on a draft rather than a predicate over the type: it becomes
+   * `free` the moment the hand travels. What is asserted here is only what the
+   * press starts with. The draft is the authority after that, and
+   * `useDrawGesture.test.ts` is where the change of mind is held.
    */
-  it('places a triangle by clicking, and a box by dragging', () => {
-    expect(isClickType('zoneTriangle')).toBe(true)
-    expect(isDragType('zoneTriangle')).toBe(false)
+  it('starts each tool in the gesture its press means', () => {
+    expect(draftMode('zoneTriangle')).toBe('apex')
+    expect(draftMode('zonePoly')).toBe('corners')
+    expect(draftMode('pen')).toBe('free')
 
-    expect(isDragType('zoneRect')).toBe(true)
-    expect(isClickType('zoneRect')).toBe(false)
-
-    // The polygon is the other click type and differs only in when it ends.
-    expect(isClickType('zonePoly')).toBe(true)
-    expect(isDragType('zonePoly')).toBe(false)
-  })
-
-  /**
-   * The number is what makes a triangle end without a keystroke, so it is worth
-   * asserting rather than trusting: at three corners the gesture closes itself.
-   * A polygon has no entry here, which is what "close on Enter instead" means.
-   */
-  it('closes a triangle at three corners and leaves a polygon open', () => {
-    expect(CLICK_CORNERS.zoneTriangle).toBe(3)
-    expect(CLICK_CORNERS.zonePoly).toBeUndefined()
+    expect(draftMode('zoneRect')).toBe('drag')
+    expect(draftMode('zoneEllipse')).toBe('drag')
+    expect(draftMode('arrow')).toBe('drag')
+    expect(draftMode('curvePass')).toBe('drag')
   })
 })
 
@@ -80,17 +73,18 @@ describe('createDrawing', () => {
   })
 
   /**
-   * A triangle stores the two corners of the drag and grows its third corner on
-   * the way to the screen, so a stored triangle is the same four numbers a box
-   * is. That is what lets everything which walks a point list — `shiftDrawing`,
-   * `shiftAttached`, `bboxOf`, the selection outline — go on treating every
-   * dragged zone alike, and it is the half that would rot first if a later hand
-   * decided to bake the three corners in at creation instead.
+   * A triangle stores its three corners, worked out from the drag before it
+   * ever reaches here. Nothing is derived on the way to the screen, which is
+   * what lets a corner handle drag the number it is drawn on — and everything
+   * that walks a point list (`shiftDrawing`, `shiftAttached`, `bboxOf`, the
+   * selection outline) goes on treating it as a longer list rather than
+   * acquiring a case.
    */
-  it('stores a triangle as the drag it was made with, and derives the third corner', () => {
-    const d = createDrawing('zoneTriangle', [10, 10, 40, 30], style)
-    expect(d.points).toEqual([10, 10, 40, 30])
-    expect(triangleCorners(d.points[0], d.points[1], d.points[2], d.points[3])).toHaveLength(6)
+  it('stores a triangle as the three corners the drag produced', () => {
+    const d = createDrawing('zoneTriangle', triangleFromDrag(10, 10, 40, 30), style)
+    expect(d.points).toHaveLength(6)
+    // The apex is the press point, carried through creation untouched.
+    expect(d.points.slice(0, 2)).toEqual([10, 10])
   })
 
   it('bends a curve to the side that was asked for', () => {

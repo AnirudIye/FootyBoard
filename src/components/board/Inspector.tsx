@@ -206,11 +206,21 @@ export default function Inspector() {
             </div>
           </div>
 
+          {/* Every whole degree, and up to 359 rather than 350.
+              This used to be a ten-degree stepper over 0..350, which was fine
+              while the slider was the only way to set a facing. It is not the
+              only way now: a prop is turned by the ring on the board, which
+              writes any whole degree. A range input snaps its thumb to the
+              nearest valid step and clamps it to `max`, but the readout beside
+              it prints the value it was handed — so a prop spun to 137 showed a
+              thumb at 140 with "137" written next to it, and one spun to 355
+              showed the thumb pinned at the end. The control has to be able to
+              say what the board already holds. */}
           <div className="mb-3">
             <Slider
               min={0}
-              max={350}
-              step={10}
+              max={359}
+              step={1}
               value={token.rotation}
               onChange={(v) => updateToken(token.id, { rotation: v })}
               label="Facing"

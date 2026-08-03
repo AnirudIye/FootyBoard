@@ -92,6 +92,72 @@ describe('board drawings', () => {
     })
   })
 
+  /**
+   * The other half of the same rule, for the eraser: a sweep meets its marks one
+   * at a time and has to be one undo step, not one per mark.
+   *
+   * The asymmetry with a drag is what makes this worth its own case. A drag ends
+   * where it began if you undo it; a sweep that pushed a step per mark would put
+   * the ink back in the reverse order it was taken, which reads as the undo key
+   * being broken rather than as several steps.
+   */
+  describe('erasing a run of drawings', () => {
+    const steps = () => useBoardStore.getState().history.past.length
+    const put = () => useBoardStore.getState().addDrawing(createDrawing('pen', [1, 1, 2, 2], style))
+
+    it('spends one undo step for a whole sweep, not one per mark', () => {
+      const ids = [put(), put(), put()]
+      const before = steps()
+
+      for (const id of ids) useBoardStore.getState().deleteDrawings([id], true)
+      expect(useBoardStore.getState().drawings).toHaveLength(0)
+      expect(steps()).toBe(before)
+
+      useBoardStore.getState().commit()
+      expect(steps()).toBe(before + 1)
+    })
+
+    it('brings the whole sweep back in one undo', () => {
+      const ids = [put(), put(), put()]
+      for (const id of ids) useBoardStore.getState().deleteDrawings([id], true)
+      useBoardStore.getState().commit()
+
+      useBoardStore.getState().undoAction()
+
+      expect(useBoardStore.getState().drawings).toHaveLength(3)
+    })
+
+    /**
+     * The direction that would be worse, exactly as it is for `updateDrawing`:
+     * the Delete button in the toolbar has no gesture around it and no `commit()`
+     * coming, so a deferred step there would be pushed by whatever happened next,
+     * or never.
+     */
+    it('still pushes immediately when the caller is not sweeping', () => {
+      const id = put()
+      const before = steps()
+
+      useBoardStore.getState().deleteDrawings([id])
+
+      expect(steps()).toBe(before + 1)
+    })
+
+    /**
+     * A sweep across empty grass calls this on every pointer move. Parking a
+     * snapshot for one of those would let the release commit an undo step in
+     * which nothing at all changed.
+     */
+    it('parks nothing for a sweep that found nothing', () => {
+      put()
+      const before = steps()
+
+      useBoardStore.getState().deleteDrawings([], true)
+      useBoardStore.getState().commit()
+
+      expect(steps()).toBe(before)
+    })
+  })
+
   it('deletes a mixed selection of chips and annotations', () => {
     const s = useBoardStore.getState()
     const drawingId = s.addDrawing(createDrawing('pen', [1, 1, 2, 2], style))

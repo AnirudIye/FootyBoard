@@ -36,10 +36,73 @@ export default function BoardPage() {
           to be measured against a toolbar that wraps. */}
       <NameNotice />
 
-      <div className="relative flex-1 overflow-hidden">
-        <PitchCanvas />
-        <BenchRail side="home" />
-        <BenchRail side="away" />
+      {/**
+       * The board band: a column of docked rows, or a canvas with the same four
+       * elements floating over it. Which one is `overlay:`, and the variant's
+       * own definition in `tailwind.config.ts` argues each of its three clauses.
+       *
+       * **At `overlay` nothing about this has changed.** The HUD, the two rails
+       * and the drawing bar are all `absolute` there, which takes them out of
+       * flow, so the canvas box below is the column's only in-flow child and
+       * `flex-1` hands it the whole band. A one-item column with a `gap` puts no
+       * gap anywhere. Every desktop is `overlay`, by the variant's first clause,
+       * so the desktop layout is byte-for-byte the one that shipped — and that
+       * is the test this arrangement had to pass.
+       *
+       * Docked, those same elements are ordinary rows stacked under the canvas
+       * and the canvas box keeps whatever is left. **That is only cheap because
+       * of which axis an upright phone is short of, and the arithmetic is the
+       * reason the variant is not simply "small".** `computeMapping` fits 105:68
+       * inside 90% of the canvas box on each axis, so on a 375px-wide phone the
+       * horizontal pitch comes out 337.5 x 218.6 — width-constrained, and it
+       * stays exactly that for any canvas box down to 243px tall. The band on a
+       * 375x812 phone is about 576px and this chrome is 164px, or 179 with the
+       * readout wrapped, so the pitch does not lose its first pixel until the
+       * chrome passes 333px. What it buys is the 62.5px of drawn pitch the two
+       * bench rails were standing on: 18.5% of the playing surface, and both
+       * goalmouths.
+       *
+       * **One screen still pays, and it is named here rather than smoothed
+       * over.** On `fullV` the pitch is height-constrained, so every docked row
+       * comes out of it: 335.7 x 518.4 becomes 231.4 x 357.3 on the same phone.
+       * That is a real cost and it is the deliberate trade — a smaller pitch
+       * with all of itself visible beats a larger one with 21.4% of it behind
+       * the chrome, and the goalmouths are the part that was hidden.
+       *
+       * Landscape is the screen this was measured against and then excluded. A
+       * 375px-tall phone has about 188px of band and this chrome wants 164 of
+       * it, which left **24px of canvas** while the switch was keyed on `roomy`.
+       * The `(max-height: 639px)` clause is that measurement. Landscape floats,
+       * is unchanged, and is still 009 step 5.
+       */}
+      <div className="relative flex flex-1 flex-col gap-1 overflow-hidden">
+        {/* The canvas gets a box of its own rather than being the band, because
+            the band now has other children in flow. `PitchCanvas` is
+            `absolute inset-0`, so at `overlay` this box is the band's exact
+            rectangle and it resolves against the same numbers it always did. */}
+        <div className="relative min-h-0 flex-1">
+          <PitchCanvas />
+        </div>
+
+        {/* The two rails, grouped so that docked they are one row: home on the
+            left of it, away on the right, each with its own scroller.
+            `overlay:contents` takes this wrapper out of the box tree there,
+            which leaves the rails' `absolute` resolving against the band rather
+            than against a wrapper — Toolbar's `More tools` and DrawingToolbar's
+            `More` use the same trick and say why at more length.
+
+            `order-1` rather than moving this below `<HUD />`: docked, the
+            readout belongs above the bench, but the rails and the HUD are both
+            `z-10` at `overlay` and paint in tree order, so swapping the two in the
+            source would change which one wins where a long bench reaches the
+            top-left corner. `order` is invisible to absolutely positioned
+            children, which are not flex items, so it says the one thing here
+            without saying anything there. */}
+        <div className="order-1 flex gap-2 px-3 overlay:contents">
+          <BenchRail side="home" />
+          <BenchRail side="away" />
+        </div>
+
         <HUD />
         <DrawingToolbar />
       </div>

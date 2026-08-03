@@ -46,7 +46,16 @@ export default function NameNotice() {
         <span className="font-mono text-ink-2">{email.split('@')[0]}</span>, taken from your email
         address.
       </span>
-      <Link to="/name" className="shrink-0 font-medium text-accent hover:text-accent-hover">
+      {/* The link is centred explicitly and the button beside it is not, and
+          that asymmetry is the point rather than an oversight: under the
+          coarse-pointer floor both boxes become 44px tall, the UA stylesheet
+          centres a `<button>`'s label for free, and nothing centres a link's.
+          Without this the two words in this one row sat at different heights. */}
+      <Link
+        to="/name"
+        className="inline-flex shrink-0 items-center justify-center font-medium text-accent
+          hover:text-accent-hover"
+      >
         Choose a name
       </Link>
       <button onClick={dismiss} className="shrink-0 font-medium text-ink-2 hover:text-ink">

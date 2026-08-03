@@ -43,8 +43,29 @@ import type { EntityOp } from '../lib/realtime/protocol'
  * A tool that genuinely is not a drawing kind belongs in this union beside
  * `'select'`. That is the extension point, and it is why this is a union rather
  * than the bare alias.
+ *
+ * `'eraser'` is the first tool to use it, and using it cost exactly what the
+ * paragraph above promised it would: the two call sites that hand a narrowed
+ * `ToolMode` to `isZone` and `isCurve` stopped compiling, in the file that owns
+ * them, on the commit that added it. Both now ask `armedDrawing` for the tool as
+ * a drawing kind and get null for the two tools that are not one. Anything added
+ * here in future should expect the same three-file conversation and should not
+ * try to avoid it — the compiler pointing at every place that assumed "not
+ * select means a shape" is the whole value of the union.
  */
-export type ToolMode = DrawingType | 'select'
+export type ToolMode = DrawingType | 'select' | 'eraser'
+
+/**
+ * The armed tool as a kind of drawing, or null when it is not one of those.
+ *
+ * `select` and `eraser` both act on marks that already exist rather than making
+ * one, so neither has a `DrawingType` to offer. Callers that used to write
+ * `tool !== 'select' && isZone(tool)` cannot simply add a second inequality —
+ * that is the copy this union exists to prevent, and it would need finding again
+ * in every file the next time a tool joins them.
+ */
+export const armedDrawing = (tool: ToolMode): DrawingType | null =>
+  tool === 'select' || tool === 'eraser' ? null : tool
 
 /**
  * The muted, colour-blind-safe team pair. Defined in `src/theme/teamColors.ts`
@@ -205,7 +226,8 @@ interface BoardState extends BoardData {
   addDrawing: (drawing: Omit<Drawing, 'id'>) => string
   /** `defer` holds the undo step open the way `updateToken`'s does; see there. */
   updateDrawing: (drawingId: string, patch: Partial<Drawing>, defer?: boolean) => void
-  deleteDrawings: (ids: string[]) => void
+  /** `defer` holds the undo step open the way `updateDrawing`'s does; see there. */
+  deleteDrawings: (ids: string[], defer?: boolean) => void
 
   /** Flip a player to the other team: recolours and renumbers to fit. */
   switchPlayerTeam: (tokenId: string) => void
@@ -493,15 +515,33 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     emit({ type: 'patch', entity: 'drawing', id: drawingId, patch })
   },
 
-  deleteDrawings: (ids) => {
+  deleteDrawings: (ids, defer = false) => {
     if (ids.length === 0) return
-    const before = get()._snapshot()
+    const before = defer ? null : get()._snapshot()
+    // `defer` is `updateDrawing`'s, to the letter, because a sweep of the eraser
+    // is one gesture the way a drag is: the disc passes over one mark, then
+    // another, then a third, and undo has to put the sweep back rather than the
+    // marks back one at a time in the order they happened to be met. The first
+    // delete parks a snapshot in `_pending` and the `commit()` at the release
+    // turns the whole run into a single step.
+    //
+    // **Only the history push is deferred.** The `set` and the `emit` run on
+    // every call either way, which is what lets a peer watch the marks vanish
+    // under the sweep instead of all at once when the finger lifts, and what
+    // keeps autosave — which watches the drawings array's identity, not the
+    // history — firing for the person doing it.
+    //
+    // The empty-ids return above sits deliberately in front of all of this: a
+    // sweep across bare grass calls this on every pointer move, and it must not
+    // park a snapshot that the release would then commit as an undo step in
+    // which nothing changed.
+    if (defer && !get()._pending) set({ _pending: get()._snapshot() })
     const idset = new Set(ids)
     set((s) => ({
       drawings: s.drawings.filter((d) => !idset.has(d.id)),
       selection: s.selection.filter((i) => !idset.has(i)),
     }))
-    get()._pushPast(before)
+    if (before) get()._pushPast(before)
     emit({ type: 'remove', entity: 'drawing', ids })
   },
 

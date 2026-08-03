@@ -181,6 +181,51 @@
    flex item or otherwise laid out as a box. A link that reads as a button is
    sized like one; a link in a sentence is left alone. */
 @media (pointer: coarse) {
+  /* `align-content` is the net under the floor, and it is here because the
+     floor on its own only ever raised the ceiling.
+
+     A box grown to 44px puts its text at the top of that 44px unless something
+     says otherwise, and what says otherwise is usually the element's own
+     default rather than anything we wrote: the UA stylesheet centres a
+     `<button>`'s label, an `<input>`'s value and a `<select>`'s text. A link
+     has no such default. So every `<Link>` painted to look like a button —
+     and each one is a flex item somewhere, which is exactly what blockifies it
+     into this rule's reach — grew to 44px and hung its label off the ceiling.
+     That is what "log in", "sign up" and "save your board" looked like.
+
+     Those all carry `inline-flex items-center justify-center` now, and this
+     line is not a replacement for saying it: it centres only what a block
+     container has left over vertically, and it knows nothing about horizontal
+     centring, gaps, or wrapping. Say it on the component where the component
+     needs a real flex row. This is for the sixty-third control, added next
+     week by somebody who has not read any of this.
+
+     It can sit on the whole selector because it is inert on everything that
+     was already right, which was measured rather than assumed: in Chromium a
+     `<button>` reads 13.5px above and below its label with this line and
+     without it, a `grid place-items-center` swatch reads 12.5/12.5 either way,
+     an `<input>`'s value and a `<select>`'s label do not move, and a link in a
+     sentence is untouched — `align-content` applies to non-replaced inline
+     boxes no more than `min-height` does, so the same thing that keeps the
+     floor off the prose links keeps this off them too. The one shape it would
+     change is a *wrapping* flex or grid container that also matches this
+     selector, where it would centre the lines rather than pack them to the
+     top. There is none: every `flex-wrap` and every multi-row grid under src/
+     sits on a div, nav, ul or span.
+
+     What it cannot fix is a control whose own padding is lopsided, because it
+     centres within the content box and padding is outside it. `BoardPicker`'s
+     "Join with a code" is the one: a 1px rule and 10px of `pt-2.5` above the
+     label and nothing below, so centring the remainder puts the label low
+     rather than high — 20px above and 10 below, where untouched it was 11 and
+     19. It carries `touch:pt-0` to give the padding up under a finger, which
+     is what the `touch:` variant is for and which this line cannot do for it.
+     If a control looks wrong and this rule is already on it, that is the first
+     thing to check.
+
+     Baseline since April 2024 — Chrome 123, Firefox 125, Safari 17.4. Older
+     browsers get precisely what they got before this line: the floor, and the
+     explicit classes on the controls that matter. */
   button,
   select,
   summary,
@@ -188,6 +233,7 @@
   [role='button'],
   input:not([type='range']):not([type='checkbox']):not([type='radio']) {
     min-height: 44px;
+    align-content: center;
   }
 
   button,

@@ -58,9 +58,19 @@ export default function AccountMenu() {
         >
           Not saving
         </span>
+        {/* `inline-flex items-center justify-center` rather than nothing, and it
+            is not decoration: the coarse-pointer floor in index.css raises this
+            to 44px and a link, unlike a `<button>`, has no UA rule that centres
+            what is inside it. Without this the label sat on the ceiling of the
+            box — this is the "save board" a coach reported. Inert on a mouse,
+            where the box is exactly as tall as its own line and there is no
+            free space for `items-center` to distribute. Every button-shaped
+            `<Link>` in the product now says this for itself; the
+            `align-content` net in index.css is the backstop, not the rule. */}
         <Link
           to={joining ? `/signup?next=${encodeURIComponent(joinPath(pendingCode))}` : '/signup'}
-          className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium leading-none text-paper
+          className="inline-flex items-center justify-center rounded bg-accent px-3 py-1.5
+            text-[13px] font-medium leading-none text-paper
             transition-colors duration-150 hover:bg-accent-hover
             focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
             focus-visible:outline-accent"
@@ -98,7 +108,14 @@ export default function AccountMenu() {
             most: with no address there is nothing for the room to fall back to,
             so before this they could only ever be Anonymous Something. Quiet
             rather than a second primary button, because keeping the boards is
-            still the thing that matters more. */}
+            still the thing that matters more.
+
+            This is the worst case the floor produces, because it has no padding
+            of its own to soften the gap. Measured at 10px type in a 44px box:
+            the label sat flush against the top edge with 30px of nothing under
+            it, while the accent link beside it — which at least has `py-1.5` —
+            sat at 4 above and 23 below. Two controls in one row, neither
+            centred and each wrong by a different amount. */}
         <Link
           to="/name"
           title={
@@ -106,8 +123,8 @@ export default function AccountMenu() {
               ? `Boards call you ${displayName}. Change it here.`
               : 'Choose what other people on a board see instead of a made-up name.'
           }
-          className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3
-            transition-colors hover:text-accent"
+          className="inline-flex items-center justify-center font-mono text-[10px] uppercase
+            tracking-[0.1em] text-ink-3 transition-colors hover:text-accent"
         >
           {displayName ? 'Your name' : 'Pick a name'}
         </Link>
@@ -123,7 +140,8 @@ export default function AccountMenu() {
             fourth item here. */}
         <Link
           to="/claim"
-          className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium leading-none text-paper
+          className="inline-flex items-center justify-center rounded bg-accent px-3 py-1.5
+            text-[13px] font-medium leading-none text-paper
             transition-colors duration-150 hover:bg-accent-hover
             focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
             focus-visible:outline-accent"
@@ -244,11 +262,20 @@ export default function AccountMenu() {
           Delete account
         </Link>
 
+        {/* Both are flex items, so both are blockified and both meet the 44px
+            floor — these read as a footer rather than as buttons, but the floor
+            does not know that and neither does a finger. */}
         <nav className="flex gap-4 border-t border-rule pt-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3">
-          <Link to="/privacy" className="transition-colors hover:text-accent">
+          <Link
+            to="/privacy"
+            className="inline-flex items-center justify-center transition-colors hover:text-accent"
+          >
             Privacy
           </Link>
-          <Link to="/terms" className="transition-colors hover:text-accent">
+          <Link
+            to="/terms"
+            className="inline-flex items-center justify-center transition-colors hover:text-accent"
+          >
             Terms
           </Link>
         </nav>

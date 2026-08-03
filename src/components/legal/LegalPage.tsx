@@ -1,6 +1,20 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 
+/**
+ * The four footer links, which are flex items of a wrapping nav and so are
+ * blockified into the reach of the 44px coarse-pointer floor in index.css.
+ *
+ * A name rather than the same string typed four times, because the reason it
+ * carries `inline-flex items-center justify-center` is not guessable from any
+ * one of them: 11px of type in a 44px box with no padding of its own left every
+ * one of these labels flush against the top edge on a phone, 0px above and 29
+ * below. A link gets no UA centring the way a `<button>` does. Inert on a
+ * mouse, where the box is 16.5px — the height of its own line — and there is no
+ * free space for `items-center` to distribute.
+ */
+const footerLink = 'inline-flex items-center justify-center transition-colors hover:text-accent'
+
 /** Shared shell for the policy pages: readable measure, quiet chrome. */
 export default function LegalPage({
   title,
@@ -21,9 +35,15 @@ export default function LegalPage({
               FootyBoard
             </span>
           </Link>
+          {/* A flex item, so blockified, so inside the reach of the 44px
+              coarse-pointer floor in index.css — and a link has no UA rule
+              centring its own content the way a `<button>` does, so this said
+              "Open board" against the top edge of a 44px box. Inert on a
+              mouse, where the box is the height of one line. */}
           <Link
             to="/board"
-            className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-2 transition-colors hover:text-accent"
+            className="inline-flex items-center justify-center font-mono text-[11px] uppercase
+              tracking-[0.12em] text-ink-2 transition-colors hover:text-accent"
           >
             Open board
           </Link>
@@ -41,16 +61,16 @@ export default function LegalPage({
 
         <footer className="mt-16 border-t border-rule pt-6">
           <nav className="flex flex-wrap gap-6 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-3">
-            <Link to="/privacy" className="transition-colors hover:text-accent">
+            <Link to="/privacy" className={footerLink}>
               Privacy Policy
             </Link>
-            <Link to="/terms" className="transition-colors hover:text-accent">
+            <Link to="/terms" className={footerLink}>
               Terms of Service
             </Link>
-            <Link to="/accessibility" className="transition-colors hover:text-accent">
+            <Link to="/accessibility" className={footerLink}>
               Accessibility
             </Link>
-            <Link to="/" className="transition-colors hover:text-accent">
+            <Link to="/" className={footerLink}>
               Home
             </Link>
           </nav>

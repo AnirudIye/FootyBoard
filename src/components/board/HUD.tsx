@@ -11,8 +11,13 @@ import { MonoReadout } from '../ui/MonoReadout'
  * A guest has no room at all, so it is not rendered for them rather than
  * reading OFFLINE, which describes a connection that failed rather than one
  * that was never attempted. Nothing takes its place: the account menu already
- * says a guest is not saving, beside the button that fixes it, and this
- * container is pointer-events-none so a tooltip here could never fire anyway.
+ * says a guest is not saving, beside the button that fixes it.
+ *
+ * That used to carry a second reason — that a tooltip here could never fire,
+ * because the container is `pointer-events-none`. It is only half true now. The
+ * HUD is `pointer-events-none` where it floats over the board and takes pointer
+ * events like any other row where it is docked below it, so the account menu is
+ * the whole of the argument and the class list below is where that split lives.
  */
 function RoomReadout() {
   const status = useRealtimeStore((s) => s.status)
@@ -58,8 +63,33 @@ export default function HUD() {
 
   return (
     <div
-      className="pointer-events-none absolute top-4 left-4 z-10 flex items-center gap-4
-        rounded border border-rule bg-surface/90 px-3 py-1.5 shadow-1"
+      /* A card floating in the corner of the board at `overlay`, and a docked
+         row under it otherwise. `BoardPage` builds the column; this is the half of
+         the arrangement that has to be said here.
+
+         **It is deliberately the shortest thing in the docked stack.** Every
+         pixel this row takes comes out of the canvas above it, and unlike the
+         bench and the drawing bar there is nothing here to hit: at most six
+         readouts of 11px mono, so one line of type, 8px of padding and a
+         hairline — 20px, against 62 for the bench and 62 for the drawing bar.
+
+         `flex-wrap` is the one behavioural change in the docked half and it is
+         not cosmetic. Four readouts come to roughly 334px of 11px mono and all
+         six to about 490px; a flex row defaults to `nowrap`, so on a 375px phone
+         the row would run past the right edge and the band's `overflow-hidden`
+         would take the end of it. Docked it has a width to wrap against, so it
+         wraps, and the second line costs 15px on the screens that need it.
+         `overlay:flex-nowrap` leaves the floating card the single line it has
+         always been, because up there it is not the problem.
+
+         `pointer-events-none` goes with the floating half and only with it. Its
+         job is to stop a readout eating a press meant for the pitch underneath;
+         docked there is no pitch underneath, and switching pointer events off
+         there would achieve nothing except making the text unselectable. */
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-rule px-3 py-1
+        overlay:pointer-events-none overlay:absolute overlay:top-4 overlay:left-4 overlay:z-10
+        overlay:flex-nowrap overlay:gap-4 overlay:rounded overlay:border overlay:bg-surface/90
+        overlay:py-1.5 overlay:shadow-1"
     >
       {selectionCount > 0 && <MonoReadout label="SEL" value={String(selectionCount)} />}
       {lastFormation && <MonoReadout label="SHAPE" value={lastFormation} />}

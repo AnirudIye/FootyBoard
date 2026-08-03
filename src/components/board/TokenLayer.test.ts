@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { onScreen, playerHidden, shownX, lastDrawn } from './TokenLayer'
+import { onScreen, lastDrawn } from './TokenLayer'
 import type { Token } from '../../lib/types'
 
 /**
@@ -93,20 +93,9 @@ describe('what is on screen', () => {
   })
 })
 
-describe('the two rules it is built from', () => {
-  // Kept exported and kept asserted: they are the halves `onScreen` composes,
-  // and a change to either is a change to what a marquee catches.
-  it('shows the attacking half from the halfway line out', () => {
-    expect(playerHidden('attackHalf', 47)).toBe(true)
-    expect(playerHidden('attackHalf', 49)).toBe(false)
-  })
-
-  it('pins a prop inside whichever half is shown', () => {
-    expect(shownX('attackHalf', 10)).toBe(50.5)
-    expect(shownX('defendHalf', 90)).toBe(49.5)
-    expect(shownX('fullH', 10)).toBe(10)
-  })
-})
+// The two rules `onScreen` composes — `playerHidden` and `shownX` — are asserted
+// in `src/lib/halves.test.ts` now, next to the drawing rule that shares their
+// halfway line. They moved out of this file with the code.
 
 describe('the positions the last render drew', () => {
   it('starts empty, so a marquee before the first paint reads stored positions', () => {

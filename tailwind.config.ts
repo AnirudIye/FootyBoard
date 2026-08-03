@@ -64,6 +64,37 @@ export default {
       // drawing bar. The bar has room when it is both wide enough for the
       // controls and tall enough for the board underneath them.
       addVariant('roomy', '@media (min-width: 640px) and (min-height: 520px)')
+
+      // `overlay:` is "the board's chrome floats over the pitch", and its
+      // absence is "the chrome is docked in a column under it". It is a third
+      // variant rather than more `roomy:` because it answers a third question,
+      // and answering it with `roomy` was measured to be wrong.
+      //
+      // Three conditions float it, and each is a separate reason:
+      //
+      // - **`(pointer: fine)`** — a mouse. Docking exists to stop the bench
+      //   rails standing on the goalmouths, and on a desktop the pair costs
+      //   about 8% of a wide canvas with the nets still reachable around it.
+      //   This clause is also what makes the change provably free on desktop:
+      //   every `overlay:` rule is live there, so the layout is the one that
+      //   shipped.
+      // - **`(max-height: 639px)`** — no room underneath. A phone held sideways
+      //   is 812x375, and the docked chrome wants about 164px of a 188px band:
+      //   keyed on `roomy` this screen docked and was left with **24px of
+      //   canvas**, against 188 before. Landscape needs its chrome beside the
+      //   pitch, which is the mirror image of the portrait argument — at 812
+      //   wide the drawn pitch is 358px across and the empty canvas is
+      //   horizontal, so the rails are already standing on nothing.
+      // - **`(min-width: 900px)`** — the pitch is not short of width. Docking
+      //   pays only where the drawn pitch is width-constrained, because that is
+      //   the axis the rails eat. On a 1024x768 tablet the pair covers 11% of
+      //   the canvas and docking would take the pitch from 921x597 to 693x449,
+      //   which is paying a quarter of the board to recover an eighth of it.
+      //
+      // So it docks on exactly the screens the complaint was about: a phone or
+      // a tablet held upright, where the rails cover 18.5% of the drawn pitch
+      // and both goalmouths, and where the empty canvas is vertical and free.
+      addVariant('overlay', '@media (pointer: fine), (max-height: 639px), (min-width: 900px)')
     }),
   ],
 } satisfies Config

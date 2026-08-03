@@ -1,16 +1,39 @@
 import { Group, Line, Rect, Ellipse, Text, Circle } from 'react-konva'
 import { useBoardStore } from '../../store/boardStore'
+import { useCoarsePointer } from '../../hooks/useCoarsePointer'
 import { arrowHead, quadraticPoints, bboxOf, triangleCorners } from '../../lib/geometry'
 import type { Drawing } from '../../lib/types'
 import type { PitchMapping } from './pitchMapping'
 
 const SELECT_INK = '#f4f2ef'
+/** The pale face every draggable handle on the board shares. */
+const HANDLE_FILL = '#fbf9f5'
+
+/**
+ * How wide a corner handle has to be in CSS pixels for each kind of pointer,
+ * before the stage scale is divided back out.
+ *
+ * 22 is half the 44px floor `src/index.css` puts under every control that is an
+ * element, and taking half is deliberate rather than a shortfall. A triangle
+ * carries three of these and a traced shape can carry thirty; at full finger
+ * size they would merge into one mat of handles covering the very shape they
+ * exist to let you adjust, and the shape itself has to stay draggable
+ * underneath them. A corner is also a target approached with the pointer
+ * already on the shape, which is a different problem from finding a cone on an
+ * empty pitch — that is what `PropToken`'s 44 is for.
+ */
+const HANDLE_COARSE = 22
+const HANDLE_FINE = 14
 
 interface Props {
   drawing: Drawing
   mapping: PitchMapping
   selected: boolean
-  /** See `DrawingLayer`. Absent for every kind but text, and while a tool is armed. */
+  /**
+   * See `DrawingLayer`: present exactly while `select` is the armed tool, and
+   * absent for the bands that have nothing to do with it. Its *presence* is the
+   * signal for two things here, the label editor and the corner handles.
+   */
   onEditText?: (drawing: Drawing, screenX: number, screenY: number) => void
 }
 
@@ -19,6 +42,13 @@ export default function DrawingShape({ drawing: d, mapping: m, selected, onEditT
   const toggleSelection = useBoardStore((s) => s.toggleSelection)
   const updateDrawing = useBoardStore((s) => s.updateDrawing)
   const commit = useBoardStore((s) => s.commit)
+  // Pan and zoom scale the whole stage, so a length of `s` in these coordinates
+  // reaches the eye as `s * zoom` CSS pixels. A handle sized for a finger is
+  // specified in pixels and divided back, the way `PropToken` sizes its grab
+  // boxes, or corners would grow easy to catch as you zoom in and vanish as you
+  // zoom out — which is exactly when a shape needs adjusting.
+  const zoom = useBoardStore((s) => s.zoom)
+  const coarse = useCoarsePointer()
 
   // Stroke weight tracks the pitch so annotations stay proportional at any zoom.
   const unit = Math.max(0.5, m.ppm * 0.13 * (m.L / 105))
@@ -67,6 +97,55 @@ export default function DrawingShape({ drawing: d, mapping: m, selected, onEditT
     )
   }
 
+  /**
+   * A draggable dot on every stored corner, for the two zones whose corners are
+   * what they store.
+   *
+   * These are what make the Triangle and the Shape tools forgiving. A drag
+   * plants a shape roughly and a corner then goes where it was meant, instead
+   * of the coach deleting the whole thing and aiming again — which was the only
+   * remedy either tool had.
+   *
+   * Sized like the painted stroke, then floored at a target a pointer can
+   * actually hit; `Math.max` rather than a swap so a thick shape's handles are
+   * never smaller than its own line, the same bargain `grabBox` strikes.
+   */
+  const cornerHandles = () => {
+    const r = Math.max(width * 1.6, (coarse ? HANDLE_COARSE : HANDLE_FINE) / 2 / zoom)
+    const out = []
+    for (let i = 0; i < mapped.length; i += 2) {
+      out.push(
+        <Circle
+          key={i}
+          x={mapped[i]}
+          y={mapped[i + 1]}
+          radius={r}
+          fill={HANDLE_FILL}
+          stroke={SELECT_INK}
+          strokeWidth={1.2}
+          draggable
+          /**
+           * Konva has already moved the handle, so this writes where it landed
+           * back to the store as that one corner. Deferred, so a whole
+           * adjustment is one undo step rather than one per frame, and
+           * `commit()` closes the run when the drag ends — the same convention
+           * the label drag uses, for the same reason. `defer` holds only the
+           * history push, so a peer still watches the corner move continuously.
+           */
+          onDragMove={(e) => {
+            const n = m.toNorm(e.target.x(), e.target.y())
+            const points = [...d.points]
+            points[i] = n.x
+            points[i + 1] = n.y
+            updateDrawing(d.id, { points }, true)
+          }}
+          onDragEnd={() => commit()}
+        />,
+      )
+    }
+    return out
+  }
+
   switch (d.type) {
     // A pen stroke is a line through many points with the corners taken off.
     case 'pen':
@@ -108,18 +187,37 @@ export default function DrawingShape({ drawing: d, mapping: m, selected, onEditT
           />
           <Line points={[head[0], head[1], x1, y1, head[2], head[3]]} {...common} dash={undefined} />
           {selected && (
+            /**
+             * The bend handle, sized and committed like the corner handles it
+             * sits beside rather than like the four-pixel dot it used to be.
+             *
+             * It was `Math.max(4, width * 1.6)` with no pointer kind and no
+             * `/zoom`, which made it the one draggable handle on the board that
+             * a finger could not reliably catch and the one that shrank as you
+             * zoomed out — exactly when a curve most needs re-aiming. Same
+             * floor as `cornerHandles` now, for the same reasons written there.
+             *
+             * And the drag is deferred. Every pointer move used to push its own
+             * undo step and `structuredClone` the whole board with it, so undo
+             * walked a bend back a few pixels at a time; `defer` holds the step
+             * open and `commit()` closes it, while the `set` and the `emit`
+             * still run per move so peers watch the curve bend continuously.
+             * That is `updateDrawing`'s own convention and this was the last
+             * gesture in the file not following it.
+             */
             <Circle
               x={c.x}
               y={c.y}
-              radius={Math.max(4, width * 1.6)}
-              fill="#fbf9f5"
+              radius={Math.max(width * 1.6, (coarse ? HANDLE_COARSE : HANDLE_FINE) / 2 / zoom)}
+              fill={HANDLE_FILL}
               stroke={SELECT_INK}
               strokeWidth={1.2}
               draggable
               onDragMove={(e) => {
                 const nrm = m.toNorm(e.target.x(), e.target.y())
-                updateDrawing(d.id, { control: [nrm.x, nrm.y] })
+                updateDrawing(d.id, { control: [nrm.x, nrm.y] }, true)
               }}
+              onDragEnd={() => commit()}
             />
           )}
           {selectionOutline()}
@@ -163,38 +261,58 @@ export default function DrawingShape({ drawing: d, mapping: m, selected, onEditT
       )
     }
 
-    // Both are a closed run of corners filled at the zone opacity, and the only
-    // difference is where the corners come from: a polygon stores every one of
-    // them, a triangle stores the drag and grows its third. Sharing the branch
+    // Both are a closed run of corners filled at the zone opacity, and both now
+    // store those corners outright: a triangle is three of them, planted by a
+    // drag that puts the apex under the press and grows the base away from it,
+    // and a polygon is as many as were traced or clicked. Sharing the branch
     // rather than copying six lines of `Line` props is the point — a fill or a
     // hit-area that only two of the three zones agreed on would be a bug nobody
     // would think to look for.
     case 'zoneTriangle':
     case 'zonePoly': {
       /**
-       * A triangle stores its three corners, so it is a polygon that stopped at
-       * three and there is nothing left here to tell them apart.
+       * With the corners actually in `points` there is nothing left here to
+       * tell a triangle from a polygon, and a handle drawn on a corner can drag
+       * the very number it is drawn on.
        *
-       * It used to store the two points of a drag and grow its apex on the way
-       * to the screen, which is what `triangleCorners` was for. Three clicks
-       * replaced that, and with the corners actually in `points` the derivation
-       * went with it.
-       *
-       * The four-number arm is a shim for boards drawn in the hours between the
-       * two designs, before either had reached anybody. Nothing produces such a
-       * shape now, and this can be deleted along with `triangleCorners` as soon
-       * as the dev database is known not to hold one. Without it, an old
-       * triangle renders as a stray two-point line rather than as a triangle,
-       * which is the sort of quiet wrongness that is hard to trace back.
+       * The four-number arm is a shim for boards drawn in the hours when a
+       * triangle stored the two ends of a drag and grew its apex on the way to
+       * the screen; `triangleCorners` is that derivation, and `erase.ts` calls
+       * it for the same reason from the other side, so that such a shape can be
+       * rubbed out as the triangle it is painted as. Nothing produces one now,
+       * and all three can go as soon as the dev database is known not to hold
+       * one. Without it an old triangle
+       * renders as a stray two-point line, which is the sort of quiet wrongness
+       * that is hard to trace back.
        */
-      const corners =
-        d.type === 'zoneTriangle' && mapped.length === 4
-          ? triangleCorners(mapped[0], mapped[1], mapped[2], mapped[3])
-          : mapped
+      const legacy = d.type === 'zoneTriangle' && mapped.length === 4
+      const corners = legacy
+        ? triangleCorners(mapped[0], mapped[1], mapped[2], mapped[3])
+        : mapped
+      /**
+       * Corner handles, gated on the same single signal the label editor is
+       * gated on: `DrawingLayer` passes `onEditText` only while `select` is the
+       * armed tool, so its presence is what says a press on this shape means
+       * "adjust it" rather than "start drawing here". A second prop saying the
+       * same thing is a second prop that can disagree with the first.
+       *
+       * **A legacy four-number triangle deliberately gets none.** Its stored
+       * pair is a drag, not corners, so a handle on `points` would sit
+       * somewhere that is not a corner of the shape on screen, and a handle on
+       * the derived corners would have to write six numbers back — quietly
+       * changing the shape's stored form under a gesture the coach thought was
+       * a nudge, and adding a third state ("four numbers, unless somebody
+       * touched it") to a shim that exists to be deleted. Such a triangle still
+       * selects, moves, recolours and deletes exactly as it did; only the
+       * corner-nudging is missing, and redrawing it is cheaper than carrying an
+       * upgrade path for shapes that may not exist.
+       */
+      const handles = selected && onEditText && !legacy ? cornerHandles() : null
       return (
         <Group>
           <Line points={corners} closed fill={d.color} opacity={d.fillOpacity ?? 0.18} {...common} />
           {selectionOutline()}
+          {handles}
         </Group>
       )
     }

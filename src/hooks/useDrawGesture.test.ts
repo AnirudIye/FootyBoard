@@ -3,8 +3,20 @@ import { StrictMode } from 'react'
 import { act, renderHook, fireEvent } from '@testing-library/react'
 import { useDrawGesture } from './useDrawGesture'
 import { useBoardStore } from '../store/boardStore'
+import { createDrawing } from '../lib/drawings'
 
 const at = () => ({ x: 50, y: 50 })
+
+/**
+ * The eraser disc, in board units.
+ *
+ * The hook takes it as a function because in the real board it is a constant
+ * number of CSS pixels converted through the live mapping and zoom, and both of
+ * those change under the pointer. Three units is a bit over three metres on a
+ * full pitch: near enough what a fingertip covers, and far short of anything a
+ * test would have to squint at.
+ */
+const radius = () => 3
 
 describe('useDrawGesture: Escape', () => {
   beforeEach(() => {
@@ -13,7 +25,7 @@ describe('useDrawGesture: Escape', () => {
   })
 
   it('disarms the tool when no gesture is in progress', () => {
-    renderHook(() => useDrawGesture(at))
+    renderHook(() => useDrawGesture(at, radius))
     act(() => useBoardStore.getState().setTool('pen'))
 
     fireEvent.keyDown(window, { key: 'Escape' })
@@ -22,7 +34,7 @@ describe('useDrawGesture: Escape', () => {
   })
 
   it('ignores Escape from a text field, which means leave the field', () => {
-    renderHook(() => useDrawGesture(at))
+    renderHook(() => useDrawGesture(at, radius))
     act(() => useBoardStore.getState().setTool('pen'))
 
     const input = document.createElement('input')
@@ -35,7 +47,7 @@ describe('useDrawGesture: Escape', () => {
   })
 
   it('abandons a polygon in progress but keeps the tool armed', () => {
-    const { result } = renderHook(() => useDrawGesture(at))
+    const { result } = renderHook(() => useDrawGesture(at, radius))
     act(() => useBoardStore.getState().setTool('zonePoly'))
     act(() => {
       result.current.onPointerDown(10, 10)
@@ -68,7 +80,7 @@ describe('useDrawGesture: text labels', () => {
   })
 
   it('opens a text draft where the pointer went down', () => {
-    const { result } = renderHook(() => useDrawGesture(at))
+    const { result } = renderHook(() => useDrawGesture(at, radius))
 
     act(() => {
       result.current.onPointerDown(300, 200)
@@ -89,7 +101,7 @@ describe('useDrawGesture: text labels', () => {
   })
 
   it('commits what was typed, as a text drawing at that point', () => {
-    const { result } = renderHook(() => useDrawGesture(at))
+    const { result } = renderHook(() => useDrawGesture(at, radius))
     act(() => {
       result.current.onPointerDown(300, 200)
     })
@@ -106,7 +118,7 @@ describe('useDrawGesture: text labels', () => {
   })
 
   it('adds nothing for an empty label, and closes the draft either way', () => {
-    const { result } = renderHook(() => useDrawGesture(at))
+    const { result } = renderHook(() => useDrawGesture(at, radius))
     act(() => {
       result.current.onPointerDown(300, 200)
     })
@@ -141,7 +153,7 @@ describe('useDrawGesture: the press that opens the typing box', () => {
 
   it('cancels the press, so nothing can take focus off the box it just opened', () => {
     useBoardStore.getState().setTool('text')
-    const { result } = renderHook(() => useDrawGesture(at))
+    const { result } = renderHook(() => useDrawGesture(at, radius))
     const evt = { preventDefault: vi.fn() }
 
     act(() => {
@@ -160,7 +172,7 @@ describe('useDrawGesture: the press that opens the typing box', () => {
    */
   it('leaves every other draw gesture uncancelled, or a polygon could not close', () => {
     useBoardStore.getState().setTool('zonePoly')
-    const { result } = renderHook(() => useDrawGesture(at))
+    const { result } = renderHook(() => useDrawGesture(at, radius))
     const evt = { preventDefault: vi.fn() }
 
     act(() => {
@@ -172,7 +184,7 @@ describe('useDrawGesture: the press that opens the typing box', () => {
 
   it('keeps an empty box standing when it is blurred, rather than discarding it', () => {
     useBoardStore.getState().setTool('text')
-    const { result } = renderHook(() => useDrawGesture(at))
+    const { result } = renderHook(() => useDrawGesture(at, radius))
     act(() => {
       result.current.onPointerDown(300, 200)
     })
@@ -195,7 +207,7 @@ describe('useDrawGesture: the press that opens the typing box', () => {
    */
   it('commits the label in hand when the next one is placed', () => {
     useBoardStore.getState().setTool('text')
-    const { result } = renderHook(() => useDrawGesture(at))
+    const { result } = renderHook(() => useDrawGesture(at, radius))
     act(() => {
       result.current.onPointerDown(300, 200)
     })
@@ -222,7 +234,7 @@ describe('useDrawGesture: the press that opens the typing box', () => {
 
   it('commits on a blur that has something in it, since that was meant', () => {
     useBoardStore.getState().setTool('text')
-    const { result } = renderHook(() => useDrawGesture(at))
+    const { result } = renderHook(() => useDrawGesture(at, radius))
     act(() => {
       result.current.onPointerDown(300, 200)
     })
@@ -249,7 +261,7 @@ describe('useDrawGesture: editing a placed label', () => {
 
   const placeLabel = (text: string) => {
     useBoardStore.getState().setTool('text')
-    const { result } = renderHook(() => useDrawGesture(at))
+    const { result } = renderHook(() => useDrawGesture(at, radius))
     act(() => {
       result.current.onPointerDown(300, 200)
     })
@@ -334,111 +346,472 @@ describe('useDrawGesture: editing a placed label', () => {
 })
 
 /**
- * Three clicks, one corner each, and the shape closes itself.
+ * A gesture harness for the two zone tools, which are the only ones whose
+ * behaviour depends on where the pointer went between the press and the release.
  *
- * The triangle was a drag for a few hours: two points of a box, apex derived on
- * the way to the screen. Clicking the corners you actually want is fewer things
- * to know, and it makes the stored shape the corners themselves, which is why
- * the renderer no longer tells a triangle from a polygon.
+ * `useDrawGesture` reads the pointer through the function it is given rather
+ * than off the event, so a test moves the pointer by moving `cursor` and then
+ * telling the hook a pointer event happened. The screen coordinates handed to
+ * `onPointerDown` are only used to position the text box and are ignored here.
  */
-describe('useDrawGesture: the triangle closes on its third corner', () => {
+const gestures = () => {
   let cursor = { x: 0, y: 0 }
-  const here = () => cursor
-
-  const clickAt = (result: { current: ReturnType<typeof useDrawGesture> }, x: number, y: number) => {
+  type Hook = { current: ReturnType<typeof useDrawGesture> }
+  const at = () => cursor
+  const press = (r: Hook, x: number, y: number) => {
     cursor = { x, y }
     act(() => {
-      result.current.onPointerDown(x, y)
-    })
-    act(() => {
-      result.current.onPointerUp()
+      r.current.onPointerDown(x, y)
     })
   }
+  const move = (r: Hook, x: number, y: number) => {
+    cursor = { x, y }
+    act(() => {
+      r.current.onPointerMove()
+    })
+  }
+  const release = (r: Hook) =>
+    act(() => {
+      r.current.onPointerUp()
+    })
+  const tap = (r: Hook, x: number, y: number) => {
+    press(r, x, y)
+    release(r)
+  }
+  /**
+   * A run of moves inside ONE `act`, which is how a traced shape really arrives.
+   *
+   * `move` flushes React between samples and a hand does not. `pointermove` is
+   * not a discrete event, so the browser delivers a burst of them and React
+   * re-renders once at the end — which means a handler choosing its branch from
+   * the render closure is reading a draft several samples out of date. Sampling
+   * one at a time hides that completely, and it is why a lasso that every
+   * existing test called correct came out of a real browser as a three-point
+   * splinter. This is the only way to reproduce it in jsdom.
+   */
+  const sweep = (r: Hook, pts: [number, number][]) =>
+    act(() => {
+      for (const [x, y] of pts) {
+        cursor = { x, y }
+        r.current.onPointerMove()
+      }
+    })
+  return { at, press, move, release, tap, sweep }
+}
 
+/**
+ * The triangle: press to plant the point, drag to open the shape out behind it.
+ *
+ * It has now been all three things — a box drag with a derived apex, three
+ * separate clicks, and this — so the assertions worth having are the ones that
+ * say which. Three clicks were precise and fiddly, and unusable on a phone
+ * where the tooltip explaining them cannot be reached; a drag out of a single
+ * planted point is one gesture, and it is what the product owner asked for in
+ * those words.
+ */
+describe('useDrawGesture: the triangle is a drag out of its own point', () => {
+  const { at, press, move, release, tap } = gestures()
   const drawings = () => useBoardStore.getState().drawings
 
   beforeEach(() => {
     useBoardStore.getState().initDefaultBoard()
     useBoardStore.getState().setTool('zoneTriangle')
-    cursor = { x: 0, y: 0 }
-  })
-
-  it('adds nothing until the third corner, then exactly one triangle', () => {
-    const { result } = renderHook(() => useDrawGesture(here))
-
-    clickAt(result, 10, 10)
-    expect(drawings()).toHaveLength(0)
-
-    clickAt(result, 30, 60)
-    expect(drawings()).toHaveLength(0)
-    expect(result.current.draft?.points).toEqual([10, 10, 30, 60])
-
-    clickAt(result, 70, 20)
-
-    expect(drawings()).toHaveLength(1)
-    expect(drawings()[0].type).toBe('zoneTriangle')
-    // The three corners as placed, in order. No derivation, nothing normalised.
-    expect(drawings()[0].points).toEqual([10, 10, 30, 60, 70, 20])
-  })
-
-  /** The gesture ends cleanly, so the next click starts a new shape. */
-  it('clears the draft on completion and begins again on the next click', () => {
-    const { result } = renderHook(() => useDrawGesture(here))
-
-    clickAt(result, 10, 10)
-    clickAt(result, 30, 60)
-    clickAt(result, 70, 20)
-    expect(result.current.draft).toBeNull()
-
-    clickAt(result, 80, 80)
-    expect(result.current.draft?.points).toEqual([80, 80])
-    expect(drawings()).toHaveLength(1)
   })
 
   /**
-   * A corner is where somebody put it. Moving between clicks must not drag the
-   * previous one around, which is what a drag shape's pointer-move does.
+   * Under StrictMode deliberately, and the count is half the assertion.
+   *
+   * React may invoke a state updater more than once for a single update and
+   * StrictMode does it on purpose in development, so any `addDrawing` that
+   * slipped inside a `setDraft` updater would put two triangles on the board
+   * for this one gesture — the same defect that once made a release over the
+   * canvas commit a drawing twice, and that `commitPoly` was actually carrying.
    */
-  it('does not rubber-band a placed corner when the pointer moves', () => {
-    const { result } = renderHook(() => useDrawGesture(here))
+  it('commits exactly one triangle of three corners for one drag', () => {
+    const { result } = renderHook(() => useDrawGesture(at, radius), { wrapper: StrictMode })
 
-    clickAt(result, 10, 10)
-    cursor = { x: 99, y: 99 }
-    act(() => {
-      result.current.onPointerMove()
-    })
+    press(result, 20, 20)
+    move(result, 20, 45)
+    move(result, 20, 60)
+    release(result)
 
-    expect(result.current.draft?.points).toEqual([10, 10])
+    expect(drawings()).toHaveLength(1)
+    expect(drawings()[0].type).toBe('zoneTriangle')
+    // Six numbers, not four: the corners themselves, so nothing downstream has
+    // to derive them and nothing can derive them differently.
+    expect(drawings()[0].points).toHaveLength(6)
+    // The apex is the press, untouched by the drag that grew the base away
+    // from it, and the base is centred on where the finger ended up.
+    expect(drawings()[0].points.slice(0, 2)).toEqual([20, 20])
+    const p = drawings()[0].points
+    expect((p[2] + p[4]) / 2).toBeCloseTo(20, 9)
+    expect((p[3] + p[5]) / 2).toBeCloseTo(60, 9)
+    expect(result.current.draft).toBeNull()
   })
 
-  it('abandons a half-placed triangle on Escape but keeps the tool armed', () => {
-    const { result } = renderHook(() => useDrawGesture(here))
+  /** The whole point of doing it this way: what you see is what gets stored. */
+  it('grows a three-cornered preview under the finger, committing nothing yet', () => {
+    const { result } = renderHook(() => useDrawGesture(at, radius))
 
-    clickAt(result, 10, 10)
-    clickAt(result, 30, 60)
+    press(result, 20, 20)
+    move(result, 50, 20)
+
+    expect(result.current.preview?.type).toBe('zoneTriangle')
+    expect(result.current.preview?.points).toHaveLength(6)
+    expect(result.current.preview?.points.slice(0, 2)).toEqual([20, 20])
+    expect(drawings()).toHaveLength(0)
+  })
+
+  /**
+   * A press that never travels must leave *nothing* behind — no stray shape and
+   * no stranded draft either, which is the half that would otherwise sit there
+   * invisibly and be committed by the next unrelated gesture.
+   */
+  it('leaves nothing behind for a press that never travelled', () => {
+    const { result } = renderHook(() => useDrawGesture(at, radius), { wrapper: StrictMode })
+
+    tap(result, 40, 40)
+
+    expect(drawings()).toHaveLength(0)
+    expect(result.current.draft).toBeNull()
+  })
+
+  it('abandons a triangle under the finger on Escape but keeps the tool armed', () => {
+    const { result } = renderHook(() => useDrawGesture(at, radius))
+
+    press(result, 10, 10)
+    move(result, 40, 40)
     fireEvent.keyDown(window, { key: 'Escape' })
 
     expect(useBoardStore.getState().tool).toBe('zoneTriangle')
     expect(result.current.draft).toBeNull()
     expect(drawings()).toHaveLength(0)
   })
+})
+
+/**
+ * The Shape tool, which is two gestures wearing one button.
+ *
+ * Drag and it traces a free shape, which is what a hand on a phone wants.
+ * Tap and it places a corner, which is what a coach wants when the shape has to
+ * be exact — that half is what the existing double-tap fix was about and it is
+ * not being taken away. What the tests are really for is the seam: the two must
+ * never be accumulating into the same shape at the same time, and only the
+ * press that opens a shape may choose between them.
+ */
+describe('useDrawGesture: the Shape tool traces or takes corners', () => {
+  const { at, press, move, release, tap, sweep } = gestures()
+  const drawings = () => useBoardStore.getState().drawings
+
+  beforeEach(() => {
+    useBoardStore.getState().initDefaultBoard()
+    useBoardStore.getState().setTool('zonePoly')
+  })
 
   /**
-   * The reason the commit sits outside the `setDraft` updater rather than inside
-   * it, asserted rather than left as a claim in a comment.
+   * Traced at the speed a hand traces, rather than one flushed sample at a time.
    *
-   * React may invoke a state updater more than once for a single update, and
-   * StrictMode does it deliberately in development. An `addDrawing` inside one
-   * would put two triangles on the board for one click, which is the same defect
-   * that made a release over the canvas commit a drawing twice.
+   * This is the case a browser found and every other test in this file missed.
+   * The Shape tool is the only gesture whose `mode` changes while it is running,
+   * and `pointermove` is not discrete, so React batches a burst of them and
+   * re-renders once at the end. A handler that picked its branch from the render
+   * closure sent every sample after the change to the branch the gesture had
+   * already left — the corner branch, which refuses anything longer than two
+   * numbers — and dropped them without a sound. On screen: a lasso traced right
+   * round and committed as a three-point splinter.
+   *
+   * So the assertion is about the count, and `sweep` is the whole of the setup.
    */
-  it('adds one triangle, not two, under StrictMode double invocation', () => {
-    const { result } = renderHook(() => useDrawGesture(here), { wrapper: StrictMode })
+  it('keeps the samples of a lasso traced faster than React re-renders', () => {
+    const { result } = renderHook(() => useDrawGesture(at, radius), { wrapper: StrictMode })
 
-    clickAt(result, 10, 10)
-    clickAt(result, 30, 60)
-    clickAt(result, 70, 20)
+    press(result, 10, 10)
+    sweep(result, [
+      [12, 10],
+      [14, 10],
+      [16, 12],
+      [16, 14],
+      [14, 16],
+      [12, 16],
+      [10, 14],
+    ])
+    release(result)
+
+    expect(drawings()).toHaveLength(1)
+    expect(drawings()[0].type).toBe('zonePoly')
+    // The press plus all seven samples: every one is well past `LASSO_STEP`, so
+    // none is thinned and none may be lost. Before the fix this was three.
+    expect(drawings()[0].points).toHaveLength(16)
+  })
+
+  it('commits exactly one closed polygon for a lasso, thinned on the way', () => {
+    const { result } = renderHook(() => useDrawGesture(at, radius), { wrapper: StrictMode })
+
+    // A hundred samples tracing a wedge, evenly spaced about 0.54 units apart —
+    // which is what a finger dragged for a second or two actually produces, and
+    // comfortably under the 0.8 the lasso keeps, so most of them have to be
+    // dropped. Two of them together clear it, so every other one survives.
+    const moves = 100
+    press(result, 10, 10)
+    for (let i = 1; i <= moves; i++) {
+      const up = i <= moves / 2 ? i : moves - i
+      move(result, 10 + i * 0.5, 10 + up * 0.2)
+    }
+    release(result)
+
+    expect(drawings()).toHaveLength(1)
+    // Closing is the renderer's job — `DrawingShape` draws a `zonePoly` as a
+    // closed, filled `Line` — so what the data has to carry is the type and the
+    // zone fill, and the corners in the order they were traced.
+    expect(drawings()[0].type).toBe('zonePoly')
+    expect(drawings()[0].fillOpacity).toBeDefined()
+
+    const stored = drawings()[0].points.length / 2
+    // Decimation happened at all...
+    expect(stored).toBeLessThan(moves + 1)
+    // ...and by half rather than by one sample.
+    expect(stored).toBeLessThanOrEqual(moves / 2 + 1)
+    // ...and still left a shape rather than thinning it to nothing.
+    expect(stored).toBeGreaterThanOrEqual(3)
+    expect(result.current.draft).toBeNull()
+  })
+
+  it('discards a lasso too short to be a shape', () => {
+    const { result } = renderHook(() => useDrawGesture(at, radius))
+
+    press(result, 10, 10)
+    move(result, 14, 10)
+    release(result)
+
+    expect(drawings()).toHaveLength(0)
+    expect(result.current.draft).toBeNull()
+  })
+
+  it('still places a corner on a tap, and still closes on Enter', () => {
+    const { result } = renderHook(() => useDrawGesture(at, radius), { wrapper: StrictMode })
+
+    tap(result, 10, 10)
+    expect(result.current.draft?.mode).toBe('corners')
+    expect(result.current.draft?.points).toEqual([10, 10])
+
+    tap(result, 60, 10)
+    tap(result, 60, 50)
+    expect(drawings()).toHaveLength(0)
+
+    fireEvent.keyDown(window, { key: 'Enter' })
+
+    expect(drawings()).toHaveLength(1)
+    expect(drawings()[0].type).toBe('zonePoly')
+    expect(drawings()[0].points).toEqual([10, 10, 60, 10, 60, 50])
+    expect(result.current.draft).toBeNull()
+  })
+
+  /**
+   * The same close, through `commitPoly` directly, which is what the stage's
+   * `dblclick` and `dbltap` handlers call — the half of the gesture that works
+   * without a keyboard, and the reason the phone fix exists at all.
+   */
+  it('closes on a double-click as well, with one polygon and not two', () => {
+    const { result } = renderHook(() => useDrawGesture(at, radius), { wrapper: StrictMode })
+
+    tap(result, 10, 10)
+    tap(result, 60, 10)
+    tap(result, 60, 50)
+    act(() => {
+      result.current.commitPoly()
+    })
 
     expect(drawings()).toHaveLength(1)
   })
+
+  /**
+   * A corner is where somebody put it. Once the list has started, a move can
+   * neither rubber-band it nor start tracing alongside it — the two modes must
+   * never be accumulating into one shape.
+   */
+  it('neither rubber-bands nor starts tracing once a corner list has begun', () => {
+    const { result } = renderHook(() => useDrawGesture(at, radius))
+
+    tap(result, 10, 10)
+    press(result, 60, 10)
+    move(result, 60, 50)
+    move(result, 20, 80)
+
+    expect(result.current.draft?.mode).toBe('corners')
+    expect(result.current.draft?.points).toEqual([10, 10, 60, 10])
+  })
+
+  /**
+   * The reason the hook tracks whether the button is down at all: between two
+   * placed corners a mouse crosses the whole pitch, and every one of those
+   * moves looks exactly like a traced one.
+   */
+  it('does not start tracing when the pointer merely crosses the pitch', () => {
+    const { result } = renderHook(() => useDrawGesture(at, radius))
+
+    tap(result, 10, 10)
+    move(result, 90, 90)
+
+    expect(result.current.draft?.mode).toBe('corners')
+    expect(result.current.draft?.points).toEqual([10, 10])
+  })
+})
+
+/**
+ * The eraser, which is the one armed tool that ends with less on the board than
+ * it started with.
+ *
+ * It has no draft and makes no preview drawing, so almost everything the other
+ * gestures assert has no counterpart here. What is worth holding instead is the
+ * shape of the damage it can do: that a hover cannot erase, that a sweep is one
+ * undo step rather than one per mark met, and that a sweep across bare grass
+ * spends no step at all.
+ */
+describe('useDrawGesture: the eraser', () => {
+  const { at, press, move, release, tap } = gestures()
+  const drawings = () => useBoardStore.getState().drawings
+  const steps = () => useBoardStore.getState().history.past.length
+
+  /** A short line, well away from the others, so a disc of 3 units meets one at a time. */
+  const put = (points: number[]) =>
+    useBoardStore
+      .getState()
+      .addDrawing(createDrawing('line', points, useBoardStore.getState().drawStyle))
+
+  beforeEach(() => {
+    useBoardStore.getState().initDefaultBoard()
+    useBoardStore.getState().setTool('eraser')
+  })
+
+  it('takes a mark on the press, without waiting for a drag', () => {
+    const a = put([10, 10, 14, 10])
+    put([80, 80, 84, 80])
+
+    tap(result(), 12, 10)
+
+    expect(drawings().map((d) => d.id)).not.toContain(a)
+    expect(drawings()).toHaveLength(1)
+  })
+
+  it('leaves everything alone on a pointer that is merely passing over', () => {
+    put([10, 10, 14, 10])
+    const hook = result()
+
+    move(hook, 12, 10)
+    move(hook, 12, 11)
+
+    expect(drawings()).toHaveLength(1)
+    // ...but the disc has followed, because showing where it would take
+    // something is the whole of the warning before something disappears.
+    expect(hook.current.eraser).toEqual({ nx: 12, ny: 11, radius: 3 })
+  })
+
+  it('sweeps up everything the disc passes over, as one undo step', () => {
+    put([10, 10, 14, 10])
+    put([40, 10, 44, 10])
+    put([70, 10, 74, 10])
+    const before = steps()
+    const hook = result()
+
+    press(hook, 12, 10)
+    move(hook, 42, 10)
+    move(hook, 72, 10)
+    release(hook)
+
+    expect(drawings()).toHaveLength(0)
+    expect(steps()).toBe(before + 1)
+
+    act(() => useBoardStore.getState().undoAction())
+    expect(drawings()).toHaveLength(3)
+  })
+
+  it('spends no undo step on a sweep across bare grass', () => {
+    put([10, 10, 14, 10])
+    const before = steps()
+    const hook = result()
+
+    press(hook, 60, 60)
+    move(hook, 70, 70)
+    release(hook)
+
+    expect(drawings()).toHaveLength(1)
+    expect(steps()).toBe(before)
+  })
+
+  /**
+   * The eraser arms the same path a draw tool does — no marquee, no default
+   * cursor — while creating none of the things that path was built around. A
+   * draft here would be committed as a drawing by the release that ends the
+   * sweep.
+   */
+  it('arms the canvas without a draft or a preview to commit', () => {
+    put([10, 10, 14, 10])
+    const hook = result()
+
+    press(hook, 12, 10)
+    move(hook, 20, 10)
+
+    expect(hook.current.armed).toBe(true)
+    expect(hook.current.draft).toBeNull()
+    expect(hook.current.preview).toBeNull()
+  })
+
+  it('takes its ring away with the tool', () => {
+    const hook = result()
+    move(hook, 30, 30)
+    expect(hook.current.eraser).not.toBeNull()
+
+    act(() => useBoardStore.getState().setTool('select'))
+
+    expect(hook.current.eraser).toBeNull()
+  })
+
+  /**
+   * It can only take what is on screen, which is the marquee's rule and matters
+   * more here.
+   *
+   * `toNorm` is linear and unclamped, so on a half view the pointer reaches the
+   * hidden half's board coordinates just by moving onto the bare canvas beside
+   * the pitch — it does not have to leave the window. Without the filter a sweep
+   * along that edge silently destroys work nobody in the room can see, and
+   * leaves nothing on screen to point at afterwards.
+   */
+  it('cannot take a mark the half view is hiding', () => {
+    act(() => useBoardStore.getState().setView({ view: 'attackHalf' }))
+    const hidden = put([10, 10, 14, 10])
+    const shown = put([80, 10, 84, 10])
+    const hook = result()
+
+    tap(hook, 12, 10)
+    expect(drawings().map((d) => d.id)).toContain(hidden)
+
+    tap(hook, 82, 10)
+    expect(drawings().map((d) => d.id)).not.toContain(shown)
+  })
+
+  /**
+   * A release always ends the press, even the ones the canvas is not allowed to
+   * act on.
+   *
+   * `PitchCanvas` calls `onPointerUp` only while the board is unlocked, so an
+   * owner taking the floor mid-sweep swallows that member's release. `endPress`
+   * runs ahead of that gate; without it the flag stayed set and the next hover
+   * after the lock lifted erased whatever it crossed, which is exactly what the
+   * flag exists to prevent.
+   */
+  it('stops erasing on hover after a release the lock swallowed', () => {
+    put([40, 10, 44, 10])
+    const hook = result()
+
+    press(hook, 80, 80)
+    // The lock is taken here, so `onPointerUp` never runs — only `endPress`.
+    act(() => hook.current.endPress())
+    move(hook, 42, 10)
+
+    expect(drawings()).toHaveLength(1)
+  })
+
+  function result() {
+    return renderHook(() => useDrawGesture(at, radius), { wrapper: StrictMode }).result
+  }
 })

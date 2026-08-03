@@ -18,43 +18,50 @@ export const isText = (t: DrawingType): boolean => t === 'text'
 export const isMark = (t: DrawingType): boolean => !isZone(t) && !isText(t)
 
 /**
- * Types whose gesture is a simple drag from one corner/end to another.
+ * How a draft behaves between the press that starts it and the release that
+ * ends it.
  *
- * Separate from `isZone` on purpose, and the two overlap without either
- * implying the other: `zonePoly` is a zone that is not dragged, `arrow` is
- * dragged and is not a zone. Being a zone decides which band a shape is painted
- * in; being a drag type is what makes the pointer release commit one at all.
+ * - `drag` — two points, the second following the pointer. Line, run, pass,
+ *   both curves, box, oval.
+ * - `apex` — the triangle. The press plants the apex and the drag grows the
+ *   base away from it, so the draft holds all three corners from the first
+ *   frame and what is previewed is exactly what will be committed.
+ * - `free` — points appended as the pointer travels: the pen, and the polygon
+ *   while it is being traced.
+ * - `corners` — points placed one press at a time, and the only mode whose
+ *   draft outlives the release. Only the polygon, and only until it travels.
+ *
+ * **This rides on the draft, not on the type**, which is the whole reason it
+ * exists rather than staying a pair of predicates over `DrawingType`. The
+ * polygon is a traced shape or a clicked one depending on whether the hand
+ * moved, and no function of the type can answer that.
  */
-export const isDragType = (t: DrawingType): boolean =>
-  t === 'line' ||
-  t === 'arrow' ||
-  t === 'dashedArrow' ||
-  t === 'curveArrow' ||
-  t === 'curvePass' ||
-  t === 'zoneRect' ||
-  t === 'zoneEllipse'
+export type DraftMode = 'drag' | 'apex' | 'free' | 'corners'
 
 /**
- * Types placed by clicking their corners rather than dragging a box.
+ * The mode a tool's gesture starts in. The draft carries the answer from there.
  *
- * The complement of `isDragType` among the shapes, and named rather than
- * spelled out at each site because three places in `useDrawGesture` ask the same
- * question: which pointer-down starts or extends a shape, which pointer-move
- * must *not* rubber-band a second corner, and which pointer-up must leave the
- * draft standing instead of committing it. Those three answers have to agree, and
- * a shape that is a click type to one of them and not to the others is a gesture
- * that half works.
+ * Three places in `useDrawGesture` have to agree about a shape in flight: which
+ * press starts or extends it, whether a move may rewrite points somebody
+ * already placed, and whether the release commits it or leaves the draft
+ * standing. They used to agree by each asking the type the same question, which
+ * worked only while every shape's gesture was fixed at the moment it was armed.
+ * The polygon's is not, so the type is asked once — here, at the press — and
+ * the move and the release read the mode off the draft instead of deriving it
+ * again. A shape that is one kind to one of those three call sites and another
+ * kind to the others is a gesture that half works, and one answer in one place
+ * is what stops that happening.
  *
- * The two differ only in when they end. A polygon takes as many corners as you
- * give it and closes on Enter; a triangle closes itself on the third, because
- * three is the whole of what a triangle is and asking for a keystroke as well
- * would be asking twice.
+ * Separate from `isZone`, and neither implies the other: `zonePoly` is a zone
+ * that may be traced or clicked, `arrow` is dragged and is not a zone. Being a
+ * zone decides which band a shape is painted in; the mode is what makes a
+ * release commit one at all.
+ *
+ * `text` never reaches this. Its press opens a DOM input and returns before any
+ * draft exists, so the `drag` it nominally falls to is never used.
  */
-export const isClickType = (t: DrawingType): boolean =>
-  t === 'zonePoly' || t === 'zoneTriangle'
-
-/** Corners a click-placed shape needs before it becomes one, or 0 for no limit. */
-export const CLICK_CORNERS: Partial<Record<DrawingType, number>> = { zoneTriangle: 3 }
+export const draftMode = (t: DrawingType): DraftMode =>
+  t === 'zoneTriangle' ? 'apex' : t === 'pen' ? 'free' : t === 'zonePoly' ? 'corners' : 'drag'
 
 /** Curved types share a control point and a bend direction. */
 export const isCurve = (t: DrawingType): boolean => t === 'curveArrow' || t === 'curvePass'

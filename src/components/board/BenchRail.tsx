@@ -6,8 +6,13 @@ import type { Side } from '../../lib/types'
 const spring = { type: 'spring' as const, stiffness: 480, damping: 32, mass: 0.6 }
 
 /**
- * Substitutes rail beside the pitch. Clicking a substitute brings them on near
- * their own touchline; the selected player can be sent off from here.
+ * The substitutes. Clicking one brings them on near their own touchline; the
+ * selected player can be sent off from here.
+ *
+ * Two layouts, one element, chosen by `roomy`: a vertical rail beside the pitch
+ * where there is room for it, and a docked row under the canvas where there is
+ * not. `BoardPage` builds the column that holds the docked half and explains why
+ * it is a column; the class list below is where the two shapes are spelled out.
  */
 export default function BenchRail({ side }: { side: Side }) {
   // Select the stable array and narrow it during render: returning a fresh
@@ -29,60 +34,109 @@ export default function BenchRail({ side }: { side: Side }) {
 
   return (
     <div
-      /* Narrower and closer to the edge on a phone, because these float *over*
-         the pitch. At 375px the two rails covered 104px — 28% of the board's
-         width — and the pitch is width-constrained at that size, so that is 28%
-         of actual playing surface, not of empty canvas. 42px still clears the
-         32px chips inside. On `sm` and up the original 52px and `left-3`
-         return, where the same rails cost about 8% of a desktop canvas and are
-         not worth crowding.
+      /* **The pixel widths below belong to the `overlay` half of this and to
+         nothing else, and that is the whole of what changed here.**
 
-         Under a finger the chips are 44px, so the rail has to be 46 to hold
-         one: 44 of content plus the two 1px rules, with the horizontal padding
-         given up to pay for it. That takes the pair from 84px over the pitch
-         back to 92px — 22% to 24.5% — which is the price of a substitution a
-         coach can actually make, and still short of the 104px this started at.
-         There is no version of this that keeps both. */
-      className={`absolute top-1/2 -translate-y-1/2 z-10 ${isHome ? 'left-1 sm:left-3' : 'right-1 sm:right-3'}
-        flex w-[42px] touch:w-[46px] sm:w-[52px] flex-col items-center gap-1.5 rounded-lg border
-        border-rule bg-surface/95 px-1 touch:px-0 sm:px-1.5 py-2 shadow-2`}
+         At `overlay` this is the rail it has always been: a 52px card floating
+         *over* the canvas, pinned to the pitch's own vertical centre — which on
+         a horizontal view is precisely where the goals are. On a desktop that is
+         affordable, because the pair costs about 8% of a wide canvas and the
+         nets are still reachable around it.
+
+         Docked it never was affordable, and re-deriving why is what
+         settled this. `computeMapping` fits a 105:68 pitch inside 90% of the
+         canvas box on each axis, so on a 375px-wide phone the drawn pitch is
+         337.5px across whatever the height is — width-constrained, with hundreds
+         of pixels of empty canvas above and below it. Two 46px rails at `left-1`
+         and `right-1` therefore covered 31.25px of *drawn pitch* on each side:
+         62.5 of 337.5, 18.5% of the playing surface and both goalmouths, in the
+         one direction that had nothing to spare.
+
+         So the answer on an upright phone is not a narrower rail. It is not being over
+         the pitch at all: this becomes an ordinary row docked under the canvas,
+         one half of the row for each side, and the pitch keeps every pixel it
+         had. The 42px default and the 46px `touch:` exception have gone with the
+         regime that needed them — they were the width of a card that had to lie
+         over a 375px board and still hold a 44px chip. Neither ever reached a
+         tablet and neither can be missed: both sat below `sm`, `sm:w-[52px]` is
+         generated after `touch:w-[46px]`, and so 52 won everywhere the two
+         overlapped — which is everywhere the rail still floats, `overlay`
+         being a superset of `sm` on every screen that has a rail over the pitch.
+         Re-spelling them as `overlay:` would have put 46px on a coarse tablet
+         for the first time rather than preserving anything.
+
+         Docked, the width is the row's to hand out: `flex-1` twice, so a long
+         bench scrolls inside its own half instead of squeezing the other side. */
+      className={`flex min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-rule
+        bg-surface/95 px-2 py-1.5 shadow-2
+        overlay:absolute overlay:top-1/2 overlay:z-10 overlay:-translate-y-1/2 overlay:w-[52px]
+        overlay:flex-col overlay:px-1.5 overlay:py-2 ${isHome ? 'overlay:left-3' : 'overlay:right-3'}`}
     >
       <span className="font-mono text-[10px] tracking-[0.1em] text-ink-3">
         {isHome ? 'H' : 'A'}
       </span>
 
-      <AnimatePresence initial={false}>
-        {bench.map((t) => (
-          <motion.button
-            key={t.id}
-            layout
-            initial={{ opacity: 0, scale: 0.92 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.92 }}
-            // 1.04, not 1.12. This is a 32px chip in a rail the coach sweeps to
-            // read shirt numbers, so a 12% jump set every chip springing in turn.
-            // Enough to say "this is the one under the pointer" and no more.
-            whileHover={{ scale: 1.04 }}
-            whileTap={{ scale: 0.94 }}
-            transition={spring}
-            title={`Bring on number ${t.number}`}
-            onClick={() => unbenchToken(t.id, isHome ? 22 : 78, 92)}
-            style={{ background: t.color }}
-            /* 32px to a mouse, 44 to a finger — the floor in index.css raises
-               it, and the rail above widens to hold it. */
-            className="grid h-8 w-8 place-items-center rounded-full border border-black/25
-              font-mono text-[12px] text-paper shadow-1"
-          >
-            {t.number}
-          </motion.button>
-        ))}
-      </AnimatePresence>
+      {/* The chips, and the only thing here that is allowed to scroll.
+          `Sub off` and the tag sit outside this box on purpose: a bench of ten
+          under a finger is 440px of chips in half of a 375px row, so anything
+          inside the scroller is reachable only by scrolling to it, and "send
+          this player off" is not a control to hide behind a swipe.
 
-      {bench.length === 0 && <span className="py-1 text-[11px] text-ink-3">none</span>}
+          `overlay:contents` for the same reason Toolbar's `More tools` group
+          and DrawingToolbar's `More` group use it: at `overlay` the wrapper must not
+          exist at all, or the chips would stop being direct children of the
+          column above and the rail's layout would change. `display: contents`
+          leaves them exactly where they were. */}
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5 overlay:contents">
+        <AnimatePresence initial={false}>
+          {bench.map((t) => (
+            <motion.button
+              key={t.id}
+              layout
+              initial={{ opacity: 0, scale: 0.92 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.92 }}
+              // 1.04, not 1.12. This is a 32px chip in a rail the coach sweeps to
+              // read shirt numbers, so a 12% jump set every chip springing in turn.
+              // Enough to say "this is the one under the pointer" and no more.
+              // The `py-0.5` above is the room that 4% needs: `overflow-x` other
+              // than `visible` computes `overflow-y` to `auto`, so a chip that
+              // grew past the edge of the scroller would summon a scrollbar in a
+              // 44px-tall box rather than simply overhanging it.
+              whileHover={{ scale: 1.04 }}
+              whileTap={{ scale: 0.94 }}
+              transition={spring}
+              title={`Bring on number ${t.number}`}
+              onClick={() => unbenchToken(t.id, isHome ? 22 : 78, 92)}
+              style={{ background: t.color }}
+              /* 32px to a mouse, 44 to a finger — the floor in index.css raises
+                 it, and the rail is sized around whatever comes back.
+
+                 `shrink-0 overlay:shrink` is one regime speaking and the other
+                 being left alone. In the docked scroller a chip that may shrink
+                 does: a fine pointer puts no `min-width` under it, so ten of
+                 them would squeeze to the width of their own digits rather than
+                 overflow, and a scroller with nothing overflowing it does not
+                 scroll. In the floating column the chips have always been
+                 shrinkable, and a rail longer than the band it hangs in still
+                 squashes rather than spilling out of it. */
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-full border
+                border-black/25 font-mono text-[12px] text-paper shadow-1 overlay:shrink"
+            >
+              {t.number}
+            </motion.button>
+          ))}
+        </AnimatePresence>
+
+        {bench.length === 0 && <span className="py-1 text-[11px] text-ink-3">none</span>}
+      </div>
 
       {/* Scale and fade rather than an animated height: a spring on `height`
           relaid out the rail on every frame, and reduced-motion cannot see a
-          raw height the way it sees a transform. */}
+          raw height the way it sees a transform. `mt-1 w-full` is the column's
+          shape — a full-width strip under the chips — so both are `overlay:`; in
+          the row it is an ordinary button at the end of the half, sized by its
+          own words, and the scroller beside it is what gives up the room. */}
       <AnimatePresence>
         {selectedOwn && (
           <motion.button
@@ -92,8 +146,9 @@ export default function BenchRail({ side }: { side: Side }) {
             transition={SPRING_SNAP}
             style={{ transformOrigin: 'top center' }}
             onClick={() => benchToken(selectedOwn.id)}
-            className="mt-1 w-full rounded-sm border border-rule px-1 py-1 text-[10px] leading-tight
-              text-ink-2 hover:text-ink hover:border-rule-strong transition-colors duration-150"
+            className="rounded-sm border border-rule px-1 py-1 text-[10px] leading-tight
+              text-ink-2 hover:text-ink hover:border-rule-strong transition-colors duration-150
+              overlay:mt-1 overlay:w-full"
           >
             Sub off
           </motion.button>

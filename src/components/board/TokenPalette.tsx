@@ -40,8 +40,12 @@ export default function TokenPalette() {
             {p.label}
           </Button>
         ))}
+        {/* The ball is the one thing in this list with no ring, because it has
+            no facing worth setting. Naming props rather than "it" keeps the
+            sentence true of the whole list. */}
         <span className="mt-1 text-[11px] leading-snug text-ink-3">
-          Added at the centre. Drag into place, rotate from the inspector.
+          Added at the centre. Drag into place; drag a selected prop&rsquo;s ring to turn it, Shift
+          to snap.
         </span>
       </div>
     </Popover>

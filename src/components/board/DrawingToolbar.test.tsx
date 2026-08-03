@@ -3,6 +3,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react'
 import DrawingToolbar from './DrawingToolbar'
 import { SWATCHES } from './Inspector'
 import { useBoardStore } from '../../store/boardStore'
+import { createDrawing, curveControl } from '../../lib/drawings'
 
 const homePlayers = () =>
   useBoardStore.getState().tokens.filter((t) => t.type === 'player' && t.teamId === 'home')
@@ -120,6 +121,27 @@ describe('DrawingToolbar primary set', () => {
     }
   })
 
+  /**
+   * The eraser is on the phone bar, and it is the one entry in `PRIMARY` that is
+   * not there for making marks.
+   *
+   * It is wanted at the moment a stroke has just gone wrong, which on a phone is
+   * oftener than anywhere else because a fingertip is blunter than a mouse. Two
+   * taps and a hunt behind `More` is the wrong price for undoing the wrong one
+   * out of nine strokes, which is the case undo does not cover.
+   */
+  it('keeps the eraser on the bar, where a mis-drawn stroke is likeliest', () => {
+    render(<DrawingToolbar />)
+    expect(tool('Erase')).toBeInTheDocument()
+    expect(tucked('Erase')).toBe(false)
+  })
+
+  it('arms the eraser from its own button', () => {
+    render(<DrawingToolbar />)
+    fireEvent.click(screen.getByText('Erase'))
+    expect(useBoardStore.getState().tool).toBe('eraser')
+  })
+
   it('tucks the rest away', () => {
     render(<DrawingToolbar />)
     for (const label of ['Line', 'Bend', 'Bent pass', 'Box', 'Oval', 'Triangle', 'Shape', 'Text']) {
@@ -161,29 +183,137 @@ describe('DrawingToolbar primary set', () => {
 })
 
 /**
- * The pill is placed against its measured width, so these are the real numbers,
- * taken from the browser at these viewports: the tool group was a constant
- * 931.11px, centred inside a rail inset 12px from each edge, and a selected
- * curve stacks Bend + left/right + Delete at 254px. Curve + zone is 378 and
- * curve + ball is 389, which is the point: one breakpoint cannot serve them.
+ * Bend, which was being missed.
  *
- * `BAR` is now a fixture rather than a current measurement — the Triangle tool
- * widened the group by a button — and saying so is cheaper than re-measuring a
- * number this file only feeds back to itself through a stubbed rect. What is
- * under test is the rule, that the pill goes beside the bar exactly when its
- * own width fits in the room left over, and that rule is what survives the
- * group changing width. **The pill widths above are still live**: they measure
- * the context pill, which no tool button is part of, and the viewport
- * thresholds asserted below are arithmetic on `BAR`, so a real re-measure would
- * move the numbers in these tests together rather than falsify any of them.
+ * It lived in the floating context pill, and the pill is placed beside the bar
+ * or above it depending on a measurement — so the one control a curve tool
+ * cannot be used without was the one control that was never twice in the same
+ * place. It is now a row inside the bar, directly under the tools, at every
+ * width. These cases are about where it is, not about what it does to a curve:
+ * that logic is untouched and is asserted at the bottom.
+ */
+describe('DrawingToolbar bend row', () => {
+  beforeEach(() => {
+    useBoardStore.getState().initDefaultBoard()
+    useBoardStore.getState().setTool('select')
+    useBoardStore.getState().setDrawStyle({ curve: 'right' })
+  })
+
+  const bendRow = () => screen.queryByRole('group', { name: 'Bend direction' })
+
+  it('is absent until a curve is in play', () => {
+    render(<DrawingToolbar />)
+    expect(bendRow()).toBeNull()
+  })
+
+  it('appears when a curve tool is armed', () => {
+    const { rerender } = render(<DrawingToolbar />)
+    act(() => useBoardStore.getState().setTool('curveArrow'))
+    rerender(<DrawingToolbar />)
+
+    expect(bendRow()).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'left' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'right' })).toBeInTheDocument()
+  })
+
+  it('stays away for a tool that has no bend to it', () => {
+    act(() => useBoardStore.getState().setTool('pen'))
+    render(<DrawingToolbar />)
+    expect(bendRow()).toBeNull()
+  })
+
+  /**
+   * The whole point of moving it. The bar hides eight of its thirteen tools
+   * below `roomy` and brings them back behind `More`; this row is not part of
+   * that group and carries none of its classes, so there is no width at which it
+   * is a tap away.
+   */
+  it('is on the bar at every width, never behind the More toggle', () => {
+    act(() => useBoardStore.getState().setTool('curveArrow'))
+    const { container } = render(<DrawingToolbar />)
+
+    const row = bendRow()!
+    expect(row.className).not.toContain('hidden')
+    expect(container.querySelector('[aria-expanded]')?.contains(row)).toBe(false)
+  })
+
+  /**
+   * And it is out of the pill entirely, rather than being drawn in both places.
+   * With a curve armed and nothing selected there is now no context pill at all,
+   * which is the assertion that fails against the version before this move.
+   */
+  it('leaves the context pill with nothing to show for an armed curve', () => {
+    act(() => useBoardStore.getState().setTool('curveArrow'))
+    const { container } = render(<DrawingToolbar />)
+
+    expect(bendRow()).toBeInTheDocument()
+    expect(container.querySelector('[data-placement]')).toBeNull()
+  })
+
+  it('shows for a selected curve as well as an armed one', () => {
+    const id = useBoardStore
+      .getState()
+      .addDrawing(createDrawing('curveArrow', [10, 10, 50, 10], useBoardStore.getState().drawStyle))
+    act(() => useBoardStore.getState().setSelection([id]))
+    render(<DrawingToolbar />)
+
+    expect(bendRow()).toBeInTheDocument()
+  })
+
+  /**
+   * `setCurveSide` is unchanged by the move and this says so from the new place:
+   * it re-bends every selected curve now, and becomes the default for the next
+   * one drawn.
+   */
+  it('re-bends the selected curve and keeps the answer for the next one', () => {
+    const id = useBoardStore
+      .getState()
+      .addDrawing(createDrawing('curveArrow', [10, 10, 50, 10], useBoardStore.getState().drawStyle))
+    act(() => useBoardStore.getState().setSelection([id]))
+    render(<DrawingToolbar />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'left' }))
+
+    const after = useBoardStore.getState()
+    expect(after.drawings[0].control).toEqual(curveControl([10, 10, 50, 10], 'left'))
+    expect(after.drawStyle.curve).toBe('left')
+  })
+})
+
+/**
+ * The pill is placed against its measured width, and these numbers came from the
+ * browser: the tool group was a constant 931.11px, centred inside a rail inset
+ * 12px from each edge, and the pill variants that broke a fixed breakpoint were
+ * 254px for a selected curve, 378 for curve + zone and 389 for curve + ball —
+ * one breakpoint cannot serve them.
+ *
+ * **Every number here is now a fixture rather than a current measurement, and
+ * saying so is cheaper than re-measuring numbers this file only ever feeds back
+ * to itself through a stubbed rect.** `BAR` went stale when the Triangle tool
+ * widened the group by a button and again when the eraser did. The pill widths
+ * went stale when Bend moved out of the pill and into the bar, which took a
+ * control out of all three variants above. What is under test is the rule — the
+ * pill goes beside the bar exactly when its own width fits in the room left
+ * over — and the rule is what survives both. The viewport thresholds asserted
+ * below are arithmetic on `BAR` and `PILL`, so a re-measure would move these
+ * numbers together rather than falsify any of them.
+ *
+ * A curve tool is still armed, because the bend row it now puts *inside* the bar
+ * must not be part of this arithmetic: it is a second line of the bar, not
+ * something competing for the room beside it. The selection is what summons the
+ * pill at all now — an armed curve alone leaves it empty.
  */
 describe('DrawingToolbar context pill placement', () => {
   const BAR = 931.11
-  const CURVE_PILL = 254
+  const PILL = 254
 
   beforeEach(() => {
     useBoardStore.getState().initDefaultBoard()
     useBoardStore.getState().setTool('curveArrow')
+    const id = useBoardStore
+      .getState()
+      .addDrawing(createDrawing('curveArrow', [10, 10, 50, 10], useBoardStore.getState().drawStyle))
+    useBoardStore.getState().setSelection([id])
   })
 
   const rect = (el: Element, right: number) => {
@@ -206,22 +336,22 @@ describe('DrawingToolbar context pill placement', () => {
     return slot.dataset.placement
   }
 
-  it('takes the row above when a curve pill would run off a 1366 laptop', () => {
-    expect(placementAt(1366, CURVE_PILL)).toBe('above')
+  it('takes the row above when a 254px pill would run off a 1366 laptop', () => {
+    expect(placementAt(1366, PILL)).toBe('above')
   })
 
   it('still takes the row above at 1440, where the old breakpoint said side', () => {
-    expect(placementAt(1440, CURVE_PILL)).toBe('above')
+    expect(placementAt(1440, PILL)).toBe('above')
   })
 
   it('sits beside the bar from the width it actually fits, not before', () => {
-    expect(placementAt(1487, CURVE_PILL)).toBe('above')
-    expect(placementAt(1488, CURVE_PILL)).toBe('side')
-    expect(placementAt(1920, CURVE_PILL)).toBe('side')
+    expect(placementAt(1487, PILL)).toBe('above')
+    expect(placementAt(1488, PILL)).toBe('side')
+    expect(placementAt(1920, PILL)).toBe('side')
   })
 
-  it('decides per variant: at 1488 the curve pill fits beside and the wider ones do not', () => {
-    expect(placementAt(1488, CURVE_PILL)).toBe('side')
+  it('decides per variant: at 1488 the 254px pill fits beside and the wider ones do not', () => {
+    expect(placementAt(1488, PILL)).toBe('side')
     expect(placementAt(1488, 378)).toBe('above')
     expect(placementAt(1488, 389)).toBe('above')
   })

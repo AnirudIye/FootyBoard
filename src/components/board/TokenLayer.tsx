@@ -1,39 +1,17 @@
 import { useBoardStore } from '../../store/boardStore'
 import { useTokenTransition } from '../../hooks/useTokenTransition'
 import { interpolateFrames } from '../../lib/frames'
+import { playerHidden, shownX } from '../../lib/halves'
 import type { PitchView, Token } from '../../lib/types'
 import type { PitchMapping } from './pitchMapping'
 import PlayerChip from './PlayerChip'
 import PropToken from './PropToken'
 
-// Half views only show one half of the pitch. Off-half *players* are hidden
-// (they are formation context you manage from the picker), but the ball and
-// any props must stay reachable: they are clamped to the visible edge so they
-// can always be grabbed and pulled back onto the field, never stranded off-view.
-//
-// Both rules are exported because selection has to agree with them. A marquee
-// working off raw stored positions caught players nobody could see, and missed
-// props at the edge it had itself put there.
-
-/** Which half a view shows, or null when the whole pitch is on screen. */
-const halfShown = (view: PitchView): 'attack' | 'defend' | null =>
-  view === 'attackHalf' ? 'attack' : view === 'defendHalf' ? 'defend' : null
-
-/** Whether a player is off the shown half, and so not on screen at all. */
-export const playerHidden = (view: PitchView, nx: number): boolean => {
-  const half = halfShown(view)
-  if (half === 'attack') return nx < 48
-  if (half === 'defend') return nx > 52
-  return false
-}
-
-/** Where a ball or prop is actually drawn, which is never outside the view. */
-export const shownX = (view: PitchView, nx: number): number => {
-  const half = halfShown(view)
-  if (half === 'attack') return Math.max(nx, 50.5)
-  if (half === 'defend') return Math.min(nx, 49.5)
-  return nx
-}
+// The half rules themselves live in `src/lib/halves.ts`, because the drawing
+// bands need the same halfway line these chips are judged against and a
+// component file is a poor home for a rule three layers ask about. What stays
+// here is what this layer drew: `onScreen` composes those rules for a token,
+// and `lastDrawn` publishes the coordinates the render used.
 
 /** Positions to draw at, keyed by token id: a tween, or a playback frame. */
 export type DisplayPositions = Record<string, { x: number; y: number }>

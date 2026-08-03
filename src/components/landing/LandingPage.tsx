@@ -103,17 +103,34 @@ const NAV: { label: string; href?: string; to?: string }[] = [
   { label: 'Join by code', to: '/join' },
 ]
 
+/**
+ * Both renderings are centred here rather than at the two call sites, because
+ * both call sites put these in a flex row — the header nav and the footer nav —
+ * which blockifies them and drops them into the reach of the 44px
+ * coarse-pointer floor in `index.css`. A link has no UA rule centring its own
+ * content the way a `<button>` does, so on a tablet these labels printed
+ * themselves along the top edge of a 44px box: 14px of type in the header, 11px
+ * in the footer, neither with padding of its own to soften it.
+ *
+ * Prepended rather than appended so a caller keeps the last word if it ever
+ * needs a different display. Inert under a mouse, where each box is exactly as
+ * tall as its own line and `items-center` has nothing to distribute.
+ */
 function NavItem({ item, className }: { item: (typeof NAV)[number]; className: string }) {
+  const centred = `inline-flex items-center justify-center ${className}`
   return item.to ? (
-    <Link to={item.to} className={className}>
+    <Link to={item.to} className={centred}>
       {item.label}
     </Link>
   ) : (
-    <a href={item.href} className={className}>
+    <a href={item.href} className={centred}>
       {item.label}
     </a>
   )
 }
+
+/** The three policy links in the footer, which `NavItem` does not render. */
+const footerLink = 'inline-flex items-center justify-center transition-colors hover:text-accent'
 
 interface Feature {
   diagram: DiagramName
@@ -201,12 +218,20 @@ function OpenBoardCta() {
  * the closing instance sits over the plasma: a bright streak passing under it
  * took the /45 value down to 1.94:1. The scrim was tuned for the headline,
  * which is far larger, so this line needs the contrast in the ink itself.
+ *
+ * Both instances sit in a `flex-col items-center` stack under the CTA, so both
+ * are blockified flex items and both meet the 44px coarse-pointer floor in
+ * `index.css`. This is the worst case that floor produces: 12px of type, no
+ * padding of its own, and no UA centring of the kind a `<button>` gets — the
+ * line sat a pixel under the top edge of a 44px box, which read as a gap
+ * between it and the button above rather than as a control. Inert on a mouse.
  */
 function JoinByCodeLink({ className = '' }: { className?: string }) {
   return (
     <Link
       to="/join"
-      className={`font-mono text-[12px] tracking-[0.08em] text-foreground/75 underline-offset-4
+      className={`inline-flex items-center justify-center
+        font-mono text-[12px] tracking-[0.08em] text-foreground/75 underline-offset-4
         transition-colors duration-200 hover:text-accent hover:underline focus-visible:outline
         focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent
         ${className}`}
@@ -256,9 +281,23 @@ function Navbar() {
             </span>
           ) : (
             <>
+              {/* These two are the pair a coach reported. Both are flex items
+                  of the row below, so both are blockified and both meet the
+                  44px coarse-pointer floor in `index.css`, and a link gets none
+                  of the UA centring a `<button>` does. Their `py-2` softens it
+                  — measured 9px above the label and 16 below, where the
+                  unpadded links elsewhere in this fix were 0 and 29 — so this
+                  is the mildest case in the product and still the one somebody
+                  noticed, which is the argument for fixing all of them. "Sign
+                  up" is why: `.liquid-glass` draws a bright rim along the top
+                  and bottom edges of the box, so a label 7px off centre reads
+                  against one lit edge and not the other. Now 12.5 / 12.5.
+                  Inert on a mouse, where the box is 37px and there is no slack
+                  for `items-center` to distribute. */}
               <Link
                 to="/login"
-                className="rounded-full px-3 py-2 text-[14px] text-foreground/80 transition-colors
+                className="inline-flex items-center justify-center rounded-full px-3 py-2
+                  text-[14px] text-foreground/80 transition-colors
                   duration-200 hover:text-accent focus-visible:outline focus-visible:outline-2
                   focus-visible:outline-offset-2 focus-visible:outline-accent"
               >
@@ -266,7 +305,8 @@ function Navbar() {
               </Link>
               <Link
                 to="/signup"
-                className="liquid-glass rounded-full px-4 py-2 text-[14px] font-medium text-foreground
+                className="liquid-glass inline-flex items-center justify-center rounded-full px-4
+                  py-2 text-[14px] font-medium text-foreground
                   transition-colors duration-200 hover:bg-[var(--accent-wash)]
                   focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
                   focus-visible:outline-accent"
@@ -281,13 +321,26 @@ function Navbar() {
               "Open board" is the one that can go: the hero directly beneath it
               carries "Open the board" as the page's primary call to action, so
               dropping it here removes a duplicate rather than a route. That
-              gives the wordmark ~64px of clearance instead of none. */}
+              gives the wordmark ~64px of clearance instead of none.
+
+              `sm:inline-flex` where this used to say `sm:inline-block`, rather
+              than an unprefixed `inline-flex` alongside `hidden`. The two are
+              the same property at the same specificity, so which one wins is
+              decided by the order Tailwind emits its display utilities and not
+              by the order they appear in this attribute — and `hidden` is
+              emitted last of the group, so an unprefixed `inline-flex` here
+              would lose and the centring would silently do nothing. A `sm:`
+              variant lives in a later media block and wins outright, which is
+              the same mechanism that already makes `hidden … sm:*` work at
+              all. `items-center justify-center` need no prefix: they are inert
+              on a box that is not a flex container. */}
           <Link
             to="/board"
-            className="hidden rounded-full bg-accent px-4 py-2 text-[14px] font-medium text-paper
+            className="hidden items-center justify-center rounded-full bg-accent px-4 py-2
+              text-[14px] font-medium text-paper
               transition-colors duration-200 hover:bg-accent-hover
               focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
-              focus-visible:outline-accent sm:inline-block"
+              focus-visible:outline-accent sm:inline-flex"
           >
             Open board
           </Link>
@@ -600,13 +653,18 @@ export default function LandingPage() {
               {NAV.map((item) => (
                 <NavItem key={item.label} item={item} className="transition-colors hover:text-accent" />
               ))}
-              <Link to="/privacy" className="transition-colors hover:text-accent">
+              {/* Centred for the same reason `NavItem` is, and stated here
+                  rather than borrowed from it because these three are plain
+                  `<Link>`s sitting in the same wrapping flex row: blockified,
+                  so 44px tall on a phone, so 11px of type against the top edge
+                  of the box unless something says otherwise. */}
+              <Link to="/privacy" className={footerLink}>
                 Privacy
               </Link>
-              <Link to="/terms" className="transition-colors hover:text-accent">
+              <Link to="/terms" className={footerLink}>
                 Terms
               </Link>
-              <Link to="/accessibility" className="transition-colors hover:text-accent">
+              <Link to="/accessibility" className={footerLink}>
                 Accessibility
               </Link>
             </nav>

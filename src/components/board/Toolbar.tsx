@@ -93,11 +93,18 @@ export default function Toolbar() {
             piece of chrome people already expect to be a link home, and until
             now this was a bare span, so the board was a room with no marked
             door. Nothing here is lost by leaving: a signed-in board is already
-            saved, and a guest board was never being kept. */}
+            saved, and a guest board was never being kept.
+
+            `inline-flex items-center justify-center` because this is a flex
+            item of the header row and therefore blockified, which is what puts
+            it inside the coarse-pointer floor's reach: on a phone the wordmark
+            grew to 44px and printed itself along the top edge of that box while
+            the rule beside it ran the full height. Inert on a mouse. */}
         <Link
           to="/"
           aria-label="FootyBoard home"
-          className="pr-3 mr-1 border-r border-rule font-display text-[15px] font-semibold
+          className="inline-flex items-center justify-center pr-3 mr-1 border-r border-rule
+            font-display text-[15px] font-semibold
             tracking-[-0.02em] transition-colors duration-150 ease-out hover:text-accent
             focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
             focus-visible:outline-accent rounded-sm"
@@ -224,7 +231,8 @@ export default function Toolbar() {
           {signedIn && (
             <Link
               to="/join"
-              className="rounded border border-rule bg-surface px-3 py-1.5 text-[13px] leading-none
+              className="inline-flex items-center justify-center rounded border border-rule
+                bg-surface px-3 py-1.5 text-[13px] leading-none
                 text-ink-2 transition-colors duration-150 hover:border-rule-strong hover:text-ink
                 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
                 focus-visible:outline-accent"

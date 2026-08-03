@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { useBoardStore } from '../../store/boardStore'
+import { useBoardStore, armedDrawing } from '../../store/boardStore'
 import type { ToolMode } from '../../store/boardStore'
 import { isZone, isCurve, curveControl } from '../../lib/drawings'
 import type { CurveDirection } from '../../lib/drawings'
@@ -14,6 +14,9 @@ import { useRealtimeStore } from '../../store/realtimeStore'
 const TOOLS: { id: ToolMode; label: string; hint: string }[] = [
   { id: 'select', label: 'Select', hint: 'Select and move (Esc)' },
   { id: 'pen', label: 'Pen', hint: 'Freehand' },
+  // Beside the Pen, because that is the pair: the tool that puts ink down and
+  // the tool that takes it off again. Nothing else on this bar removes anything.
+  { id: 'eraser', label: 'Erase', hint: 'Erase whatever you drag over' },
   { id: 'line', label: 'Line', hint: 'Straight line' },
   { id: 'arrow', label: 'Run', hint: 'Run or dribble arrow' },
   { id: 'dashedArrow', label: 'Pass', hint: 'Pass arrow (dashed)' },
@@ -21,24 +24,31 @@ const TOOLS: { id: ToolMode; label: string; hint: string }[] = [
   { id: 'curvePass', label: 'Bent pass', hint: 'Curved pass (dashed). Pick which way it bends' },
   { id: 'zoneRect', label: 'Box', hint: 'Rectangular zone' },
   { id: 'zoneEllipse', label: 'Oval', hint: 'Elliptical zone' },
-  // The hint carries the one thing a triangle does that the two zones above it
-  // do not, because it is not guessable from a button that looks like theirs:
-  // it is placed a corner at a time rather than dragged out. The comment here
-  // described the drag it replaced — an apex that followed the direction of the
-  // drag — for as long as the hint beside it said otherwise.
-  { id: 'zoneTriangle', label: 'Triangle', hint: 'Triangular zone: click its three corners' },
-  // Double-click and Enter both close it, and naming the double-click first is
-  // not arbitrary: it is the half that works without a keyboard.
+  // A triangle is dragged like the two zones above it, so the hint spends its
+  // words on the one thing that is not guessable from a button that looks like
+  // theirs: the drag starts at the point rather than at a corner of a box, and
+  // the shape opens out behind the finger. Say where to press and the rest
+  // follows from doing it once.
+  {
+    id: 'zoneTriangle',
+    label: 'Triangle',
+    hint: 'Triangular zone: press where the point goes, then drag it out',
+  },
+  // The Shape tool takes either gesture, and the drag is named first because it
+  // is the one that needs nothing but the finger already on the glass. Of the
+  // two ways to close a clicked shape the double-click likewise comes before
+  // Enter, and that is not arbitrary either: it is the half that works without
+  // a keyboard.
   {
     id: 'zonePoly',
     label: 'Shape',
-    hint: 'Free polygon: click points, then double-click or press Enter to close',
+    hint: 'Free shape: drag to trace one, or click its corners and double-click (or Enter) to close',
   },
   { id: 'text', label: 'Text', hint: 'Text label' },
 ]
 
 /**
- * What stays on the bar below `sm`. Everything else is a tap away.
+ * What stays on the bar below `roomy`. Everything else is a tap away.
  *
  * Raising every target to 44px took this bar from 138px to 262px on a 375x812
  * phone — a third of the screen, floating over the pitch, leaving 295px of
@@ -47,15 +57,33 @@ const TOOLS: { id: ToolMode; label: string; hint: string }[] = [
  * much of the kit is on screen at once. Plan 009 lists this as the first of its
  * options for the vertical budget, and the top bar already works this way.
  *
- * These four are the ones a coach changes constantly: a way to stop drawing,
- * and the three marks a tactics board is mostly made of. Zones, curves, text
- * and the polygon are chosen once for a diagram and then drawn with. The ink
- * and the weight go behind the toggle for the same reason.
+ * **The test these five have to pass is "used constantly, and needed in a
+ * hurry", and it is not the same test as "makes a mark".** Four of them are the
+ * marks a tactics board is mostly made of plus the way to stop making them.
+ * Zones, curves, text and the polygon are chosen once for a diagram and then
+ * drawn with, so they can afford a tap; the ink and the weight are behind the
+ * toggle for that same reason.
+ *
+ * The eraser is the fifth and it is here on the other half of the test. It is
+ * the only tool on the bar that takes something off the board, and the moment it
+ * is wanted is the moment a stroke has just gone wrong — which on a phone is
+ * oftener than anywhere else, because a fingertip is a blunter instrument than a
+ * mouse. Undo covers the stroke you have just made; the eraser is for the wrong
+ * one out of nine, and putting it behind `More` would mean two taps and a hunt
+ * every time a diagram needed tidying. That is also why it did not simply take
+ * Pass's place: a coach draws passes constantly and mends them constantly, and
+ * the two are not alternatives.
+ *
+ * A fifth button is not free. At 44px minimums the primary row plus `More` comes
+ * to roughly 330px of the 351px a 375px phone leaves between the rail's margins,
+ * so it still fits on one line — but only just, and a sixth would wrap the row
+ * rather than being refused. Anything proposed for this list from here on has to
+ * argue against that wrap, not merely for itself.
  *
  * The armed tool is always shown even when it is not one of these, because a
  * bar that hides which tool it is in is a bar that draws the wrong thing.
  */
-const PRIMARY: ToolMode[] = ['select', 'pen', 'arrow', 'dashedArrow']
+const PRIMARY: ToolMode[] = ['select', 'pen', 'eraser', 'arrow', 'dashedArrow']
 
 // Inks that read on the floodlit pitch; black is kept for the chalk theme.
 const INKS = ['#2ae07a', '#f4f2ef', '#e85c42', '#529ae0', '#e0b23c', '#17191d']
@@ -82,11 +110,17 @@ export default function DrawingToolbar() {
   const selectedDrawings = drawings.filter((d) => selection.includes(d.id))
   const selectedTokens = tokens.filter((t) => selection.includes(t.id))
   const players = selectedTokens.filter((t) => t.type === 'player')
+
+  // The armed tool as a kind of drawing, or null for the two that are not one.
+  // `tool !== 'select'` used to be enough to hand it to `isZone`; the eraser is
+  // the reason it is not, and `armedDrawing` is where that question is settled
+  // rather than in each of the two lines below. See `ToolMode`.
+  const armed = armedDrawing(tool)
   const hasZoneSelected = selectedDrawings.some((d) => isZone(d.type))
-  const showZoneOpacity = hasZoneSelected || (tool !== 'select' && isZone(tool))
+  const showZoneOpacity = hasZoneSelected || (armed !== null && isZone(armed))
 
   const selectedCurves = selectedDrawings.filter((d) => isCurve(d.type))
-  const showCurveSide = selectedCurves.length > 0 || (tool !== 'select' && isCurve(tool))
+  const showCurveSide = selectedCurves.length > 0 || (armed !== null && isCurve(armed))
 
   // Sets which way the bend goes: on a selected curve it re-bends it now, and
   // it becomes the default for the next one either way.
@@ -107,10 +141,15 @@ export default function DrawingToolbar() {
   const canAttach = selectedDrawings.length === 1 && selectedTokens.length === 1
   const attached = selectedDrawings.length === 1 && selectedDrawings[0].attachedTokenId
 
-  // Everything conditional lives in the context slot, which is what keeps the
-  // tool group a constant width and stops Select sliding under the pointer.
-  const hasContext =
-    showCurveSide || showZoneOpacity || selectedDrawings.length > 0 || players.length > 0
+  // What is left in the context slot, which is everything conditional except the
+  // bend control: keeping it out of the tool group is what holds that group at a
+  // constant width and stops Select sliding under the pointer.
+  //
+  // `showCurveSide` is deliberately not part of this any more. Bend now has its
+  // own row inside the bar, so a curve tool armed over an empty selection puts
+  // nothing in the pill and the pill does not appear at all — which it used to,
+  // holding one control.
+  const hasContext = showZoneOpacity || selectedDrawings.length > 0 || players.length > 0
 
   // Where the context pill goes: beside the bar when the room beside it is
   // real, otherwise on its own row above.
@@ -118,17 +157,26 @@ export default function DrawingToolbar() {
   // Measured rather than decided by a breakpoint, because the pill's width is a
   // function of what is selected and no single constant can be right for all of
   // them. `min-[1360px]` was that arithmetic done once against the 176px
-  // variant; a selected curve stacks Bend + left/right + Delete at 254px and so
-  // only fits from about 1487px up, which put it 48px past the right edge of a
-  // 1366 laptop with Delete half off-screen. Curve + zone adds Fill and
-  // curve + ball adds Attach to player, so the next variant would have broken
-  // the next constant too. The pill's own box is the only thing that knows.
+  // variant; the pill it then failed against was a selected curve at 254px,
+  // which needs about 1487px and so hung 48px past the right edge of a 1366
+  // laptop with Delete half off-screen.
+  //
+  // **Those numbers are history rather than the current widest case**, and the
+  // reason is that all three of them — 254 for a curve, 378 for curve + zone,
+  // 389 for curve + ball — were measured with Bend inside this pill, which it no
+  // longer is. What is left here is Fill, Attach to player, Delete, and the
+  // player half (SEL, six swatches, Edit); none has been re-measured, and none
+  // needs to be, because the argument never rested on any particular number. It
+  // rests on the spread: the narrowest pill this bar can show is a lone Delete
+  // and the widest is the whole player half, they differ by hundreds of pixels,
+  // and a constant chosen for either is wrong for the other. The pill's own box
+  // is the only thing that knows.
   const railRef = useRef<HTMLElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
   const pillRef = useRef<HTMLDivElement>(null)
   const [beside, setBeside] = useState(false)
 
-  // Closed by default, and only ever consulted below `sm` — see PRIMARY.
+  // Closed by default, and only ever consulted below `roomy` — see PRIMARY.
   const [kitOpen, setKitOpen] = useState(false)
 
   const measure = useCallback(() => {
@@ -136,11 +184,19 @@ export default function DrawingToolbar() {
     const bar = barRef.current
     const pill = pillRef.current
     if (!rail || !bar || !pill) return
-    // The rail is the same `inset-x-3` box the bar lives in, so its right edge
-    // already carries the page margin and any scrollbar. `offsetWidth` rather
-    // than a client rect for the pill, because it carries a `layout` animation
-    // and its rect mid-flight is a scaled box, while what has to fit is the
-    // untransformed width it is settling on.
+    // The rail is the box the bar lives in, so its right edge already carries
+    // the page margin and any scrollbar. `offsetWidth` rather than a client rect
+    // for the pill, because it carries a `layout` animation and its rect
+    // mid-flight is a scaled box, while what has to fit is the untransformed
+    // width it is settling on.
+    //
+    // **That holds in both of the rail's layouts, and it holds by construction
+    // rather than by luck.** Floating at `overlay` the rail is `inset-x-3`;
+    // docked it is an ordinary row with `mx-3`. Both put its right edge 12px
+    // inside the band, so this is the same measurement of the same gap either
+    // way — and the docked half uses a margin rather than padding for exactly
+    // that reason. Padding would have left the border box on the band's own
+    // edge and reported 12px of room that is not there.
     const room = rail.getBoundingClientRect().right - bar.getBoundingClientRect().right
     setBeside(pill.offsetWidth + SIDE_GAP <= room)
   }, [])
@@ -168,7 +224,20 @@ export default function DrawingToolbar() {
   return (
     <aside
       ref={railRef}
-      className="pointer-events-none absolute inset-x-3 bottom-4 z-20 flex justify-center"
+      /* Floating over the bottom of the board at `overlay`, docked under it
+         otherwise — the last row of the board's column, beneath the bench. See
+         `BoardPage` for the column and `measure` above for why the 12px stays a
+         margin here rather than becoming padding.
+
+         `order-2` and not a different position in the file. Docked, this belongs
+         under the bench rails; in the DOM it comes before them, because at
+         `overlay` the rails and the HUD are both `z-10` and paint in tree order,
+         and reordering the source would change which of them wins where a long
+         bench reaches the top-left corner. `order` cannot do that damage,
+         because an absolutely positioned child of a flex container is not a flex
+         item and never sees it. */
+      className="pointer-events-none order-2 mx-3 mb-2 flex justify-center
+        overlay:absolute overlay:inset-x-3 overlay:bottom-4 overlay:z-20 overlay:mx-0 overlay:mb-0"
     >
       {/* The bar wraps, and so does the tool group inside it, for the same
           reason the top toolbar does. `flex-none` held it at its 931px max-content
@@ -270,9 +339,76 @@ export default function DrawingToolbar() {
           </div>
         </div>
 
-        {/* Anchored to the tool group, never inside it, so nothing conditional
-            can move Select. Which of the two placements applies is measured
-            above; `data-placement` is what says so out loud. */}
+        {/**
+         * Which way the ball bends, on its own row inside the bar rather than in
+         * the floating pill it used to share with Delete.
+         *
+         * It was being missed, and the pill is why: it appears beside the bar or
+         * above it depending on a measurement, so the one control a curve tool
+         * cannot be used without was the one control that was never twice in the
+         * same place. Here it is under the tools every time, at every width, and
+         * — unlike the eight tucked tools around it — it can never end up behind
+         * the `More` toggle, because it is not part of that group.
+         *
+         * `w-full` is what makes it a row: a full-width item in a wrapping flex
+         * container takes a line of its own. It is the last item rather than the
+         * first so that the desktop bar keeps its single row of tools, inks and
+         * weight and grows one line underneath it, instead of splitting that row
+         * in two. The bar is anchored `bottom-4`, so the line arrives by pushing
+         * the tools up; that is the cost of "directly underneath", and it is
+         * paid once when a curve tool is armed rather than on every selection.
+         *
+         * A label and two toggles, not a readout: the coach is being asked a
+         * question they have to answer before the curve is any use, and the
+         * answer they are on has the accent behind it while the other one is
+         * quiet. `aria-pressed` says the same thing without the colour.
+         */}
+        {showCurveSide && (
+          <div
+            role="group"
+            aria-label="Bend direction"
+            className="flex w-full items-center justify-center gap-2 border-t border-rule pt-2"
+          >
+            <span className="select-none text-[12px] font-medium tracking-[0.02em] text-ink-2">
+              Bend
+            </span>
+            <div className="flex items-center gap-0.5 rounded border border-rule bg-sunken p-0.5">
+              {(['left', 'right'] as CurveDirection[]).map((side) => (
+                <Button
+                  key={side}
+                  variant={drawStyle.curve === side ? 'primary' : 'quiet'}
+                  aria-pressed={drawStyle.curve === side}
+                  onClick={() => setCurveSide(side)}
+                  title={`Bend the ball to the ${side}`}
+                  className="px-3 py-0.5 text-[12px] capitalize"
+                >
+                  {side}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Anchored to the tool group, never inside it, so nothing that comes
+            and goes with the selection can slide Select along the row under a
+            pointer already on its way to it. The bend row above is the one
+            conditional thing now inside the bar, and it takes a line of its own
+            rather than a place in that row for exactly this reason. Which of the
+            two placements applies is measured above; `data-placement` is what
+            says so out loud.
+
+            **The pill is the one piece of this bar that still floats below
+            `roomy`, and what it floats over has changed for the better rather
+            than being fixed.** It is positioned against the bar, so the `above`
+            placement goes wherever the bar's top edge is: that used to be a bar
+            hanging `bottom-4` over the board, which put the pill squarely on the
+            pitch. Docked, the same placement lands on the bench row and the
+            readout underneath the canvas instead. It is only ever chrome over
+            chrome while the pill is shorter than that stack — roughly 90px on a
+            phone — and the player half of it wraps to two rows of swatches under
+            a finger, so a tall pill can still reach the canvas box. Whether it
+            should become a row of the bar the way Bend did is a real question
+            and not one this change answers. */}
         {hasContext && (
           <div
             data-placement={beside ? 'side' : 'above'}
@@ -284,10 +420,16 @@ export default function DrawingToolbar() {
           >
             {/* The pill wraps only on the row above, and only there because
                 that is the one placement whose box has a width to wrap
-                against: it is stretched `left-0 right-0` across the bar, so
-                below about 420px the widest variants (378 for curve + zone,
-                389 for curve + ball) are wider than the bar itself and would
-                hang off both ends of a band that clips. The side placement is
+                against: it is stretched `left-0 right-0` across the bar, so a
+                variant wider than the bar would hang off both ends of a band
+                that clips. That was measured at 378 for curve + zone and 389
+                for curve + ball against a phone-width bar — both of those
+                included Bend, which has moved into the bar, so the wrap is
+                needed at some narrower width now rather than at none. It is
+                still needed: the player half alone puts seven swatches in this
+                pill, and under a finger the 44px floor makes those 308px before
+                SEL, Edit or the padding, on a bar that has 351px to live in at
+                375px wide. The side placement is
                 `left-full` with no right edge, so its box shrink-to-fits and
                 `flex-wrap` there would fold a pill that has all the room in
                 the world into a narrow column. `whitespace-nowrap` stays
@@ -300,25 +442,6 @@ export default function DrawingToolbar() {
               className={`pointer-events-auto flex items-center gap-3 whitespace-nowrap ${PILL}
                 ${beside ? '' : 'flex-wrap justify-center'}`}
             >
-              {showCurveSide && (
-                <div className="flex items-center gap-1.5">
-                  <span className="select-none text-[13px] text-ink-2">Bend</span>
-                  <div className="flex items-center gap-0.5 rounded border border-rule bg-sunken p-0.5">
-                    {(['left', 'right'] as CurveDirection[]).map((side) => (
-                      <Button
-                        key={side}
-                        variant={drawStyle.curve === side ? 'primary' : 'quiet'}
-                        onClick={() => setCurveSide(side)}
-                        title={`Bend the ball to the ${side}`}
-                        className="px-2 py-0.5 text-[11px] capitalize"
-                      >
-                        {side}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {showZoneOpacity && (
                 <div className="w-28">
                   <Slider

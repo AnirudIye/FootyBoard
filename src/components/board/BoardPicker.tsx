@@ -182,11 +182,33 @@ export default function BoardPicker() {
 
         {/* Someone who has been read a code rather than sent a link has to be
             able to find their way in from inside the app, not only from a URL
-            they were told to type. */}
+            they were told to type.
+
+            `flex items-center` and pointedly not `inline-flex justify-center`,
+            unlike the other button-shaped links in this fix. This one is a
+            stretched item of a `flex-col`, so its box is the popover's full
+            width and the `border-t` above it is a rule across the whole panel:
+            shrink-wrapping it would pull that rule in to the width of the
+            words, and centring the label would move text that has always been
+            left-aligned. Only the vertical was wrong.
+
+            `touch:pt-0` is the other half, and without it this element is the
+            one place where `items-center` makes things worse rather than
+            better. `align-items` centres within the *content* box, and the 1px
+            rule plus 10px of `pt-2.5` sit outside it, so under the 44px floor
+            the label gets centred in the space below the rule and ends up low
+            in the box instead of high: measured 11 above / 19 below untouched,
+            20 / 10 with `items-center` alone, 15 / 15 with this. The padding
+            exists to keep the rule off the text, and under the floor there are
+            18px of slack doing that job already, so giving it up under a finger
+            costs nothing. This is exactly the case `touch:` is for — the floor
+            being the wrong shape and the component saying so — and it is size,
+            which is all that variant is allowed to change. Both are inert on a
+            mouse, where the box is 26px and there is no slack to distribute. */}
         <Link
           to="/join"
-          className="border-t border-rule pt-2.5 font-mono text-[10px] uppercase tracking-[0.1em]
-            text-ink-3 transition-colors hover:text-accent"
+          className="flex items-center border-t border-rule pt-2.5 touch:pt-0 font-mono text-[10px]
+            uppercase tracking-[0.1em] text-ink-3 transition-colors hover:text-accent"
         >
           Join with a code
         </Link>

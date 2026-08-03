@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Stage, Layer, Rect } from 'react-konva'
+import { Stage, Layer, Rect, Group, Ellipse } from 'react-konva'
 import type Konva from 'konva'
 import { useBoardStore } from '../../store/boardStore'
-import { computeMapping } from './pitchMapping'
+import { computeMapping, boardPerPixel } from './pitchMapping'
 import { usePanZoom } from '../../hooks/usePanZoom'
 import { useAnimatedMapping } from '../../hooks/useAnimatedMapping'
+import { useCoarsePointer } from '../../hooks/useCoarsePointer'
 import { useDrawGesture } from '../../hooks/useDrawGesture'
 import { useWindowPointerUp } from '../../hooks/useWindowPointerUp'
 import { isZone, isText, isMark } from '../../lib/drawings'
+import { halfClip } from '../../lib/halves'
 import PitchLayer from './PitchLayer'
 import TokenLayer, { onScreen, lastDrawn } from './TokenLayer'
 import DrawingLayer from './DrawingLayer'
@@ -28,6 +30,31 @@ interface Marquee {
   h: number
   additive: boolean
 }
+
+/**
+ * How far the eraser reaches from the pointer, in CSS pixels.
+ *
+ * Pixels rather than board units, because what this has to match is the hand:
+ * the same reach at every zoom level, on a futsal court and on a full pitch, and
+ * on a phone held at arm's length. `PropToken`'s grab boxes are the twin of
+ * these — both come out 44px across under a finger — and `DrawingShape`'s corner
+ * handles are deliberately half that, for the reason written there.
+ *
+ * **These two are a radius and the other two files hold a width**, which is a
+ * trap worth naming rather than tidying away: `DrawingShape`'s `HANDLE_COARSE`
+ * is also 22 and is halved at its use site, so the same literal means a 44px
+ * disc here and a 22px dot there. Anyone changing one to match the other should
+ * change the arithmetic, not the number.
+ *
+ * 22 under a finger is half of the 44px floor `src/index.css` puts under every
+ * control, which is the width of the fingertip the floor was measured against —
+ * so the disc is as wide as the thing driving it, and what disappears is what
+ * was under it. 14 for a mouse is smaller than that on purpose: a pointer that
+ * can be placed exactly should be trusted to, or erasing one arrow out of a
+ * crowded box becomes impossible and the only remedy is undo.
+ */
+const ERASE_COARSE = 22
+const ERASE_FINE = 14
 
 export default function PitchCanvas() {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -69,7 +96,29 @@ export default function PitchCanvas() {
     const p = relPointer()
     return p ? mapping.toNorm(p.x, p.y) : null
   }
-  const draw = useDrawGesture(pointerNorm)
+
+  const coarse = useCoarsePointer()
+  const perPx = boardPerPixel(mapping, pz.scale)
+  /**
+   * The eraser disc in board units, which is the only thing `useDrawGesture` and
+   * `hitDrawings` can work in.
+   *
+   * **A board unit is not square** — a hundredth of the pitch length across and
+   * a hundredth of its width down — so one radius in board units is a circle on
+   * the board and an ellipse on the glass, and there is no scalar that is a
+   * circle in both. Given the choice, the radius is taken from whichever screen
+   * axis carries the pitch's *width*, which `boardPerPixel` reports as the
+   * larger of its two: that makes the pixel constant above a guaranteed
+   * minimum reach in every direction rather than a maximum. Sizing it from the
+   * other axis would leave the disc reaching only 65% as far across the width of
+   * a full pitch, and half as far on futsal, which is an eraser that visibly
+   * covers a line and does not take it.
+   *
+   * The extra reach along the pitch's length is not hidden: the ring drawn below
+   * is that same ellipse, so what is shown is exactly what will go.
+   */
+  const eraseRadius = () => (coarse ? ERASE_COARSE : ERASE_FINE) * Math.max(perPx.x, perPx.y)
+  const draw = useDrawGesture(pointerNorm, eraseRadius)
 
   const { fitPitch } = pz
   useEffect(() => {
@@ -155,6 +204,9 @@ export default function PitchCanvas() {
   // holding the same draft.
   useWindowPointerUp(() => {
     pz.onPointerUp()
+    // Ahead of the lock, and deliberately outside it: a release always ends the
+    // press, whatever it is or is not allowed to do with it. See `endPress`.
+    draw.endPress()
     if (!locked && draw.onPointerUp()) return
     if (marquee) {
       finishMarquee(marquee)
@@ -163,7 +215,23 @@ export default function PitchCanvas() {
   })
 
   const ready = size.w > 0 && size.h > 0
-  const cursor = pz.panning ? 'grabbing' : draw.drawing ? 'crosshair' : 'default'
+  const cursor = pz.panning ? 'grabbing' : draw.armed ? 'crosshair' : 'default'
+
+  /**
+   * Present only while `select` is the armed tool, and handed to both bands
+   * that need to know it.
+   *
+   * Two gestures hang off this one value: double-click a label to fix its
+   * words, and drag a triangle's or a shape's corners to move them. With any
+   * other tool armed those same presses mean something else — "draw here", or
+   * "erase this" — so both have to be off, and a board that answered them
+   * differently would be arguing with itself about what a press meant. Under the
+   * eraser that is not merely untidy: a Konva node that is `draggable` begins a
+   * drag on the press that is also erasing the shape it belongs to.
+   * `DrawingShape` treats the handler's presence as the signal for both rather
+   * than taking a second prop; see there.
+   */
+  const onEditText = draw.armed ? undefined : draw.editText
 
   /**
    * Close an open polygon, on a mouse and on a finger.
@@ -246,27 +314,68 @@ export default function PitchCanvas() {
               shape: while locked, nothing on the board responds to a pointer,
               so there is no drag to start and no inspector to open. */}
           <Layer listening={!locked}>
-            <DrawingLayer mapping={mapping} test={isZone} />
+            {/* The zone band carries `onEditText` for its second meaning only:
+                it is how a selected triangle or shape knows it may show corner
+                handles. No zone has words to edit. */}
+            <DrawingLayer mapping={mapping} test={isZone} onEditText={onEditText} />
           </Layer>
           <Layer listening={!locked}>
             <TokenLayer mapping={mapping} />
           </Layer>
           <Layer listening={!locked}>
             <DrawingLayer mapping={mapping} test={isMark} />
-            {/* Double-click a label to fix its words. Only while `select` is
-                the tool: with a draw tool armed the same double-click is two
-                presses of that tool, and a label opening under them would be
-                the board arguing with itself about what the gesture meant. */}
-            <DrawingLayer
-              mapping={mapping}
-              test={isText}
-              onEditText={draw.drawing ? undefined : draw.editText}
-            />
+            {/* Double-click a label to fix its words — only while `select` is
+                the tool, for the reason `onEditText` is computed above. */}
+            <DrawingLayer mapping={mapping} test={isText} onEditText={onEditText} />
           </Layer>
           <Layer listening={false}>
             <PeerLayer mapping={mapping} />
+            {/* The draft is clipped to the pitch on a half view for the same
+                reason the committed bands are, and the clip goes on a group
+                around it rather than on this layer because the peer cursors and
+                the marquee share the layer and belong outside the pitch — a
+                peer's pointer over the bench rail is worth seeing, and a
+                rubber-band that stopped at the touchline would look broken.
+                It also makes the rule visible while you draw: on a half view
+                the ink stops at the edge, which is where a stroke committed out
+                there would stop existing. See `halfClip` and `drawingOffHalf`. */}
             {draw.preview && (
-              <DrawingShape drawing={draw.preview} mapping={mapping} selected={false} />
+              <Group {...halfClip(mapping.view, mapping.box)}>
+                <DrawingShape drawing={draw.preview} mapping={mapping} selected={false} />
+              </Group>
+            )}
+            {/* What the eraser would take, drawn as the region it actually
+                tests rather than as a circle.
+
+                It is a circle in board units, and board units are not square, so
+                on the glass it is an ellipse — the two radii below are that one
+                board radius converted back through the same per-axis factors the
+                radius was made from, which is why they cannot both be the pixel
+                constant. Drawing a circle instead would promise a reach the hit
+                test does not have across the pitch's width and would be the
+                first thing to blame when a swept line stayed put.
+
+                Outside the half-view clip that the draft preview sits inside,
+                deliberately: the draft is ink, and ink outside the shown half
+                would not exist once committed, while this is a cursor. It is
+                where your hand is, and a cursor that vanished at the touchline
+                would read as the tool having stopped working. Gated on the lock
+                for the opposite reason — while somebody else has the floor,
+                nothing this ring covers can be erased, so showing it would be a
+                promise the board cannot keep. */}
+            {!locked && draw.eraser && (
+              <Ellipse
+                x={mapping.toPx(draw.eraser.nx, draw.eraser.ny).x}
+                y={mapping.toPx(draw.eraser.nx, draw.eraser.ny).y}
+                radiusX={draw.eraser.radius / perPx.x / pz.scale}
+                radiusY={draw.eraser.radius / perPx.y / pz.scale}
+                stroke="#f4f2ef"
+                // Divided by the stage scale so the ring stays a hairline rather
+                // than thickening as the board is zoomed into.
+                strokeWidth={1 / pz.scale}
+                opacity={0.55}
+                listening={false}
+              />
             )}
             {marquee && (
               <Rect

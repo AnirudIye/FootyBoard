@@ -102,6 +102,45 @@ export function computeMapping(
 }
 
 /**
+ * How many board units one CSS pixel covers, asked separately of each screen
+ * axis.
+ *
+ * Anything sized for a hand — a grab target, an eraser disc — is specified in
+ * CSS pixels, because that is the only unit a finger has. Anything compared
+ * against a drawing has to be in board units, because that is what a drawing
+ * stores. This is the bridge, and it is worth having in one place for two
+ * reasons that are each a bug on their own.
+ *
+ * **The screen axes swap with the orientation.** On `fullV` a step along screen
+ * x moves the pointer across the pitch's *width*, which is the board's y. So
+ * `toNorm(px + r, py).x - toNorm(px, py).x` — the obvious way to write this — is
+ * not merely a different number on a vertical pitch, it is exactly nought, and a
+ * disc sized from it would touch nothing at all. Taking the magnitude of the
+ * whole delta asks "how far did the board move", which is the question, and it
+ * needs no case for the orientation.
+ *
+ * **The stage is scaled.** Pan and zoom mean a length of `s` in the coordinates
+ * `toNorm` reads reaches the eye as `s * zoom` CSS pixels, so the probe steps
+ * `1 / zoom` — the same division `DrawingShape` and `PropToken` do to keep their
+ * handles a constant size on screen.
+ *
+ * The two answers are not interchangeable. A board unit is a hundredth of the
+ * pitch *length* in x and a hundredth of its *width* in y, and 105 metres is not
+ * 68, so a disc of one radius in board units is an ellipse on the glass. What to
+ * do about that is the caller's decision; see `PitchCanvas`.
+ */
+export function boardPerPixel(m: PitchMapping, zoom: number): { x: number; y: number } {
+  const step = 1 / zoom
+  const o = m.toNorm(0, 0)
+  const ax = m.toNorm(step, 0)
+  const ay = m.toNorm(0, step)
+  return {
+    x: Math.hypot(ax.x - o.x, ax.y - o.y),
+    y: Math.hypot(ay.x - o.x, ay.y - o.y),
+  }
+}
+
+/**
  * Blend two mappings by interpolating the pixel positions they produce. Because
  * every drawn element is positioned through toPx, this morphs the whole pitch
  * (size, orientation, and view crop) as a single continuous motion.
