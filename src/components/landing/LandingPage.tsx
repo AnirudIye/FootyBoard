@@ -654,7 +654,7 @@ export default function LandingPage() {
                 <NavItem key={item.label} item={item} className="transition-colors hover:text-accent" />
               ))}
               {/* Centred for the same reason `NavItem` is, and stated here
-                  rather than borrowed from it because these three are plain
+                  rather than borrowed from it because these four are plain
                   `<Link>`s sitting in the same wrapping flex row: blockified,
                   so 44px tall on a phone, so 11px of type against the top edge
                   of the box unless something says otherwise. */}
@@ -666,6 +666,15 @@ export default function LandingPage() {
               </Link>
               <Link to="/accessibility" className={footerLink}>
                 Accessibility
+              </Link>
+              {/* The one page here somebody arrives *looking* for, rather than
+                  clicks from a policy they were already reading. Both policies
+                  name it as the route for a data protection request, and the
+                  terms name it for a copyright complaint — so a visitor who has
+                  never opened either still has to be able to find it, and until
+                  this line the only way was to type the address. */}
+              <Link to="/contact" className={footerLink}>
+                Contact
               </Link>
             </nav>
             <span className="font-mono text-[11px] tracking-[0.08em] text-foreground/40">

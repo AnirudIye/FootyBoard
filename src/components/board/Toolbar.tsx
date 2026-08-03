@@ -23,6 +23,83 @@ import { toUserMessage } from '../../lib/errors'
 import type { PitchView, PitchKind, Side } from '../../lib/types'
 
 
+/**
+ * Putting the board back to the state it opens in.
+ *
+ * `resetBoardAction` has existed since the assistant could be asked to do it,
+ * and until now that was the only way to reach it: typing "reset the board" at a
+ * panel that has to be open, on an installation that has the assistant switched
+ * on. This is the control for it.
+ *
+ * **It confirms, and the reason is not that it is irreversible — it is that it
+ * is broad and it is shared.** Reset pushes an undo step, so Ctrl Z brings the
+ * whole board back for the person who pressed it. What undo does not undo
+ * cheaply is the `replaced` message that goes to everybody else in the room the
+ * instant it lands: in a live session every other screen jumps to a blank 4-3-3
+ * and then jumps back. A control that does that to other people should not fire
+ * on one stray tap of a button sitting between Fit and Export.
+ *
+ * A popover rather than `window.confirm`, following `/delete-account`: a native
+ * confirm cannot say what is about to go, and this needs four lines to do that
+ * honestly. Controlled, so it closes itself once the work is done rather than
+ * leaving a stale panel over a board that has already changed.
+ */
+function ResetBoard() {
+  const resetBoardAction = useBoardStore((s) => s.resetBoardAction)
+  const [open, setOpen] = useState(false)
+
+  return (
+    /* `align="right"` and it is measured rather than copied from the popovers in
+       the right-hand group. `Popover` defaults to opening leftwards from the
+       trigger's left edge, and on a phone this trigger sits at x274 once the
+       toolbar has wrapped: a 260px panel from there runs to x534 of a 375px
+       screen, which put **the confirm button itself off the screen** while the
+       panel looked fine. Anchored to the trigger's right edge instead it spans
+       75..335 there, and on a desktop it opens leftwards into a row that has
+       hundreds of pixels to its left. */
+    <Popover
+      open={open}
+      onOpenChange={setOpen}
+      align="right"
+      /* The height clamp that this panel needed lives in `Popover` now, because
+         it turned out to be every panel's problem rather than this one's — see
+         the layout effect there. The copy below was still cut to about 200px,
+         so that on the screens where the cap bites it has the least to scroll. */
+      className="w-[260px]"
+      trigger="Reset"
+    >
+      <div className="flex flex-col gap-2.5">
+        <p className="text-[13px] leading-relaxed text-ink-2">
+          Both teams return to a 4-3-3 with full benches, the ball to the centre spot, and the
+          pitch to a full 11v11 view.
+        </p>
+        {/* Named one by one rather than as "everything", because these are work
+            somebody did and would not expect a button called Reset to take.
+            `buildDefaultData` returns `customFormations: []`, so the saved
+            shapes really do go, and that is the one people would be sorriest to
+            lose without having been told. */}
+        <p className="text-[13px] leading-relaxed text-ink-2">
+          <strong className="text-ink">Drawings, frames and saved shapes are cleared.</strong> The
+          board keeps its name, sharing and members.
+        </p>
+        <p className="text-[13px] leading-relaxed text-ink-3">
+          Undo brings it back, though everyone else in the room sees the board change twice.
+        </p>
+        <Button
+          variant="primary"
+          onClick={() => {
+            resetBoardAction()
+            setOpen(false)
+            toast('Board reset — undo brings it back')
+          }}
+        >
+          Reset the board
+        </Button>
+      </div>
+    </Popover>
+  )
+}
+
 const VIEWS: Option<PitchView>[] = [
   { id: 'fullH', label: 'Full' },
   { id: 'fullV', label: 'Vertical' },
@@ -219,6 +296,20 @@ export default function Toolbar() {
           >
             Export
           </Button>
+          {/* Beside Undo rather than in "Pitch options", which is the other place
+              it could have gone. Everything in that popover is a property of the
+              board you set once and look at; this is an action you take, and the
+              group it is in is the one for actions on the board as a whole.
+              Fit and Export sit here and are yours regardless, because they
+              change nothing; this one changes everything, so it follows the lock.
+
+              Gone rather than disabled under the lock, which the formation group
+              above does for the same reason. `Popover` renders its own trigger
+              and takes no `disabled`, and the obvious substitute —
+              `pointer-events-none` on the trigger — only stops a pointer: the
+              button stays in the tab order and Enter still opens it, so the lock
+              would hold against a mouse and not against a keyboard. */}
+          {!locked && <ResetBoard />}
         </div>
         </div>
 
