@@ -1,7 +1,8 @@
 import { Group, Line, Rect, Ellipse, Text, Circle } from 'react-konva'
 import { useBoardStore } from '../../store/boardStore'
 import { useCoarsePointer } from '../../hooks/useCoarsePointer'
-import { arrowHead, quadraticPoints, bboxOf, grabBox, triangleCorners } from '../../lib/geometry'
+import { arrowHead, quadraticPoints, bboxOf, grabBox, trimEnds, triangleCorners } from '../../lib/geometry'
+import type Konva from 'konva'
 import type { Drawing } from '../../lib/types'
 import type { PitchMapping } from './pitchMapping'
 
@@ -98,6 +99,13 @@ export default function DrawingShape({ drawing: d, mapping: m, selected, onEditT
   const width = d.thickness * unit
   const headSize = Math.max(width * 3, m.ppm * 1.1 * (m.L / 105))
 
+  const hitBand = Math.max((coarse ? BAND_COARSE : BAND_FINE) / zoom, width * 4)
+  // What a chip paints, in the same stage units the mapped points are in. It is
+  // `TokenLayer`'s own expression and it is duplicated rather than threaded down
+  // through two components for one hit area; if the chip's size ever moves, this
+  // is the second place.
+  const chipR = m.ppm * 1.7 * (m.L / 105)
+
   const px = (nx: number, ny: number) => m.toPx(nx, ny)
   const mapped: number[] = []
   for (let i = 0; i < d.points.length; i += 2) {
@@ -126,10 +134,40 @@ export default function DrawingShape({ drawing: d, mapping: m, selected, onEditT
      * label takes: the label is the top of its own band with nothing beneath it
      * worth grabbing, and an arrow is not.
      */
-    hitStrokeWidth: Math.max((coarse ? BAND_COARSE : BAND_FINE) / zoom, width * 4),
+    hitStrokeWidth: hitBand,
     onPointerDown: (e: { evt: PointerEvent }) => {
       if (e.evt.button === 0) onSelect(e.evt.shiftKey)
     },
+  }
+
+  /**
+   * A hit band for a stroke that stops short of its own two ends.
+   *
+   * A run arrow is nearly always drawn *from* a player, so its tail sits on a
+   * chip — and the marks band paints above the tokens, where paint order is hit
+   * order, so the arrow took every press meant for the player under it. Measured
+   * on a phone: with an arrow starting on the keeper, pressing the keeper
+   * selected the arrow at the old 14px band and at the current one alike. No
+   * width fixes that, because the tail is *on* the chip whatever the width is.
+   *
+   * Putting the marks beneath the chips does fix it, and was tried and rejected:
+   * it hides an arrowhead behind the player it points at, and on a board whose
+   * job is saying which way somebody runs that is the worse defect. So the paint
+   * keeps the PRD's order and only the band gives way.
+   *
+   * The trim is a chip's painted radius plus half the band, which is what it
+   * takes for the band to clear the chip rather than merely miss its centre.
+   * `trimEnds` caps itself so a short arrow cannot lose its whole band; see
+   * there. `strokeShape` rather than `fillStrokeShape`: these are open runs, and
+   * filling one would hand the hit graph the region enclosed by the implied
+   * closing line.
+   */
+  const strokeHit = (pts: number[]) => (ctx: Konva.Context, shape: Konva.Shape) => {
+    const trimmed = trimEnds(pts, chipR + hitBand / 2)
+    ctx.beginPath()
+    ctx.moveTo(trimmed[0], trimmed[1])
+    for (let i = 2; i < trimmed.length; i += 2) ctx.lineTo(trimmed[i], trimmed[i + 1])
+    ctx.strokeShape(shape)
   }
 
   const selectionOutline = () => {
@@ -206,7 +244,12 @@ export default function DrawingShape({ drawing: d, mapping: m, selected, onEditT
     case 'line':
       return (
         <Group>
-          <Line points={mapped} tension={d.type === 'pen' ? 0.35 : undefined} {...common} />
+          <Line
+            points={mapped}
+            tension={d.type === 'pen' ? 0.35 : undefined}
+            {...common}
+            hitFunc={strokeHit(mapped)}
+          />
           {selectionOutline()}
         </Group>
       )
@@ -217,8 +260,25 @@ export default function DrawingShape({ drawing: d, mapping: m, selected, onEditT
       const head = arrowHead(x0, y0, x1, y1, headSize)
       return (
         <Group>
-          <Line points={mapped} dash={d.dashed ? [headSize * 0.7, headSize * 0.5] : undefined} {...common} />
-          <Line points={[head[0], head[1], x1, y1, head[2], head[3]]} {...common} dash={undefined} />
+          <Line
+            points={mapped}
+            dash={d.dashed ? [headSize * 0.7, headSize * 0.5] : undefined}
+            {...common}
+            hitFunc={strokeHit(mapped)}
+          />
+          {/* The head is painted and not listened to, so the shaft is the
+              whole of the target. It is the other end of the same problem the
+              trim solves: a pass arrow lands *on* the player it is played to,
+              and a head that kept its band would take that player's presses
+              exactly as the tail used to. Nothing is lost by it — the head is
+              about twelve pixels and the shaft it sits on the end of runs the
+              length of the arrow. */}
+          <Line
+            points={[head[0], head[1], x1, y1, head[2], head[3]]}
+            {...common}
+            dash={undefined}
+            listening={false}
+          />
           {selectionOutline()}
         </Group>
       )
@@ -238,8 +298,15 @@ export default function DrawingShape({ drawing: d, mapping: m, selected, onEditT
             points={curve}
             dash={d.dashed ? [headSize * 0.7, headSize * 0.5] : undefined}
             {...common}
+            hitFunc={strokeHit(curve)}
           />
-          <Line points={[head[0], head[1], x1, y1, head[2], head[3]]} {...common} dash={undefined} />
+          {/* Painted, not listened to — see the straight arrow's head above. */}
+          <Line
+            points={[head[0], head[1], x1, y1, head[2], head[3]]}
+            {...common}
+            dash={undefined}
+            listening={false}
+          />
           {selected && (
             /**
              * The bend handle, sized and committed like the corner handles it

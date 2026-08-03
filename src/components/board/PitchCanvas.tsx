@@ -319,9 +319,38 @@ export default function PitchCanvas() {
                 handles. No zone has words to edit. */}
             <DrawingLayer mapping={mapping} test={isZone} onEditText={onEditText} />
           </Layer>
-          <Layer listening={!locked}>
+          {/**
+           * Nothing on the board answers a pointer while a draw tool is armed,
+           * and that is a fix rather than tidiness.
+           *
+           * Konva dispatches a press to the shape under it *before* it bubbles
+           * to the stage, so `PitchCanvas` returning early from its own handler
+           * never stopped a chip's handler running first. With any tool armed, a
+           * press on a player therefore selected it, lifted it and — the group
+           * being `draggable` — dragged it, while the same press also started
+           * the drawing. Drawing a run from a player, which is the commonest
+           * gesture this board has, moved the player instead of drawing from
+           * them.
+           *
+           * It is long-standing and the chips' new grab boxes made it easier to
+           * hit, which is what turned it up. `listening` on the layer is the
+           * same switch the lock already uses, and it says the one thing that is
+           * true: with a tool armed the press belongs to the tool.
+           */}
+          <Layer listening={!locked && !draw.armed}>
             <TokenLayer mapping={mapping} />
           </Layer>
+          {/**
+           * Marks and text keep the PRD's layer order and stay above the chips,
+           * which is what keeps an arrowhead visible when it lands on a player.
+           *
+           * Putting them underneath was tried, and it does fix a chip being
+           * unreachable beneath an arrow's tail — at the price of the head being
+           * swallowed by the player it points at. On a board whose whole job is
+           * saying which way somebody runs, a hidden arrowhead is the worse
+           * defect of the two. What frees the chip instead is the mark's own hit
+           * band stopping short of its ends; see `strokeHit` in `DrawingShape`.
+           */}
           <Layer listening={!locked}>
             <DrawingLayer mapping={mapping} test={isMark} />
             {/* Double-click a label to fix its words — only while `select` is

@@ -195,6 +195,76 @@ export function triangleCorners(x0: number, y0: number, x1: number, y1: number):
   return [(x0 + x1) / 2, y0, x0, y1, x1, y1]
 }
 
+/**
+ * A polyline with `trim` taken off each end, in the same units as the points.
+ *
+ * It exists for hit areas rather than for drawing. A run arrow is nearly always
+ * drawn *from* a player, which puts its tail exactly on a chip — and since the
+ * marks band paints above the tokens, and in Konva paint order is hit order, the
+ * arrow took every press meant for the player underneath it. Trimming the band
+ * back from both ends hands those presses to the chip and leaves the rest of the
+ * arrow as easy to grab as it was.
+ *
+ * **The trim is a request, not a promise.** A short arrow between two close
+ * players could lose its whole band to two full trims and become unselectable,
+ * which is a worse bug than the one being fixed, so nothing is ever cut past
+ * `MAX_TRIM_FRACTION` of the run's own length from each end. That is what makes
+ * this safe to call with a trim derived from a chip radius, which knows nothing
+ * about how long the arrow is.
+ *
+ * Distance is walked along the polyline rather than taken from the ends, so a
+ * curve sampled into twenty segments trims by arc length like a straight line
+ * does. Returns at least the two points it needs to still be a line.
+ */
+export const MAX_TRIM_FRACTION = 0.3
+
+export function trimEnds(points: number[], trim: number): number[] {
+  if (points.length < 4 || trim <= 0) return points
+  const seg: number[] = []
+  let total = 0
+  for (let i = 0; i + 3 < points.length; i += 2) {
+    const d = dist(points[i], points[i + 1], points[i + 2], points[i + 3])
+    seg.push(d)
+    total += d
+  }
+  if (total === 0) return points
+  const cut = Math.min(trim, total * MAX_TRIM_FRACTION)
+  if (cut <= 0) return points
+
+  // Where along the run the trimmed line starts and ends.
+  const at = (target: number): { x: number; y: number } => {
+    let walked = 0
+    for (let i = 0; i < seg.length; i++) {
+      if (walked + seg[i] >= target) {
+        const t = seg[i] === 0 ? 0 : (target - walked) / seg[i]
+        const j = i * 2
+        return {
+          x: points[j] + (points[j + 2] - points[j]) * t,
+          y: points[j + 1] + (points[j + 3] - points[j + 1]) * t,
+        }
+      }
+      walked += seg[i]
+    }
+    return { x: points[points.length - 2], y: points[points.length - 1] }
+  }
+
+  const startAt = cut
+  const endAt = total - cut
+  const out: number[] = []
+  const head = at(startAt)
+  out.push(head.x, head.y)
+  // Every original vertex strictly inside the trimmed span, so a curve keeps its
+  // shape instead of collapsing to the chord between its two new ends.
+  let walked = 0
+  for (let i = 0; i < seg.length; i++) {
+    walked += seg[i]
+    if (walked > startAt && walked < endAt) out.push(points[(i + 1) * 2], points[(i + 1) * 2 + 1])
+  }
+  const tail = at(endAt)
+  out.push(tail.x, tail.y)
+  return out
+}
+
 /** Axis-aligned bounds of a flat [x,y,...] point list. */
 export function bboxOf(points: number[]): PitchBox {
   let minX = Infinity

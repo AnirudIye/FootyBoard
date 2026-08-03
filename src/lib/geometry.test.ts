@@ -10,8 +10,7 @@ import {
   bboxOf,
   grabBox,
   triangleCorners,
-  triangleFromDrag,
-} from './geometry'
+  triangleFromDrag, trimEnds, MAX_TRIM_FRACTION } from './geometry'
 
 describe('geometry', () => {
   it('clamps norm coordinates to 0..100', () => {
@@ -291,5 +290,41 @@ describe('triangleCorners', () => {
     const t = triangleCorners(50, 50, 50, 50)
     expect(t).toHaveLength(6)
     expect(t.every((n) => Number.isFinite(n))).toBe(true)
+  })
+})
+
+/**
+ * `trimEnds` exists so that an arrow drawn from a player does not take the
+ * presses meant for the player. The band, not the paint, is what moves — so
+ * these assert geometry rather than anything a screenshot could show.
+ */
+describe('trimEnds', () => {
+  it('takes the trim off both ends of a straight line', () => {
+    // 100 long, 10 off each end.
+    expect(trimEnds([0, 0, 100, 0], 10)).toEqual([10, 0, 90, 0])
+  })
+
+  it('measures along the run, not across the ends', () => {
+    // An L: 30 across then 30 down. Trimming 10 walks the corner properly.
+    const out = trimEnds([0, 0, 30, 0, 30, 30], 10)
+    expect(out.slice(0, 2)).toEqual([10, 0])
+    // The corner survives, so a curve keeps its shape rather than collapsing
+    // to the chord between its new ends.
+    expect(out.slice(2, 4)).toEqual([30, 0])
+    expect(out.slice(4)).toEqual([30, 20])
+  })
+
+  it('never cuts a short line into nothing, whatever it is asked for', () => {
+    // 20 long, asked for 50 a side. Capped at 30% each, so 6 and 6.
+    const out = trimEnds([0, 0, 20, 0], 50)
+    expect(out).toEqual([20 * MAX_TRIM_FRACTION, 0, 20 - 20 * MAX_TRIM_FRACTION, 0])
+    // ...and what is left is still a line somebody can hit.
+    expect(out[2] - out[0]).toBeGreaterThan(0)
+  })
+
+  it('leaves a degenerate or untrimmed run exactly as it found it', () => {
+    expect(trimEnds([5, 5, 5, 5], 10)).toEqual([5, 5, 5, 5])
+    expect(trimEnds([0, 0, 100, 0], 0)).toEqual([0, 0, 100, 0])
+    expect(trimEnds([7, 7], 10)).toEqual([7, 7])
   })
 })
