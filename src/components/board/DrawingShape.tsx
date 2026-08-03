@@ -37,6 +37,37 @@ const HANDLE_FINE = 14
 const LABEL_COARSE = 44
 const LABEL_FINE = 32
 
+/**
+ * How wide the hit band along a stroke has to be, in CSS pixels, before the
+ * stage scale is divided back out.
+ *
+ * The same pair `PropToken` gives its rotation ring, and for the argument
+ * written there: a band running the length of a line is far easier to hit than
+ * its width suggests, so it does not need a point target's 44. It needs more
+ * than it had. `Math.max(14, width * 4)` was a flat 14 CSS pixels at every zoom
+ * and every pitch format — under half the floor a finger is measured against,
+ * and the thinnest mark on the board is a 1px line, so the band *was* the
+ * target.
+ *
+ * **The proportional half stays and still wins for a heavy stroke.** A 6px
+ * arrow at `width * 4` asks for 24 and gets it; the floor only decides for the
+ * thin ones, which is the case it exists for.
+ *
+ * Measured on a 375px phone, tapping perpendicular to an arrow's shaft: the old
+ * flat 14 reached **7px** either side and this reaches **14px**, which is the
+ * doubling the numbers promise.
+ *
+ * **What it does not fix, so that nobody assumes it did:** a chip with an arrow
+ * drawn from it cannot be selected by pressing the chip, because the marks band
+ * paints above the tokens and the arrow's tail lies on the player. That was
+ * already true at 14 — measured at both widths, and the chip loses either way —
+ * so this widens an area that was already the arrow's rather than taking a new
+ * one. It is the strongest argument for keeping this number off 44, and the
+ * real fix is a z-order or an attachment rule rather than a smaller band.
+ */
+const BAND_COARSE = 28
+const BAND_FINE = 18
+
 interface Props {
   drawing: Drawing
   mapping: PitchMapping
@@ -84,7 +115,18 @@ export default function DrawingShape({ drawing: d, mapping: m, selected, onEditT
     strokeWidth: width,
     lineCap: 'round' as const,
     lineJoin: 'round' as const,
-    hitStrokeWidth: Math.max(14, width * 4),
+    /**
+     * What a press has to land within to count as landing on this mark.
+     *
+     * **This is above the chips, which is what bounds how far it may go.** The
+     * marks band paints over `TokenLayer`, so every pixel of band is a pixel
+     * where a press selects the arrow instead of the player under it — and a
+     * run arrow is very often drawn *from* a chip, so the tail sits exactly on
+     * one. That is the reason this takes the band figures rather than the 44 a
+     * label takes: the label is the top of its own band with nothing beneath it
+     * worth grabbing, and an arrow is not.
+     */
+    hitStrokeWidth: Math.max((coarse ? BAND_COARSE : BAND_FINE) / zoom, width * 4),
     onPointerDown: (e: { evt: PointerEvent }) => {
       if (e.evt.button === 0) onSelect(e.evt.shiftKey)
     },

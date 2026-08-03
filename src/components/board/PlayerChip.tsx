@@ -1,11 +1,43 @@
 import { useRef } from 'react'
 import { Group, Circle, Text, Line } from 'react-konva'
 import { useBoardStore } from '../../store/boardStore'
+import { useCoarsePointer } from '../../hooks/useCoarsePointer'
 import type { Token } from '../../lib/types'
 import type { PitchMapping } from './pitchMapping'
 import { useTokenDrag } from './useTokenDrag'
 
 const SELECT_RING = '#f4f2ef'
+
+/**
+ * How wide a chip's target has to be in CSS pixels, before the stage scale is
+ * divided back out. `PropToken`'s figures, because a chip is the same kind of
+ * thing: a single object you go and put your finger on.
+ *
+ * **44 is the app's floor, and on a phone it also happens to be about as much
+ * as the pitch has room for.** A chip is drawn at `ppm * 1.7`, so on a 375px
+ * phone with the chrome docked the pitch is 338px across and a chip is
+ * **10.9px** — a quarter of the floor, and the smallest thing on the board a
+ * finger is asked to hit. Two neighbours in a back four sit about 13.6m apart,
+ * which on that pitch is **44px**, so a 44px target reaches the midpoint
+ * between them.
+ *
+ * **In a crowd the targets do meet, and that was measured rather than reasoned
+ * about.** Sweeping a tap across the halfway line in 2px steps gives bands of
+ * exactly 44px for a chip standing alone and one merged run of 138px where
+ * three stand close. The merge is not the failure it sounds like: reading which
+ * shirt each tap selected shows every chip still owning a contiguous band
+ * around its own centre, with a crisp boundary to its neighbour rather than one
+ * chip reaching across another. Konva hands an overlap to the later shape in
+ * the array rather than to the nearer one, so the bias is real, and at these
+ * radii it is a few pixels of boundary rather than a chip swallowing its
+ * neighbour. Raising the figure is what would turn that from a nuisance into
+ * moving the wrong player, which a coach may not notice.
+ */
+const TARGET_COARSE = 44
+const TARGET_FINE = 32
+
+/** Air around the painted disc, as a fraction of its radius, before the floor. */
+const GRAB_PAD = 0.3
 const INK_DARK = '#080A09'
 const INK_LIGHT = '#FBF9F5'
 
@@ -82,6 +114,12 @@ export default function PlayerChip({ token, mapping, nx: atX, ny: atY, radius, s
   const openInspector = useBoardStore((s) => s.openInspector)
   const longPress = useRef<number | null>(null)
   const drag = useTokenDrag(mapping, radius)
+  // Pan and zoom scale the stage, so a length of `s` reaches the eye as
+  // `s * zoom` CSS pixels and a target specified in pixels has to be divided
+  // back. The same conversion `PropToken` and `DrawingShape` do.
+  const zoom = useBoardStore((s) => s.zoom)
+  const coarse = useCoarsePointer()
+  const grabR = Math.max(radius * (1 + GRAB_PAD), (coarse ? TARGET_COARSE : TARGET_FINE) / 2 / zoom)
 
   const cancelLongPress = () => {
     if (longPress.current !== null) {
@@ -155,6 +193,21 @@ export default function PlayerChip({ token, mapping, nx: atX, ny: atY, radius, s
         drag.endDrag(mapping.toPx(at?.x ?? token.x, at?.y ?? token.y))
       }}
     >
+      {/**
+       * The target, which is four times the chip on a phone and invisible.
+       *
+       * Konva hit-tests the painted disc exactly, and the disc is 10.9px across
+       * on a 375px phone — so before this, selecting or dragging a player there
+       * meant landing inside a target a quarter the size of the one every
+       * element control on the page is held to. It is a real `fill` at zero
+       * opacity because Konva's hit graph honours `visible` and `listening` and
+       * ignores `opacity`, the same trick `PropToken` uses.
+       *
+       * First in the group, so it sits *under* the paint: the visible disc,
+       * the notch and the numerals all keep their own hits and this only
+       * catches what would otherwise have missed entirely.
+       */}
+      <Circle radius={grabR} fill="#000" opacity={0} />
       {selected && (
         <Circle
           radius={radius + 4}
