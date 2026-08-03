@@ -9,6 +9,7 @@ import {
   selectTwoFactorEnabled,
 } from '../../store/authStore'
 import { AuthShell, field, submitBtn, FormError } from './AuthShell'
+import { PasswordField } from './PasswordField'
 
 /**
  * Deleting the account, and every board saved under it.
@@ -134,20 +135,14 @@ export default function DeleteAccountPage() {
             would be asking for something that cannot exist. The server refuses
             it from that side too, on the account rather than on what arrives. */}
         {!isGuest && (
-          <label className="block">
-            <span className="mb-1.5 block font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3">
-              Current password
-            </span>
-            <input
-              type="password"
-              autoComplete="current-password"
-              required
-              autoFocus
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              className={field}
-            />
-          </label>
+          <PasswordField
+            label="Current password"
+            autoComplete="current-password"
+            required
+            autoFocus
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+          />
         )}
 
         {twoFactorEnabled && (

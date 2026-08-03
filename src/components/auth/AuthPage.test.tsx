@@ -142,12 +142,22 @@ const submit = async () => {
   })
 }
 
-const fill = () => {
+const PASSWORD = 'Prehnite!7712'
+
+/**
+ * Anchored on the labels rather than on `input[type="password"]`, which is the
+ * selector this used to use and which stopped meaning "the password box" twice
+ * over: a revealed field is `type="text"`, and signup has two of them.
+ */
+const fill = (password = PASSWORD, confirm = password) => {
   fireEvent.change(screen.getByPlaceholderText('name@example.com'), {
     target: { value: 'coach@example.com' },
   })
-  const password = document.querySelector('input[type="password"]')!
-  fireEvent.change(password, { target: { value: 'Prehnite!7712' } })
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: password } })
+  // Only signup has one, and a login test asking for it would be asserting the
+  // form has a field it must not have.
+  const second = screen.queryByLabelText('Confirm')
+  if (second) fireEvent.change(second, { target: { value: confirm } })
 }
 
 describe('AuthPage with a join code pending', () => {
@@ -505,5 +515,122 @@ describe('AuthPage and an off-site next', () => {
     at(`/login?next=${encodeURIComponent('//evil.example')}`)
     expect(guestDoor()).toHaveAttribute('href', '/board')
     expect(screen.getByRole('link', { name: 'Create one' })).toHaveAttribute('href', '/signup')
+  })
+})
+
+/**
+ * Seeing what you typed, on both doors.
+ *
+ * The component's own behaviour is asserted in `PasswordField.test.tsx`. What is
+ * here is that this page uses it, in both modes, and that a form submitted with
+ * the password on screen still submits the password.
+ */
+describe('AuthPage and the password you cannot see', () => {
+  const reveal = () => fireEvent.click(screen.getAllByRole('button', { name: 'Show password' })[0])
+
+  it('conceals it until it is asked', () => {
+    at('/login')
+    expect((screen.getByLabelText('Password') as HTMLInputElement).type).toBe('password')
+  })
+
+  it('shows it on the sign-in form', () => {
+    at('/login')
+    fill()
+    reveal()
+
+    const box = screen.getByLabelText('Password') as HTMLInputElement
+    expect(box.type).toBe('text')
+    expect(box.value).toBe(PASSWORD)
+  })
+
+  it('shows it on the signup form', () => {
+    at('/signup', 'signup')
+    reveal()
+    expect((screen.getByLabelText('Password') as HTMLInputElement).type).toBe('text')
+  })
+
+  it('keeps the hint a password manager reads, which is different on each door', () => {
+    // A field that changes `type` under a manager is already awkward for it; a
+    // field that changes the hint as well is how a saved password ends up
+    // offered on the form that is trying to set a new one.
+    at('/login')
+    expect(screen.getByLabelText('Password')).toHaveAttribute('autocomplete', 'current-password')
+    cleanup()
+
+    at('/signup', 'signup')
+    expect(screen.getByLabelText('Password')).toHaveAttribute('autocomplete', 'new-password')
+  })
+
+  it('signs in with the password showing', async () => {
+    at('/login')
+    fill()
+    reveal()
+    await submit()
+
+    expect(useAuthStore.getState().logIn).toHaveBeenCalledWith('coach@example.com', PASSWORD)
+    expect(screen.getByTestId('where')).toHaveTextContent('/board')
+  })
+})
+
+/**
+ * Typing it twice when it is being set for the first time.
+ *
+ * Both forms that *change* an existing password already confirm it, in these
+ * exact words. Neither form that sets one did, and signup is the one where a
+ * typo costs most: there is no reset email here, so the only way back into an
+ * account whose password went in wrong is the security question the person set
+ * ninety seconds earlier, having never once seen the password they are locked
+ * out of.
+ */
+describe('AuthPage confirming a password that is being set', () => {
+  const MESSAGE = 'Those two passwords do not match.'
+
+  it('asks for it twice on signup', () => {
+    at('/signup', 'signup')
+    expect(screen.getByLabelText('Confirm')).toBeInTheDocument()
+  })
+
+  it('does not ask twice on sign-in', () => {
+    // Nothing is being set, and there is nothing to guard against: a mistyped
+    // password on this form is refused in a second and retyped.
+    at('/login')
+    expect(screen.queryByLabelText('Confirm')).toBeNull()
+  })
+
+  it('refuses two that do not match, and says the same thing the other forms say', async () => {
+    at('/signup', 'signup')
+    fill(PASSWORD, 'Prehnite!7721')
+    await submit()
+
+    expect(screen.getByText(MESSAGE)).toBeInTheDocument()
+    expect(useAuthStore.getState().signUp).not.toHaveBeenCalled()
+    expect(screen.getByTestId('where')).toHaveTextContent('/signup')
+  })
+
+  it('sends one password when they match, and not the copy', async () => {
+    // `POST /api/auth/signup` takes one password and should keep taking one: a
+    // confirmation is a typo guard in a form, not a fact about an account.
+    at('/signup', 'signup')
+    fill()
+    await submit()
+
+    const call = (useAuthStore.getState().signUp as Mock).mock.calls[0]
+    expect(call).toEqual(['coach@example.com', PASSWORD, false, '', '', ''])
+  })
+
+  it('lets a corrected mismatch through', async () => {
+    // The refusal has to be recoverable in place. Clearing either field, or
+    // leaving the error up after it stops being true, would both read as the
+    // form having broken.
+    at('/signup', 'signup')
+    fill(PASSWORD, 'Prehnite!7721')
+    await submit()
+    expect(screen.getByText(MESSAGE)).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Confirm'), { target: { value: PASSWORD } })
+    await submit()
+
+    expect(useAuthStore.getState().signUp).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText(MESSAGE)).toBeNull()
   })
 })

@@ -147,6 +147,40 @@ describe('who may reach the page', () => {
   })
 })
 
+describe('looking at the password this page keeps asking for', () => {
+  const reveal = () => fireEvent.click(screen.getByRole('button', { name: 'Show password' }))
+  const box = () => screen.getByLabelText(/current password/i) as HTMLInputElement
+
+  it('can be shown on the form that turns the factor on', async () => {
+    await at()
+    type(/current password/i, 'the-real-password')
+    reveal()
+
+    expect(box().type).toBe('text')
+    expect(box().value).toBe('the-real-password')
+  })
+
+  it('can be shown on the form that takes a factor away', async () => {
+    mockApi.twoFactorStatus.mockResolvedValue({ enabled: true, remainingRecoveryCodes: 7 })
+    await at()
+    await press(/^Turn off two-step sign-in$/)
+    type(/current password/i, 'the-real-password')
+    reveal()
+
+    expect(box().type).toBe('text')
+  })
+
+  it('reads its explanation out as a description rather than as the field name', async () => {
+    // The sentence under this box used to sit inside the `<label>`, so it was
+    // part of the input's accessible name: a screen reader read the whole
+    // explanation as the title of the field every time focus landed on it.
+    await at()
+
+    expect(box()).toHaveAccessibleName('Current password')
+    expect(box()).toHaveAccessibleDescription(/cannot attach their app/i)
+  })
+})
+
 describe('turning it on', () => {
   it('offers the enrollment form when the factor is off', async () => {
     await at()

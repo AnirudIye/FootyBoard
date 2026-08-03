@@ -3,7 +3,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { api } from '../../lib/api'
 import { toUserMessage } from '../../lib/errors'
-import { AuthShell, field, submitBtn, FormError } from './AuthShell'
+import { AuthShell, submitBtn, FormError } from './AuthShell'
+import { PasswordField } from './PasswordField'
 
 /**
  * Step three of recovery: the new password.
@@ -86,35 +87,23 @@ export default function ResetPasswordPage() {
       </p>
 
       <form onSubmit={onSubmit} className="mt-7 space-y-4">
-        <label className="block">
-          <span className="mb-1.5 block font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3">
-            New password
-          </span>
-          <input
-            type="password"
-            autoComplete="new-password"
-            required
-            autoFocus
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="At least 8 characters"
-            className={field}
-          />
-        </label>
+        <PasswordField
+          label="New password"
+          autoComplete="new-password"
+          required
+          autoFocus
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="At least 8 characters"
+        />
 
-        <label className="block">
-          <span className="mb-1.5 block font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3">
-            Confirm
-          </span>
-          <input
-            type="password"
-            autoComplete="new-password"
-            required
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            className={field}
-          />
-        </label>
+        <PasswordField
+          label="Confirm"
+          autoComplete="new-password"
+          required
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+        />
 
         {error && <FormError>{error}</FormError>}
 

@@ -4,7 +4,8 @@ import { motion } from 'framer-motion'
 import { api } from '../../lib/api'
 import { toUserMessage } from '../../lib/errors'
 import { useAuthStore, selectSignedIn, selectIsGuest } from '../../store/authStore'
-import { AuthShell, field, submitBtn, FormError } from './AuthShell'
+import { AuthShell, submitBtn, FormError } from './AuthShell'
+import { PasswordField } from './PasswordField'
 import SecurityQuestionFields, { useSecurityQuestions } from './SecurityQuestionFields'
 
 /**
@@ -92,49 +93,35 @@ export default function ChangePasswordPage() {
       </p>
 
       <form onSubmit={onSubmit} className="mt-7 space-y-4">
-        <label className="block">
-          <span className="mb-1.5 block font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3">
-            Current password
-          </span>
-          <input
-            type="password"
-            autoComplete="current-password"
-            required
-            autoFocus
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            className={field}
-          />
-        </label>
+        {/* Three boxes and three separate toggles rather than one for the page.
+            Two of these are the password being replaced and the third is the one
+            being proved, so a single reveal would put the old and the new on
+            screen together for anybody standing behind. */}
+        <PasswordField
+          label="Current password"
+          autoComplete="current-password"
+          required
+          autoFocus
+          value={currentPassword}
+          onChange={(e) => setCurrentPassword(e.target.value)}
+        />
 
-        <label className="block">
-          <span className="mb-1.5 block font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3">
-            New password
-          </span>
-          <input
-            type="password"
-            autoComplete="new-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="At least 8 characters"
-            className={field}
-          />
-        </label>
+        <PasswordField
+          label="New password"
+          autoComplete="new-password"
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="At least 8 characters"
+        />
 
-        <label className="block">
-          <span className="mb-1.5 block font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3">
-            Confirm
-          </span>
-          <input
-            type="password"
-            autoComplete="new-password"
-            required
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            className={field}
-          />
-        </label>
+        <PasswordField
+          label="Confirm"
+          autoComplete="new-password"
+          required
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+        />
 
         <SecurityQuestionFields
           questions={questions}

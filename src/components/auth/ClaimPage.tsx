@@ -9,6 +9,7 @@ import {
   selectDisplayName,
 } from '../../store/authStore'
 import { AuthShell, field, submitBtn, FormError } from './AuthShell'
+import { PasswordField } from './PasswordField'
 import SecurityQuestionFields, { useSecurityQuestions } from './SecurityQuestionFields'
 
 /**
@@ -39,6 +40,13 @@ export default function ClaimPage() {
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  /**
+   * The re-typed copy, and it never leaves this component.
+   *
+   * `POST /api/auth/claim` takes one password and should keep taking one: a
+   * confirmation is a typo guard in a form rather than a fact about an account.
+   */
+  const [confirm, setConfirm] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [accepted, setAccepted] = useState(false)
   const [questionId, setQuestionId] = useState('')
@@ -74,6 +82,21 @@ export default function ClaimPage() {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    /**
+     * Checked here purely for a quicker answer, in the same words the three
+     * other password forms use.
+     *
+     * **This is the form where a typo costs most, and the reason is not that the
+     * password is important — it is that the mistake is silent.** `/auth/claim`
+     * leaves the session alone, deliberately and rightly: the browser making
+     * this request holds the only way into the account and there is no older
+     * session to revoke. So a mistyped password locks nobody out today. It
+     * surfaces the first time they sign in somewhere else, days later, with no
+     * reset email and a security question they set in the same ninety seconds,
+     * and with every board they have made on the other side of it. Everywhere
+     * else here a wrong password fails in one second and is retyped.
+     */
+    if (password !== confirm) return setError('Those two passwords do not match.')
     setError(null)
     setBusy(true)
     try {
@@ -113,20 +136,24 @@ export default function ClaimPage() {
           />
         </label>
 
-        <label className="block">
-          <span className="mb-1.5 block font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3">
-            Password
-          </span>
-          <input
-            type="password"
-            autoComplete="new-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="At least 8 characters"
-            className={field}
-          />
-        </label>
+        {/* `new-password`, not `current-password`. This account has none, and
+            offering a saved one here would be offering another account's. */}
+        <PasswordField
+          label="Password"
+          autoComplete="new-password"
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="At least 8 characters"
+        />
+
+        <PasswordField
+          label="Confirm"
+          autoComplete="new-password"
+          required
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+        />
 
         {/* Asked here for a reason particular to claiming: this account is
             gaining an address, and presence falls back to the address when there

@@ -4,7 +4,8 @@ import { motion } from 'framer-motion'
 import { api } from '../../lib/api'
 import { toUserMessage } from '../../lib/errors'
 import { useAuthStore, selectSignedIn, selectIsGuest } from '../../store/authStore'
-import { AuthShell, field, submitBtn, FormError } from './AuthShell'
+import { AuthShell, submitBtn, FormError } from './AuthShell'
+import { PasswordField } from './PasswordField'
 
 /**
  * Ending every session on the account, and changing nothing else.
@@ -98,20 +99,14 @@ export default function SignOutEverywherePage() {
       </p>
 
       <form onSubmit={onSubmit} className="mt-7 space-y-4">
-        <label className="block">
-          <span className="mb-1.5 block font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3">
-            Current password
-          </span>
-          <input
-            type="password"
-            autoComplete="current-password"
-            required
-            autoFocus
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            className={field}
-          />
-        </label>
+        <PasswordField
+          label="Current password"
+          autoComplete="current-password"
+          required
+          autoFocus
+          value={currentPassword}
+          onChange={(e) => setCurrentPassword(e.target.value)}
+        />
 
         {/* Asked for the same reason `/password` asks: a session left open on a
             shared machine must not be enough to sign its owner out of everywhere

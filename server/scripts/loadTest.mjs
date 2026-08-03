@@ -15,6 +15,15 @@
  * cannot (the WHATWG constructor takes url and protocols and nothing else), and
  * `ws` is already a dependency here and nowhere else. No new dependency.
  *
+ * **It was called `load-test.mjs` and that name broke the suite.** `npm --prefix
+ * server test` is a bare `node --test`, whose default patterns include
+ * `**\/*-test.?(c|m)js` — so the runner discovered this file, ran it, and it
+ * exited non-zero asking for credentials it is never given in a test run. One
+ * failure among three hundred passes, at a path that is obviously not a test.
+ * The npm script keeps the name `load-test`, because that is not what the runner
+ * reads. `src/testDiscovery.test.js` now fails on any file with a name in that
+ * set, so the next one is caught by a message that names the glob.
+ *
  * ## It aims at staging, and argues if you aim it elsewhere
  *
  * `tunnel.footyboard.me` is still routed precisely so this can be done without

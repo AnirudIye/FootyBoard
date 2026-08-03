@@ -71,6 +71,21 @@ afterEach(() => {
 })
 
 describe('deleting an account', () => {
+  it('lets the password be looked at, and still opens focused on it', () => {
+    // `autoFocus` is the detail most likely to be dropped in the conversion,
+    // because it is a bare attribute on the input and the component now stands
+    // between the page and that input.
+    at()
+    const box = () => screen.getByLabelText(/current password/i) as HTMLInputElement
+    expect(box()).toHaveFocus()
+
+    fireEvent.change(box(), { target: { value: 'the-real-one' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Show password' }))
+
+    expect(box().type).toBe('text')
+    expect(box().value).toBe('the-real-one')
+  })
+
   it('sends the password that was typed, and no code when there is no factor', async () => {
     at()
     fireEvent.change(screen.getByLabelText(/current password/i), {

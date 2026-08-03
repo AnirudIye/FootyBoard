@@ -9,6 +9,7 @@ import { toUserMessage } from '../../lib/errors'
 import { codeInNext } from '../../lib/joinCode'
 import { shareTokenInNext } from '../../lib/shareLink'
 import { AuthShell, field, submitBtn, FormError } from './AuthShell'
+import { PasswordField } from './PasswordField'
 import SecurityQuestionFields, { useSecurityQuestions } from './SecurityQuestionFields'
 
 type Mode = 'signup' | 'login'
@@ -38,6 +39,15 @@ export default function AuthPage({ mode }: { mode: Mode }) {
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  /**
+   * The re-typed copy, on signup only, and it never leaves this component.
+   *
+   * `POST /api/auth/signup` takes one password and should keep taking one: a
+   * confirmation is a typo guard in a form rather than a fact about an account,
+   * and sending it would mean the server validating a field that means nothing
+   * to it.
+   */
+  const [confirm, setConfirm] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [accepted, setAccepted] = useState(false)
   const [questionId, setQuestionId] = useState('')
@@ -123,6 +133,10 @@ export default function AuthPage({ mode }: { mode: Mode }) {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    // Checked here purely for a quicker answer, in the same words
+    // `ChangePasswordPage` and `ResetPasswordPage` already use; a third phrasing
+    // is how a product starts sounding like three people.
+    if (isSignup && password !== confirm) return setError('Those two passwords do not match.')
     setError(null)
     setBusy(true)
     try {
@@ -281,20 +295,33 @@ export default function AuthPage({ mode }: { mode: Mode }) {
           />
         </label>
 
-        <label className="block">
-          <span className="mb-1.5 block font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3">
-            Password
-          </span>
-          <input
-            type="password"
-            autoComplete={isSignup ? 'new-password' : 'current-password'}
+        <PasswordField
+          label="Password"
+          autoComplete={isSignup ? 'new-password' : 'current-password'}
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder={isSignup ? 'At least 8 characters' : ''}
+        />
+
+        {/* Directly under the password, which is where the other two forms put
+            it, and asked for the reason that is particular to this one: there is
+            no reset email here. A mistyped password at signup is not "click
+            forgotten password", it is answering a security question set ninety
+            seconds ago, having never once seen the password it locks you out of.
+
+            It composes with the reveal above rather than replacing it. The two
+            fail differently: the toggle catches a typo you look for, the confirm
+            catches one you do not. */}
+        {isSignup && (
+          <PasswordField
+            label="Confirm"
+            autoComplete="new-password"
             required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder={isSignup ? 'At least 8 characters' : ''}
-            className={field}
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
           />
-        </label>
+        )}
 
         {/* Asked here rather than offered later, because the alternative is not
             "no name" but "your email address": presence falls back to the

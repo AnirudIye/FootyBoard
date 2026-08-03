@@ -5,6 +5,7 @@ import { api } from '../../lib/api'
 import { toUserMessage } from '../../lib/errors'
 import { useAuthStore, selectSignedIn, selectIsGuest } from '../../store/authStore'
 import { AuthShell, field, submitBtn, FormError } from './AuthShell'
+import { PasswordField } from './PasswordField'
 
 /**
  * The account's second factor: turning it on, seeing what is left, turning it
@@ -360,20 +361,14 @@ export default function TwoFactorPage() {
         </p>
 
         <form onSubmit={runPending} className="mt-7 space-y-4">
-          <label className="block">
-            <span className="mb-1.5 block font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3">
-              Current password
-            </span>
-            <input
-              type="password"
-              autoComplete="current-password"
-              required
-              autoFocus
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              className={field}
-            />
-          </label>
+          <PasswordField
+            label="Current password"
+            autoComplete="current-password"
+            required
+            autoFocus
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+          />
 
           <label className="block">
             <span className="mb-1.5 block font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3">
@@ -501,28 +496,25 @@ export default function TwoFactorPage() {
       </p>
 
       <form onSubmit={beginEnrollment} className="mt-7 space-y-4">
-        <label className="block">
-          <span className="mb-1.5 block font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3">
-            Current password
-          </span>
-          <input
-            type="password"
-            autoComplete="current-password"
-            required
-            autoFocus
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            className={field}
-          />
-          {/* The strongest form of the argument the password change already
-              makes: a session left open on a shared machine must not be enough
-              to attach somebody else's authenticator, which is a lockout rather
-              than a nuisance. */}
-          <span className="mt-1.5 block text-[12px] leading-relaxed text-ink-3">
-            Asked for so that a session somebody else is holding cannot attach their app to your
-            account.
-          </span>
-        </label>
+        {/* The hint is `hint` rather than a span inside the label now, which is
+            a change of meaning and not only of markup: inside the label it was
+            part of the input's accessible *name*, so a screen reader read the
+            whole sentence as the field's title every time focus landed there.
+            `aria-describedby` says it after the name, which is what it is.
+
+            The sentence itself is the strongest form of the argument the
+            password change already makes: a session left open on a shared
+            machine must not be enough to attach somebody else's authenticator,
+            which is a lockout rather than a nuisance. */}
+        <PasswordField
+          label="Current password"
+          autoComplete="current-password"
+          required
+          autoFocus
+          value={currentPassword}
+          onChange={(e) => setCurrentPassword(e.target.value)}
+          hint="Asked for so that a session somebody else is holding cannot attach their app to your account."
+        />
 
         {error && <FormError>{error}</FormError>}
 

@@ -67,6 +67,31 @@ afterEach(() => {
 })
 
 describe('ending every session', () => {
+  it('lets the password be looked at before it is sent', () => {
+    // The one form on this page is a password typed as proof of identity, often
+    // in a hurry and often because something has gone wrong. Getting it wrong
+    // costs an error and a retype rather than an account, so the toggle here is
+    // the plain convenience it looks like — but it is the same component, and
+    // starting concealed every time is what makes that true.
+    at()
+    fireEvent.change(screen.getByLabelText(/current password/i), {
+      target: { value: 'the-only-password' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Show password' }))
+
+    const box = screen.getByLabelText(/current password/i) as HTMLInputElement
+    expect(box.type).toBe('text')
+    expect(box.value).toBe('the-only-password')
+  })
+
+  it('still tells a password manager this is the existing password', () => {
+    at()
+    expect(screen.getByLabelText(/current password/i)).toHaveAttribute(
+      'autocomplete',
+      'current-password',
+    )
+  })
+
   it('sends the password that was typed, and nothing else', async () => {
     at()
     await submit('the-only-password')
