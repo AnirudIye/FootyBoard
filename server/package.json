@@ -13,6 +13,7 @@
     "start": "node --env-file-if-exists=.env src/index.js",
     "cluster": "node --env-file-if-exists=.env scripts/cluster.js",
     "migrate": "node --env-file-if-exists=.env scripts/migrate.js",
+    "load-test": "node scripts/load-test.mjs",
     "test": "node --test"
   },
   "dependencies": {
