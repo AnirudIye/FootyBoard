@@ -95,6 +95,9 @@ describe('useDrawGesture: text labels', () => {
       nx: 40,
       ny: 60,
       id: null,
+      // Nothing to have changed from, so the guard in `commitText` has nothing
+      // to refuse: a placed label is new whatever is typed into it.
+      initial: '',
       value: '',
     })
     expect(drawings()).toHaveLength(0)
@@ -228,6 +231,7 @@ describe('useDrawGesture: the press that opens the typing box', () => {
       nx: 40,
       ny: 60,
       id: null,
+      initial: '',
       value: '',
     })
   })
@@ -291,6 +295,10 @@ describe('useDrawGesture: editing a placed label', () => {
       nx: 40,
       ny: 60,
       id: label.id,
+      // Both hold the words at the moment it opens, and they part company on
+      // the first keystroke: `value` follows the typing, `initial` is what the
+      // commit compares against to decide whether anything changed.
+      initial: 'PRESS HIGH',
       value: 'PRESS HIGH',
     })
   })
@@ -310,6 +318,43 @@ describe('useDrawGesture: editing a placed label', () => {
     expect(drawings()[0].id).toBe(label.id)
     expect(drawings()[0].text).toBe('PRESS MID')
     expect(result.current.textDraft).toBeNull()
+  })
+
+  /**
+   * The same rewrite, with the typing that a person actually does in between —
+   * and it is the typing that used to break it.
+   *
+   * The box is a *controlled* input, so every keystroke goes through
+   * `setTextValue` and lands in `textDraft.value`. The commit then asked whether
+   * the words had changed by comparing against that same field, which by then
+   * held the new words: the answer was always "no", `updateDrawing` was never
+   * called, and the label kept its old text however long you spent retyping it.
+   *
+   * The test above passes without this one catching anything, because it goes
+   * straight from opening the box to committing and never types. That is the
+   * whole reason a defect this total survived a suite that covers the editor in
+   * seven other ways, and it is why this case exists separately rather than
+   * being folded into it. What the guard has to compare against is the words the
+   * box *opened* with, which is now its own field.
+   */
+  it('commits a rewrite that was actually typed into the box', () => {
+    const result = placeLabel('PRESS HIGH')
+    const label = drawings()[0]
+    act(() => {
+      result.current.editText(label, 120, 90)
+    })
+
+    // What the controlled input does on every keystroke.
+    act(() => {
+      result.current.setTextValue('PRESS MID')
+    })
+    act(() => {
+      result.current.commitText('PRESS MID')
+    })
+
+    expect(drawings()).toHaveLength(1)
+    expect(drawings()[0].id).toBe(label.id)
+    expect(drawings()[0].text).toBe('PRESS MID')
   })
 
   /** Delete is a key that says so. A cleared box is not a request to destroy. */

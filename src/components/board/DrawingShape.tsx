@@ -1,7 +1,7 @@
 import { Group, Line, Rect, Ellipse, Text, Circle } from 'react-konva'
 import { useBoardStore } from '../../store/boardStore'
 import { useCoarsePointer } from '../../hooks/useCoarsePointer'
-import { arrowHead, quadraticPoints, bboxOf, triangleCorners } from '../../lib/geometry'
+import { arrowHead, quadraticPoints, bboxOf, grabBox, triangleCorners } from '../../lib/geometry'
 import type { Drawing } from '../../lib/types'
 import type { PitchMapping } from './pitchMapping'
 
@@ -24,6 +24,18 @@ const HANDLE_FILL = '#fbf9f5'
  */
 const HANDLE_COARSE = 22
 const HANDLE_FINE = 14
+
+/**
+ * How wide a text label's target has to be, in CSS pixels, before the stage
+ * scale is divided back out.
+ *
+ * The full 44/32 rather than the halved pair above, and the difference is the
+ * difference between the two things. A corner handle is one of up to thirty on
+ * a shape the pointer is already resting on; a label is a single object you go
+ * and find, so it takes `PropToken`'s figures and for `PropToken`'s reason.
+ */
+const LABEL_COARSE = 44
+const LABEL_FINE = 32
 
 interface Props {
   drawing: Drawing
@@ -362,6 +374,44 @@ export default function DrawingShape({ drawing: d, mapping: m, selected, onEditT
             fontFamily="Geist Sans, ui-sans-serif, system-ui, sans-serif"
             fontStyle="500"
             fill={d.color}
+            /**
+             * A target you can actually hit twice, which is what editing costs.
+             *
+             * Konva hit-tests a `Text` against its glyph box exactly, and this
+             * node is the one shape on the board that never took `common`'s
+             * `hitStrokeWidth` — it borrows only the press handler. The label's
+             * size comes off the pitch and floors at 11px, so on a 375px phone
+             * the whole target is an 11px-tall strip. **Dragging needs one
+             * landing inside it and editing needs two inside 400ms**, which is
+             * exactly why a label could be placed and moved but not reopened,
+             * and why it felt intermittent rather than broken. Measured before
+             * this: of six offsets within 18px of the anchor, three missed
+             * entirely — no `pointerdown`, no `dbltap`, nothing to debug.
+             *
+             * `grabBox` is the same helper `PropToken` uses and the floor is the
+             * same 44/32, not the halved 22/14 the corner handles take. A
+             * corner is one of thirty vertices approached with the pointer
+             * already on the shape; a label is a single thing you go and find on
+             * an empty pitch, which is the case the full target is for.
+             *
+             * **What it costs, stated because it is a real trade:** the text
+             * band paints above the tokens, so this invisible box can take a
+             * press meant for a chip behind the words. It is bounded — the box
+             * is the words' own width, only the height is forced up — and the
+             * alternative was a label that cannot be edited on a phone at all.
+             */
+            hitFunc={(ctx, shape) => {
+              const target = (coarse ? LABEL_COARSE : LABEL_FINE) / zoom
+              const b = grabBox(
+                { x: 0, y: 0, w: shape.width(), h: shape.height() },
+                size * 0.25,
+                target,
+              )
+              ctx.beginPath()
+              ctx.rect(b.x, b.y, b.w, b.h)
+              ctx.closePath()
+              ctx.fillStrokeShape(shape)
+            }}
             onPointerDown={common.onPointerDown}
             onDblClick={openEditor || undefined}
             onDblTap={openEditor || undefined}

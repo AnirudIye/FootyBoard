@@ -59,7 +59,18 @@ export interface TextDraft {
    * rather than two that would drift.
    */
   id: string | null
-  /** What the box opens holding: empty when placing, the words so far when editing. */
+  /**
+   * The words the box opened with, and nothing ever writes to it again.
+   *
+   * It exists because `value` cannot answer the question the commit asks. The
+   * box is a controlled input, so every keystroke rewrites `value`; comparing
+   * the committed text against it therefore compares the new words with
+   * themselves, which is always equal — so an edit somebody typed was refused
+   * as "changed nothing" and the label kept its old text. Empty when placing,
+   * where there is nothing to have changed from.
+   */
+  initial: string
+  /** What the box holds right now: empty when placing, the words so far when editing. */
   value: string
 }
 
@@ -282,6 +293,7 @@ export function useDrawGesture(pointerNorm: () => Norm, eraseRadius: () => numbe
       nx: d.points[0],
       ny: d.points[1],
       id: d.id,
+      initial: d.text ?? '',
       value: d.text ?? '',
     })
   }, [])
@@ -294,11 +306,16 @@ export function useDrawGesture(pointerNorm: () => Norm, eraseRadius: () => numbe
           /**
            * An empty edit leaves the label alone rather than deleting it.
            * Delete is a key that says so, and a label lost to a cleared box is
-           * work destroyed by a gesture nobody made. Comparing against the
-           * words it opened with keeps a look that changed nothing out of the
-           * undo stack and off the wire.
+           * work destroyed by a gesture nobody made.
+           *
+           * **The comparison is against `initial`, and it has to be.** Against
+           * `value` it compared the typed words with themselves — the box is
+           * controlled, so `value` is whatever was last typed — and every real
+           * edit came out equal and was thrown away. See `TextDraft.initial`.
+           * What the guard is for is the other case: a box opened, read, and
+           * closed unchanged should not spend an undo step or an op on the wire.
            */
-          if (text && text !== textDraft.value) updateDrawing(textDraft.id, { text })
+          if (text && text !== textDraft.initial) updateDrawing(textDraft.id, { text })
         } else if (text) {
           addDrawing(createDrawing('text', [textDraft.nx, textDraft.ny], drawStyle, { text }))
         }
@@ -360,7 +377,7 @@ export function useDrawGesture(pointerNorm: () => Norm, eraseRadius: () => numbe
          */
         evt?.preventDefault()
         if (textDraft) commitText(textDraft.value)
-        setTextDraft({ screenX, screenY, nx: n.x, ny: n.y, id: null, value: '' })
+        setTextDraft({ screenX, screenY, nx: n.x, ny: n.y, id: null, initial: '', value: '' })
         return true
       }
       pressed.current = true
