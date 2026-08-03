@@ -4,7 +4,7 @@ import {
   exportSequence,
   frameGeometry,
   gifSteps,
-  refreshesPalette,
+  paletteSampleSteps,
   videoBitrate, gifDelay } from './exportSequence'
 import { useBoardStore } from '../../store/boardStore'
 
@@ -17,8 +17,10 @@ import { useBoardStore } from '../../store/boardStore'
  * three functions this module calls says exactly that, and nothing about
  * gifenc's own behaviour, which is not this file's to test.
  */
-const written: { width: number; height: number; hasPalette: boolean }[] = []
+const written: { width: number; height: number; palette: number[][] | null }[] = []
 const quantized: number[] = []
+/** The palette each frame's pixels were actually mapped against. */
+const indexedWith: (number[][] | null)[] = []
 
 vi.mock('gifenc', () => ({
   GIFEncoder: () => ({
@@ -27,15 +29,20 @@ vi.mock('gifenc', () => ({
       width: number,
       height: number,
       opts: { palette?: number[][] },
-    ) => written.push({ width, height, hasPalette: Boolean(opts.palette) }),
+    ) => written.push({ width, height, palette: opts.palette ?? null }),
     finish: () => {},
     bytes: () => new Uint8Array([0x47, 0x49, 0x46]),
   }),
+  // A different table per call, so a test can tell one from another. That is
+  // the whole point: the bug this file now guards was two palettes in one GIF.
   quantize: (data: Uint8ClampedArray) => {
     quantized.push(data.length)
-    return [[0, 0, 0]]
+    return [[quantized.length, 0, 0]]
   },
-  applyPalette: () => new Uint8Array(0),
+  applyPalette: (_data: Uint8ClampedArray, palette: number[][]) => {
+    indexedWith.push(palette)
+    return new Uint8Array(0)
+  },
 }))
 
 /**
@@ -151,6 +158,7 @@ beforeEach(() => {
 
   written.length = 0
   quantized.length = 0
+  indexedWith.length = 0
 
   vi.stubGlobal('MediaRecorder', FakeRecorder)
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(fakeCtx as never)
@@ -295,27 +303,49 @@ describe('GIF frame and palette policy', () => {
     expect(gifSteps(2, 1000)).toBe(2)
   })
 
-  it('computes a palette on the first frame and then once a second', () => {
-    expect(refreshesPalette(0)).toBe(true)
-    expect(refreshesPalette(1)).toBe(false)
-    expect(refreshesPalette(19)).toBe(false)
-    expect(refreshesPalette(20)).toBe(true)
+  it('samples both ends of the walk and evenly between them', () => {
+    expect(paletteSampleSteps(44)).toEqual([0, 15, 29, 44])
+    // Never more samples than there are frames, and never a duplicate.
+    expect(paletteSampleSteps(2)).toEqual([0, 1, 2])
+    expect(paletteSampleSteps(0)).toEqual([0])
   })
 
-  it('quantises three times for a forty-five frame sequence, not forty-five', async () => {
+  it('quantises once for the whole GIF, not once a frame', async () => {
     await exportSequence(workingStage(), CROP, 'gif', { frameCount: 3, speed: 1 })
 
     expect(written).toHaveLength(45)
-    expect(quantized).toHaveLength(3)
+    expect(quantized).toHaveLength(1)
+    // ...over the four sampled frames at once, which is what makes one table
+    // enough for a sequence whose colours arrive late.
+    expect(quantized[0]).toBe(4 * CROP.width * CROP.height * 4)
   })
 
-  it('carries a palette into the file only on the frames that computed one', async () => {
-    // Every frame used to carry its own, and gifenc turns a palette on any
-    // frame but the first into a local colour table: 768 bytes apiece, saying
-    // what the global table already said.
+  /**
+   * The one that matters, and the one whose absence shipped a broken GIF.
+   *
+   * gifenc decodes any frame written *without* a palette against the **global**
+   * colour table — the first frame's — and not against whichever local table
+   * came before it. So indexing a frame against a palette the file does not
+   * carry at that point is not a smaller file, it is the wrong colours: the
+   * shipped version refreshed every twentieth frame and left nineteen frames in
+   * twenty indexed against a table the decoder never used. On screen the pitch
+   * lines went red and the home shirts went grey.
+   *
+   * The test that stood here asserted the palettes landed on frames 0, 20 and
+   * 40 — which is what the code did, and not what a decoder does. Asserting that
+   * every frame is indexed against the table the file actually carries is the
+   * check that would have caught it.
+   */
+  it('indexes every frame against the one table the file carries', async () => {
     await exportSequence(workingStage(), CROP, 'gif', { frameCount: 3, speed: 1 })
 
-    expect(written.flatMap((f, i) => (f.hasPalette ? [i] : []))).toEqual([0, 20, 40])
+    const global = written[0].palette
+    expect(global).not.toBeNull()
+    // No frame but the first carries a table of its own...
+    expect(written.slice(1).every((f) => f.palette === null)).toBe(true)
+    // ...and every frame's pixels were mapped against that same global one.
+    expect(indexedWith).toHaveLength(45)
+    expect(indexedWith.every((p) => p === global)).toBe(true)
   })
 
   it('does not enlarge the board for a GIF, the way it does for a video', async () => {

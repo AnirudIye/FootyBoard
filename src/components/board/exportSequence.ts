@@ -54,29 +54,29 @@ const GIF_FPS = 20
 const WEBM_FPS = 30
 
 /**
- * One palette per second of GIF, rather than one per frame.
+ * How many moments across the sequence the GIF's one palette is built from.
  *
- * Quantising was the only per-frame cost buying nothing. A sequence is the same
- * board with its tokens in different places — `interpolateFrames` moves x, y
- * and rotation and touches no colour — so 45 frames paid for 45 searches that
- * all found the same 256 colours. Changing only this, on one board and back to
- * back: 147 ms of quantising became 3 ms, the worst uninterrupted block inside
- * the walk went from 38 ms to 28 ms, and the whole export from 1519 ms to
- * 1343 ms.
+ * **A GIF has exactly one palette here, and that is a correctness requirement
+ * rather than a saving.** gifenc writes the first frame's palette as the global
+ * colour table and gives a local table only to a later frame that carries one
+ * (`useLocalColorTable = Boolean(palette) && !first`) — so a frame written
+ * *without* a palette is decoded against the **global** table, not against
+ * whichever local table came before it. Refreshing the palette every second and
+ * carrying it only on the frames that computed one therefore indexed nineteen
+ * frames in twenty against a table the decoder was not using. It shipped, and it
+ * looked exactly like what it was: the pitch lines went red and the home shirts
+ * went grey between one refresh and the next, and came right for a single frame
+ * each time a new table was written.
  *
- * What reuse costs was measured rather than assumed: against a palette computed
- * per frame, fewer than 1% of pixels land on a different colour, and where they
- * do the worst single channel moves by 23 of 255 on a mean of 0.01. Nothing
- * that survives being a GIF.
- *
- * It refreshes on an interval rather than never because "the colours cannot
- * change" is true of interpolation and not of the board. A token hidden at
- * frame 0 — a half view hides the off-half players — can walk into shot later
- * wearing a colour the first frame never contained. On an interval that reads
- * wrong for at most a second of GIF; computed once, it would read wrong for the
- * rest of the sequence.
+ * So the palette is computed once, before the walk, and every frame indexes it.
+ * It is built from several moments rather than from frame zero because the board
+ * is not one still: a half view hides the off-half players, so a token can walk
+ * into shot wearing a colour the first frame never contained, and quantising
+ * frame zero alone would have no entry near it. Sampling start, end and two
+ * points between costs four extra paints — about a tenth of a second — and is
+ * the whole of what the interval was trying to buy.
  */
-const PALETTE_EVERY = GIF_FPS
+const PALETTE_SAMPLES = 4
 
 /**
  * The ceiling handed to the recorder, scaled to the frame it is encoding.
@@ -193,10 +193,19 @@ export function gifDelay(frameCount: number, speed: number, steps: number): numb
 }
 
 /**
- * Whether the frame at `index` computes a new palette. True at zero, which is
- * what lets the first written frame carry the GIF's global colour table.
+ * Which steps of the walk are painted to build the palette from, evenly spaced
+ * across the sequence and always including both ends.
+ *
+ * De-duplicated, because a two-step walk asked for four samples would otherwise
+ * quantise the same frame twice for nothing.
  */
-export const refreshesPalette = (index: number): boolean => index % PALETTE_EVERY === 0
+export function paletteSampleSteps(steps: number, samples = PALETTE_SAMPLES): number[] {
+  const n = Math.max(1, Math.min(samples, steps + 1))
+  if (n === 1) return [0]
+  const out: number[] = []
+  for (let i = 0; i < n; i++) out.push(Math.round((i / (n - 1)) * steps))
+  return [...new Set(out)]
+}
 
 /** The recorder's ceiling for a frame this size. See `VIDEO_BITS_PER_PIXEL`. */
 export const videoBitrate = ({ width, height }: FrameGeometry): number =>
@@ -298,23 +307,39 @@ async function exportGif(
 
   const gif = GIFEncoder()
   const restore = useBoardStore.getState().playback.position
-  // Frame zero always refreshes, so nothing ever reads the empty one.
-  let palette: number[][] = []
+  const at = (i: number) => (i / steps) * (frameCount - 1)
 
   try {
+    /**
+     * The palette pass, before anything is written.
+     *
+     * The samples are concatenated and quantised together, so the one table has
+     * an entry near every colour the sequence shows rather than near only the
+     * colours standing still at the start. `getImageData` returns a fresh buffer
+     * each call, so these are copies and not four views of the same pixels.
+     */
+    const sampleSteps = paletteSampleSteps(steps)
+    const pixels = new Uint8Array(sampleSteps.length * w * h * 4)
+    for (let s = 0; s < sampleSteps.length; s++) {
+      await paintFrame(stage, crop, at(sampleSteps[s]), ctx, geom)
+      pixels.set(ctx.getImageData(0, 0, w, h).data, s * w * h * 4)
+    }
+    const palette = quantize(pixels, 256)
+
     for (let i = 0; i <= steps; i++) {
-      const pos = (i / steps) * (frameCount - 1)
       // Awaiting here is what makes each frame distinct — see paintFrame.
-      await paintFrame(stage, crop, pos, ctx, geom)
+      await paintFrame(stage, crop, at(i), ctx, geom)
       const { data } = ctx.getImageData(0, 0, w, h)
-      const fresh = refreshesPalette(i)
-      if (fresh) palette = quantize(data, 256)
       const index = applyPalette(data, palette)
-      // A frame carries a palette only when it computed one. gifenc writes the
-      // first frame's as the global colour table and gives every later one a
-      // local table of its own, so handing all 45 the same 768 bytes wrote
-      // 33 KB of duplicate colour tables into the file.
-      gif.writeFrame(index, w, h, { palette: fresh ? palette : undefined, delay })
+      /**
+       * Only the first frame carries the palette, and every frame is indexed
+       * against that same one. The first becomes the global colour table; every
+       * later frame written without a palette is decoded against it, which is
+       * exactly what is wanted and is what the interval version got wrong. It
+       * also keeps the 33 KB of duplicate local colour tables out of the file,
+       * but that is the side benefit rather than the reason.
+       */
+      gif.writeFrame(index, w, h, { palette: i === 0 ? palette : undefined, delay })
     }
     gif.finish()
     download(new Blob([gif.bytes()], { type: 'image/gif' }), filename)
