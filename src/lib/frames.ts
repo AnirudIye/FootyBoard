@@ -10,6 +10,25 @@ import { clamp, lerp } from './math'
  */
 export const SECONDS_PER_FRAME = 1.1
 
+/**
+ * The most frames one sequence may hold.
+ *
+ * Nothing bounded this before, and everything downstream of it is linear in the
+ * count: the storyboard is `(n - 1) * SECONDS_PER_FRAME` seconds long, each
+ * captured frame adds a chip to the strip, each is a snapshot of every token in
+ * the undo stack and in the saved board, and each lengthens the export. Twenty
+ * is 20.9 seconds of movement, which is longer than any single passage of play
+ * a tactics board is used to describe — and it is also the figure the GIF work
+ * kept quoting as the worst case it had to defend against, so making it the
+ * actual ceiling is what turns that defence into an argument about a bounded
+ * range rather than an open one.
+ *
+ * The exporters keep their own caps and still need them: this bounds the
+ * *storyboard*, and `gifSteps` bounds the frames written *between* its poses,
+ * which is a different number and a much larger one.
+ */
+export const MAX_FRAMES = 20
+
 /** Snapshot the positions of every token on the board. */
 export function captureFrame(tokens: Token[]): Record<string, FrameTokenState> {
   const out: Record<string, FrameTokenState> = {}

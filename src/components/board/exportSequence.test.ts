@@ -3,6 +3,7 @@ import type Konva from 'konva'
 import {
   exportSequence,
   frameGeometry,
+  gifBudget,
   gifSteps,
   paletteSampleSteps,
   videoBitrate, gifDelay } from './exportSequence'
@@ -410,5 +411,101 @@ describe('a GIF is bounded however long the sequence is', () => {
     expect(gifSteps(3, 2)).toBe(22)
     // ...and the delay stays at the frame rate rather than doubling.
     expect(gifDelay(3, 2, gifSteps(3, 2))).toBe(50)
+  })
+})
+
+/**
+ * The second budget, and what it is for.
+ *
+ * Every written frame is a React commit, a Konva draw, a `getImageData`, a
+ * palette mapping and an LZW pass, all of them on the main thread. At 20fps and
+ * 150 frames a twelve-frame storyboard measured **40.5 seconds with 85% of it
+ * blocked** in a Chromium at 375x812 under 6x CPU throttling — which is not a
+ * slow export, it is a page nobody can touch. A finger gets a quarter of that
+ * work, and pays for it in smoothness rather than in time.
+ */
+describe('what a phone may spend on a GIF', () => {
+  it('writes fewer frames a second under a finger', () => {
+    // 2.2 seconds of movement: 44 steps at 20fps, 26 at 12.
+    expect(gifSteps(3, 1, gifBudget(false))).toBe(44)
+    expect(gifSteps(3, 1, gifBudget(true))).toBe(26)
+  })
+
+  it('caps a long sequence far sooner', () => {
+    expect(gifSteps(12, 1, gifBudget(false))).toBe(150)
+    expect(gifSteps(12, 1, gifBudget(true))).toBe(60)
+    // And a longer one costs no more than that, which is the whole point of a
+    // cap: the worst case is bounded rather than linear in the storyboard.
+    expect(gifSteps(20, 1, gifBudget(true))).toBe(60)
+  })
+
+  it('still plays back the length of the sequence it pictures', () => {
+    // The cap must cost frame rate and never duration — a phone handing back a
+    // five-second GIF of a twelve-second move is a worse bug than a slow one.
+    const steps = gifSteps(12, 1, gifBudget(true))
+    expect((gifDelay(12, 1, steps) * steps) / 1000).toBeCloseTo(12.1, 0)
+  })
+
+  it('takes the mouse budget on a machine with no matchMedia at all', () => {
+    // Which is jsdom, and is also every server-rendered pass. Guessing "phone"
+    // where the question cannot be asked would quietly halve every desktop GIF.
+    expect(gifBudget()).toEqual({ fps: 20, maxFrames: 150 })
+  })
+
+  it('takes the finger budget when the pointer is coarse', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('pointer: coarse'),
+    }))
+    expect(gifBudget()).toEqual({ fps: 12, maxFrames: 60 })
+  })
+
+  it('writes the shorter walk end to end, not merely in the arithmetic', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('pointer: coarse'),
+    }))
+    await exportSequence(workingStage(), CROP, 'gif', { frameCount: 3, speed: 1 })
+    // 27 rather than the 45 the same sequence writes under a mouse.
+    expect(written).toHaveLength(27)
+  })
+})
+
+/**
+ * Progress, and why it is reported coarsely.
+ *
+ * A phone export runs for seconds, so it owes the person holding it evidence
+ * that it is moving. What it must not do is buy that evidence with the thing it
+ * was made cheap to protect: `onProgress` drives React state, and firing once
+ * per written frame would hand back exactly the renders that freezing the frame
+ * strip's playhead removed — a third of a phone export, measured.
+ */
+describe('progress', () => {
+  const track = async (kind: 'gif' | 'webm', opts: { frameCount: number; speed: number }) => {
+    const seen: number[] = []
+    await exportSequence(workingStage(), CROP, kind, { ...opts, onProgress: (f) => seen.push(f) })
+    return seen
+  }
+
+  it('starts at nothing and ends at done', async () => {
+    const seen = await track('gif', { frameCount: 3, speed: 1 })
+    expect(seen[0]).toBe(0)
+    expect(seen.at(-1)).toBe(1)
+  })
+
+  it('never goes backwards', async () => {
+    const seen = await track('gif', { frameCount: 3, speed: 1 })
+    expect(seen).toEqual([...seen].sort((a, b) => a - b))
+  })
+
+  it('costs a handful of renders rather than one per frame', async () => {
+    const seen = await track('gif', { frameCount: 3, speed: 1 })
+    expect(written).toHaveLength(45)
+    // Twenty five-percent steps, plus the two ends.
+    expect(seen.length).toBeLessThanOrEqual(22)
+  })
+
+  it('reports on a video too, where the walk is the clock', async () => {
+    const seen = await track('webm', { frameCount: 2, speed: 200 })
+    expect(seen[0]).toBe(0)
+    expect(seen.at(-1)).toBe(1)
   })
 })

@@ -1,5 +1,55 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { useBoardStore } from './boardStore'
+import { MAX_FRAMES } from '../lib/frames'
+
+/**
+ * The ceiling on a sequence.
+ *
+ * Everything downstream of the count is linear in it — a chip on the strip, a
+ * snapshot of every token in the undo stack and in the saved board, and a
+ * longer export — and nothing bounded it. Twenty is 20.9 seconds of movement.
+ */
+describe('a sequence is bounded', () => {
+  beforeEach(() => useBoardStore.getState().initDefaultBoard())
+
+  const fill = () => {
+    for (let i = 0; i < MAX_FRAMES + 5; i++) useBoardStore.getState().addFrame()
+  }
+
+  it('stops at the ceiling however many times it is asked', () => {
+    fill()
+    expect(useBoardStore.getState().frames).toHaveLength(MAX_FRAMES)
+  })
+
+  it('refuses rather than dropping the oldest pose', () => {
+    // Trimming to make room would silently rewrite a sequence somebody built,
+    // and the caller has no way to know. The first frame must still be first.
+    const first = (() => {
+      useBoardStore.getState().addFrame()
+      return useBoardStore.getState().frames[0].id
+    })()
+    fill()
+    expect(useBoardStore.getState().frames[0].id).toBe(first)
+  })
+
+  it('does not push an undo step for a capture that did not happen', () => {
+    fill()
+    const before = useBoardStore.getState().frames.length
+    useBoardStore.getState().addFrame()
+    useBoardStore.getState().undoAction()
+    // One undo takes back the last capture that really landed, not a no-op.
+    expect(useBoardStore.getState().frames).toHaveLength(before - 1)
+  })
+
+  it('takes another capture once one is deleted', () => {
+    fill()
+    const { frames, deleteFrame } = useBoardStore.getState()
+    deleteFrame(frames[0].id)
+    expect(useBoardStore.getState().frames).toHaveLength(MAX_FRAMES - 1)
+    useBoardStore.getState().addFrame()
+    expect(useBoardStore.getState().frames).toHaveLength(MAX_FRAMES)
+  })
+})
 
 describe('board frames', () => {
   beforeEach(() => useBoardStore.getState().initDefaultBoard())

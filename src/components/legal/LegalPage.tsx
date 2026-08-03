@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 
 /**
- * The four footer links, which are flex items of a wrapping nav and so are
+ * The five footer links, which are flex items of a wrapping nav and so are
  * blockified into the reach of the 44px coarse-pointer floor in index.css.
  *
  * A name rather than the same string typed four times, because the reason it
@@ -69,6 +69,9 @@ export default function LegalPage({
             </Link>
             <Link to="/accessibility" className={footerLink}>
               Accessibility
+            </Link>
+            <Link to="/contact" className={footerLink}>
+              Contact
             </Link>
             <Link to="/" className={footerLink}>
               Home

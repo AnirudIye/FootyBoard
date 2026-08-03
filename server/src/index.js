@@ -13,6 +13,7 @@ import { authRouter } from './routes/auth.js'
 import { boardsRouter } from './routes/boards.js'
 import { sharesRouter, redeemRouter } from './routes/shares.js'
 import { assistantRouter } from './routes/assistant.js'
+import { contactRouter } from './routes/contact.js'
 import { TooManyRequests } from './rateLimit.js'
 import { ORIGIN, APP_ENV, isProduction, isAllowedOrigin } from './env.js'
 
@@ -354,6 +355,9 @@ app.use('/api/boards', sharesRouter)
 app.use('/api/boards', boardsRouter)
 app.use('/api/shares', redeemRouter)
 app.use('/api/assistant', assistantRouter)
+// Unauthenticated, unlike everything above it, and `routes/contact.js` argues
+// why that is the requirement rather than the oversight.
+app.use('/api/contact', contactRouter)
 
 /**
  * Serve the built frontend from this process, when this process is the origin.

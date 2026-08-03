@@ -16,6 +16,7 @@ import ClaimPage from './components/auth/ClaimPage'
 import PrivacyPolicy from './components/legal/PrivacyPolicy'
 import TermsOfService from './components/legal/TermsOfService'
 import AccessibilityStatement from './components/legal/AccessibilityStatement'
+import ContactPage from './components/legal/ContactPage'
 
 // The board pulls in Konva and the encoders; keep it out of the landing bundle.
 const BoardPage = lazy(() => import('./components/board/BoardPage'))
@@ -80,6 +81,11 @@ export const routes: RouteObject[] = [
       { path: '/privacy', element: <PrivacyPolicy /> },
       { path: '/terms', element: <TermsOfService /> },
       { path: '/accessibility', element: <AccessibilityStatement /> },
+      // The route both policy pages point at. It used to be "the address
+      // published in the project's repository", and that repository is private,
+      // so every promise of erasure or of a copyright channel named a door with
+      // nothing behind it.
+      { path: '/contact', element: <ContactPage /> },
       {
         // Where someone lands when they have been read a code rather than sent a
         // link. Lazy like the board, since it redirects there on success anyway.

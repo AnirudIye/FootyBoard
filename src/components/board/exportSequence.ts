@@ -48,10 +48,74 @@ const GIF_MAX_WIDTH = 640
 const VIDEO_MAX_WIDTH = 1280
 const VIDEO_SCALE = 2
 
-// A GIF's palette and per-frame delay make anything smoother expensive for
-// little gain; a video is cheap enough to run at screen rate.
-const GIF_FPS = 20
+// A video is cheap enough to run at screen rate: the recorder encodes it, the
+// walk is real time, and a frame costs a paint and nothing else. A GIF's frames
+// are each paid for on this thread, which is why its rate is a budget below
+// rather than a constant here.
 const WEBM_FPS = 30
+
+/** What one device may spend writing a GIF. */
+export interface GifBudget {
+  /** Frames written per second of sequence. */
+  fps: number
+  /** The most frames written, however long the sequence is. */
+  maxFrames: number
+}
+
+/**
+ * Two budgets, because a phone is not a slower desktop — it is a different
+ * order of machine, and one constant could only ever be right for one of them.
+ *
+ * **Every GIF frame is a React commit, a Konva draw, a `getImageData`, a
+ * palette mapping and an LZW pass, and all five are on the main thread.** The
+ * work per frame is roughly fixed by the board rather than by the screen: a
+ * phone's pitch is a third of the pixels, but the commit that dominates is the
+ * same tree either way, so a small screen buys far less than it looks like it
+ * should.
+ *
+ * Measured against `npm run dev` in a Chromium at 375x812 under CPU throttling,
+ * which is the closest thing here to a real handset — 4x for a mid-range phone,
+ * 6x for a cheap or old one. Before this budget existed, at 20fps and 150
+ * frames:
+ *
+ * ```
+ * 3 captured frames,  4x CPU    45 written    6.4s   82% of it main-thread blocked
+ * 6 captured frames,  4x CPU   111 written   15.3s   83% blocked
+ * 12 captured frames, 6x CPU   150 written   40.5s   85% blocked, worst block 578ms
+ * ```
+ *
+ * Forty seconds of a page that answers a tap once every quarter second is not a
+ * slow export, it is a broken one, and nothing in the format degrades on its
+ * own. So a finger gets 12fps and 60 frames: about a quarter of the work in the
+ * worst case, and `gifDelay` keeps the GIF the length of the sequence it
+ * pictures rather than playing it back short and fast.
+ *
+ * **What this costs is smoothness, and that is the right thing to spend.** A
+ * tactics move is slow, near-linear travel between poses — it reads perfectly
+ * at 12fps — and the file is the thing somebody has to send from a phone, where
+ * the cap also takes a twelve-frame storyboard from 1.4 MB to about 570 KB. It
+ * is the same trade `maxFrames` already made on a desktop for a long sequence,
+ * made one step earlier for a machine that reaches the point sooner.
+ *
+ * The pointer is the signal, matching `useCoarsePointer` and the 44px floor in
+ * `index.css`: it is the input device rather than the screen, so a tablet with
+ * a trackpad is a desktop here and a 1280px tablet under a thumb is not. It
+ * mis-sorts a touchscreen laptop into the cheaper budget, which costs that
+ * machine some frame rate and nothing else — the failure the other way round is
+ * the forty seconds above.
+ */
+const GIF_MOUSE: GifBudget = { fps: 20, maxFrames: 150 }
+const GIF_FINGER: GifBudget = { fps: 12, maxFrames: 60 }
+
+/** Whether a finger is driving this session. jsdom has no `matchMedia` at all. */
+const coarsePointer = (): boolean =>
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(pointer: coarse)').matches
+
+/** The budget this device gets. Takes the answer directly so a test can set it. */
+export const gifBudget = (coarse = coarsePointer()): GifBudget =>
+  coarse ? GIF_FINGER : GIF_MOUSE
 
 /**
  * How many moments across the sequence the GIF's one palette is built from.
@@ -95,6 +159,24 @@ const VIDEO_BITS_PER_PIXEL = 0.2
 const NO_CANVAS =
   "This browser wouldn't produce an image of the board. Reload the page, then export again."
 
+/**
+ * How long a finished file's object URL is left alive after the click.
+ *
+ * It was revoked on the next line, which is the shape everybody writes and is a
+ * race the whole time: `a.click()` only *starts* a download, and revoking the
+ * URL destroys the blob the browser is still being asked to read from. Chromium
+ * happens to take a reference synchronously, so it never showed up here — the
+ * browsers that do not are Safari's, and iOS Safari is the one platform this
+ * export has never been tried on.
+ *
+ * Left as a timeout rather than removed, because the alternative is a leak: a
+ * revoked-nowhere blob holds its bytes for the life of the page, and a 2.5 MB
+ * GIF exported a few times over a long session is real memory on a phone. A
+ * minute is far longer than any browser needs to take its own reference and far
+ * shorter than a session.
+ */
+const REVOKE_AFTER = 60_000
+
 function download(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -103,7 +185,7 @@ function download(blob: Blob, filename: string) {
   document.body.appendChild(a)
   a.click()
   a.remove()
-  URL.revokeObjectURL(url)
+  setTimeout(() => URL.revokeObjectURL(url), REVOKE_AFTER)
 }
 
 /** How big one exported frame is, and what Konva is asked to rasterise it at. */
@@ -145,41 +227,33 @@ export function frameGeometry(crop: Crop, maxWidth: number, scale = 1): FrameGeo
 }
 
 /**
- * The most frames a GIF may be, however long the storyboard is.
- *
- * Everything else here made each frame cheaper. This is the only thing that
- * bounds how many there are, and without it the cost is simply linear in the
- * length of the sequence: at 20fps a twelve-frame storyboard is 242 written
- * frames, and every one of them is a paint, a `getImageData`, a palette mapping
- * and an LZW pass. Projected from the measured 29ms per frame that is **seven
- * seconds of blocked main thread and a 4.1 MB file**, and a twenty-frame one is
- * twelve seconds and 7 MB. The complaint that started this work was that the
- * GIF maker makes the page lag; a sixteen percent saving does not answer that
- * for anybody whose sequence is long, and nothing in the format degrades
- * gracefully on its own.
- *
- * 150 holds the worst case to about 4.4 seconds and 2.5 MB. Under about eight
- * captured frames nothing is capped at all and the export is exactly what it
- * was; past that the GIF loses frame rate rather than losing time, which is the
- * trade worth making for a thing whose purpose is being sent to somebody.
- */
-const GIF_MAX_FRAMES = 150
-
-/**
  * The last index of the GIF's walk. It writes `steps + 1` frames, because the
  * walk includes both ends of the sequence.
+ *
+ * `maxFrames` is the only thing bounding how many frames there are, and without
+ * it the cost is simply linear in the length of the storyboard: at 20fps twelve
+ * captured frames is 242 written ones, and each is a paint, a `getImageData`, a
+ * palette mapping and an LZW pass. On a desktop that is seven seconds of blocked
+ * main thread and a 4.1 MB file; a twenty-frame storyboard is twelve seconds and
+ * 7 MB. Nothing in the format degrades gracefully on its own, so past the cap a
+ * GIF loses frame rate rather than losing time — see `gifDelay`, which is what
+ * keeps that true, and `GIF_MOUSE` for what the two budgets are.
  */
-export function gifSteps(frameCount: number, speed: number): number {
+export function gifSteps(
+  frameCount: number,
+  speed: number,
+  budget: GifBudget = gifBudget(),
+): number {
   const seconds = sequenceDuration(frameCount, SECONDS_PER_FRAME) / speed
-  return Math.max(2, Math.min(GIF_MAX_FRAMES, Math.round(seconds * GIF_FPS)))
+  return Math.max(2, Math.min(budget.maxFrames, Math.round(seconds * budget.fps)))
 }
 
 /**
  * Milliseconds to hold each written frame, derived from the walk rather than
- * from `GIF_FPS`.
+ * from the budget's frame rate.
  *
- * The two agreed exactly while `steps` was `seconds * GIF_FPS`, so a constant
- * `1000 / GIF_FPS` was right by construction. The cap breaks that agreement:
+ * The two agreed exactly while `steps` was `seconds * fps`, so a constant
+ * `1000 / fps` was right by construction. The cap breaks that agreement:
  * a capped sequence has fewer frames covering the same seconds, so a fixed
  * delay would play it back short and fast — a twenty-frame storyboard would
  * arrive as a seven-second GIF of a twenty-one-second move. Dividing the
@@ -278,6 +352,33 @@ async function paintFrame(
 export interface SequenceOpts {
   frameCount: number
   speed: number
+  /**
+   * How far along the export is, 0 to 1.
+   *
+   * Reported in coarse steps rather than per frame, and the throttle is the
+   * point rather than a nicety: what this drives is React state, and a component
+   * that re-rendered once per written frame would be spending on the strip
+   * exactly the budget the frame cap was added to protect. Freezing the strip's
+   * playhead while an export runs took a twelve-frame phone export from 40.5s to
+   * 24.7s by removing 150 such renders; handing them straight back through the
+   * progress bar would be an odd way to spend that.
+   */
+  onProgress?: (fraction: number) => void
+}
+
+/** How much has to change before the caller hears about it. See `onProgress`. */
+const PROGRESS_STEP = 0.05
+
+/** Wraps `onProgress` so it fires on movement worth a render, and on the ends. */
+function throttleProgress(onProgress: SequenceOpts['onProgress']) {
+  let last = -1
+  return (fraction: number) => {
+    if (!onProgress) return
+    const f = Math.min(1, Math.max(0, fraction))
+    if (f !== 1 && f - last < PROGRESS_STEP) return
+    last = f
+    onProgress(f)
+  }
 }
 
 /** Export the captured frames as one moving image, in whichever format. */
@@ -293,7 +394,7 @@ export function exportSequence(
 async function exportGif(
   stage: Konva.Stage,
   crop: Crop,
-  { frameCount, speed }: SequenceOpts,
+  { frameCount, speed, onProgress }: SequenceOpts,
   filename = 'footyboard.gif',
 ): Promise<void> {
   if (frameCount < 2)
@@ -309,6 +410,16 @@ async function exportGif(
   const restore = useBoardStore.getState().playback.position
   const at = (i: number) => (i / steps) * (frameCount - 1)
 
+  // The palette pass is paints too, so it counts towards the total. Leaving it
+  // out would park the bar at zero for the first four frames of a short export,
+  // which on a phone is a visible fraction of the whole thing.
+  const sampleSteps = paletteSampleSteps(steps)
+  const totalPaints = sampleSteps.length + steps + 1
+  const report = throttleProgress(onProgress)
+  let painted = 0
+  const painting = () => report(++painted / totalPaints)
+  report(0)
+
   try {
     /**
      * The palette pass, before anything is written.
@@ -318,17 +429,18 @@ async function exportGif(
      * colours standing still at the start. `getImageData` returns a fresh buffer
      * each call, so these are copies and not four views of the same pixels.
      */
-    const sampleSteps = paletteSampleSteps(steps)
     const pixels = new Uint8Array(sampleSteps.length * w * h * 4)
     for (let s = 0; s < sampleSteps.length; s++) {
       await paintFrame(stage, crop, at(sampleSteps[s]), ctx, geom)
       pixels.set(ctx.getImageData(0, 0, w, h).data, s * w * h * 4)
+      painting()
     }
     const palette = quantize(pixels, 256)
 
     for (let i = 0; i <= steps; i++) {
       // Awaiting here is what makes each frame distinct — see paintFrame.
       await paintFrame(stage, crop, at(i), ctx, geom)
+      painting()
       const { data } = ctx.getImageData(0, 0, w, h)
       const index = applyPalette(data, palette)
       /**
@@ -363,7 +475,7 @@ function pickMime(): string | null {
 async function exportWebm(
   stage: Konva.Stage,
   crop: Crop,
-  { frameCount, speed }: SequenceOpts,
+  { frameCount, speed, onProgress }: SequenceOpts,
   filename = 'footyboard.webm',
 ): Promise<void> {
   if (frameCount < 2)
@@ -391,6 +503,12 @@ async function exportWebm(
     rec.onstop = () => resolve()
   })
 
+  // A video's walk is real time, so how far through it is *is* the progress —
+  // no counting needed, and the bar moves at a steady rate rather than at
+  // whatever rate the machine manages to write frames.
+  const report = throttleProgress(onProgress)
+  report(0)
+
   rec.start()
   const start = performance.now()
   try {
@@ -399,6 +517,7 @@ async function exportWebm(
     for (;;) {
       const t = Math.min(1, (performance.now() - start) / durationMs)
       await paintFrame(stage, crop, t * (frameCount - 1), ctx, geom)
+      report(t)
       if (t >= 1) break
     }
   } finally {

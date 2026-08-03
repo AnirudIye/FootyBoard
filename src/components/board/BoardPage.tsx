@@ -103,14 +103,38 @@ export default function BoardPage() {
           <BenchRail side="away" />
         </div>
 
-        <HUD />
+        {/* The readout and the assistant's launcher, which docked are one row
+            and floating are two unrelated corners of the board.
+
+            `overlay:contents` again, and it is carrying more here than it does
+            for the rails: the two children float to *opposite* corners, `HUD` to
+            `top-4 left-4` and the launcher to `bottom-4 right-4`, so a wrapper
+            that stayed in the box tree would be an element with no size in one
+            corner and two absolutely positioned things resolving against it
+            instead of against the band. Taking it out leaves both exactly where
+            they were, which is the test: the desktop is unchanged.
+
+            Docked they are a row, and that is the point of putting them
+            together. The launcher was `fixed bottom-4 right-4` on every screen,
+            which on a docked one is on top of the frame strip's right-hand end —
+            `elementFromPoint` returned it for `GIF` and for `More` at 375x812.
+            The readout row is the only row in the stack with width to spare and
+            the shortest one in it, so 24px there buys the launcher a home and
+            gives the strip back the 68px lane it had been holding open.
+
+            The rule and the gutters are on this wrapper rather than on `HUD`,
+            because docked they belong to the row and not to the readouts; see
+            `HUD`, which gave them up for exactly this. */}
+        <div className="flex items-center gap-2 border-t border-rule px-3 overlay:contents">
+          <HUD />
+          <Assistant />
+        </div>
         <DrawingToolbar />
       </div>
 
       <FrameStrip />
 
       <Inspector />
-      <Assistant />
       <Toasts />
     </div>
   )

@@ -175,6 +175,21 @@ export interface BoardMember {
 }
 
 export const api = {
+  /**
+   * A message to whoever runs this instance, and the only route to them.
+   *
+   * No session, unlike everything else on this object, and that is the
+   * requirement rather than an omission: the promises this serves are a right of
+   * erasure and a copyright channel, and the person most likely to need the
+   * first is somebody who has already deleted their account. See
+   * `server/src/routes/contact.js`.
+   */
+  contact: (topic: string, replyTo: string, body: string) =>
+    request<{ received: boolean }>('/contact', {
+      method: 'POST',
+      body: JSON.stringify({ topic, replyTo, body }),
+    }),
+
   /** The question list the signup and recovery dropdowns are built from. */
   securityQuestions: () =>
     request<{ questions: SecurityQuestion[] }>('/auth/security-questions'),

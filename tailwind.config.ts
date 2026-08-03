@@ -95,6 +95,50 @@ export default {
       // a tablet held upright, where the rails cover 18.5% of the drawn pitch
       // and both goalmouths, and where the empty canvas is vertical and free.
       addVariant('overlay', '@media (pointer: fine), (max-height: 639px), (min-width: 900px)')
+
+      // `strip:` is "the frame strip has room for the whole of itself on one
+      // line". It is a fourth variant rather than more `roomy:` because the
+      // frame strip is roughly three times the width of either toolbar, so the
+      // width at which it stops fitting is nowhere near 640 — and `roomy` was
+      // measured to be the wrong answer for it.
+      //
+      // The strip is the widest bar in the product: at three captured frames it
+      // measures 920px, and every further frame adds a chip. It was one
+      // non-wrapping row centred in the viewport inside a page that is
+      // `overflow-hidden`, and what that cost was not a squeeze, it was the
+      // feature. At 375x812 with a single frame captured the bar spanned -236 to
+      // 611: `+ Frame`, `GIF` and `Video` were all off screen with nothing to
+      // scroll, so a phone could capture one frame, could not capture a second,
+      // and a GIF needs two. A 768px tablet lost `+ Frame` at one frame and
+      // `GIF` at two.
+      //
+      // **1280 rather than "wide enough for the bar", and the difference is the
+      // assistant's launcher.** The bar is centred, so it needs its own width
+      // plus twice whatever must stay clear at one end. The launcher is
+      // `fixed bottom-4 right-4` and 105px wide, so it owns 121px of the right
+      // edge — and a centred bar reaches it as soon as it is wider than the
+      // window less 242. At three frames the bar is 920px under a mouse and
+      // 976px under a finger, which puts the crossing at 1162 and 1218.
+      //
+      // 1024 was tried first and measured wrong for exactly that reason: a
+      // 1024x768 tablet showed the whole 976px bar and the launcher sat on top
+      // of `Video`, so the bar fitted the screen and still could not be used.
+      // Below 1280 the strip shows what a sequence is *built, checked and sent*
+      // with — `+ Frame`, `Play`, `GIF` — which holds it to one line and 329px
+      // on a phone, well clear of the corner.
+      //
+      // Width alone, and no height clause, because this is a horizontal bar and
+      // the axis it runs out of is horizontal. That happens to catch 812x375
+      // landscape as well, which needs it for the same reason every other phone
+      // orientation does.
+      //
+      // **A long enough sequence still overruns above 1280, and this does not
+      // fix that.** Every captured frame adds a chip, so around twelve frames on
+      // a 1440px desktop the bar reaches the launcher again. `flex-wrap` on the
+      // bar keeps it on the screen; nothing here keeps it out from under the
+      // launcher, because no breakpoint can — the bar's width is a function of
+      // how many frames somebody captured, not of the window.
+      addVariant('strip', '@media (min-width: 1280px)')
     }),
   ],
 } satisfies Config

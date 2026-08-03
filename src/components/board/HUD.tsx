@@ -85,11 +85,22 @@ export default function HUD() {
          `pointer-events-none` goes with the floating half and only with it. Its
          job is to stop a readout eating a press meant for the pitch underneath;
          docked there is no pitch underneath, and switching pointer events off
-         there would achieve nothing except making the text unselectable. */
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-rule px-3 py-1
+         there would achieve nothing except making the text unselectable.
+
+         **The row's own rule and side padding moved out to `BoardPage`, and the
+         `min-w-0 flex-1` here is the other half of that.** Docked, this shares
+         its row with the assistant's launcher — see `Assistant` for why that
+         button lives here — so the hairline and the gutters belong to the row
+         rather than to the readouts, or they would stop where the readouts do
+         and leave the launcher's end of the row unruled. `border-rule` stays
+         because it is the *colour* the floating card's `overlay:border` needs;
+         with no width beside it, it draws nothing docked. `px-3` had been
+         serving both halves and is now `overlay:px-3`, which is the one place
+         that still wants it. */
+      className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 border-rule py-1
         overlay:pointer-events-none overlay:absolute overlay:top-4 overlay:left-4 overlay:z-10
         overlay:flex-nowrap overlay:gap-4 overlay:rounded overlay:border overlay:bg-surface/90
-        overlay:py-1.5 overlay:shadow-1"
+        overlay:px-3 overlay:py-1.5 overlay:shadow-1"
     >
       {selectionCount > 0 && <MonoReadout label="SEL" value={String(selectionCount)} />}
       {lastFormation && <MonoReadout label="SHAPE" value={lastFormation} />}

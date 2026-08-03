@@ -5,7 +5,9 @@
  */
 export const boardHandles: {
   exportPng: (() => Promise<void>) | null
-  exportSequence: ((kind: 'gif' | 'webm') => Promise<void>) | null
+  exportSequence:
+    | ((kind: 'gif' | 'webm', onProgress?: (fraction: number) => void) => Promise<void>)
+    | null
   fitPitch: (() => void) | null
 } = {
   exportPng: null,

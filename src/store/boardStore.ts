@@ -18,7 +18,7 @@ import { clampNorm } from '../lib/geometry'
 import { clamp } from '../lib/math'
 import type { DrawStyle } from '../lib/drawings'
 import { shiftAttached } from '../lib/drawings'
-import { captureFrame } from '../lib/frames'
+import { captureFrame, MAX_FRAMES } from '../lib/frames'
 import type { History } from '../lib/history'
 import { createHistory, push, undo, redo } from '../lib/history'
 import { id } from '../lib/id'
@@ -435,6 +435,12 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   playback: { position: -1, playing: false, speed: 1, loop: true, eased: true },
 
   addFrame: () => {
+    // Refused rather than trimmed at the ceiling: dropping the oldest pose to
+    // make room would silently rewrite a sequence somebody built deliberately,
+    // and the caller has no way to know it happened. `FrameStrip` disables the
+    // control at the same count and says why, so this is the floor under that
+    // rather than the thing anybody meets. See `MAX_FRAMES`.
+    if (get().frames.length >= MAX_FRAMES) return
     const before = get()._snapshot()
     const frame: Frame = {
       id: id(),

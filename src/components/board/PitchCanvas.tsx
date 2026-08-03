@@ -150,13 +150,14 @@ export default function PitchCanvas() {
       useBoardStore.getState().clearSelection()
       await exportBoardPng(stage, cropNow())
     }
-    boardHandles.exportSequence = async (kind: SequenceKind) => {
+    boardHandles.exportSequence = async (kind: SequenceKind, onProgress) => {
       const stage = requireStage()
       const st = useBoardStore.getState()
       st.clearSelection()
       await exportSequence(stage, cropNow(), kind, {
         frameCount: st.frames.length,
         speed: st.playback.speed,
+        onProgress,
       })
     }
     return () => {

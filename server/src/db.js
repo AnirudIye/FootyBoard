@@ -535,6 +535,47 @@ async function applySchema(client) {
     CREATE INDEX        IF NOT EXISTS idx_challenges_expiry ON auth_challenges(expires_at);
   `)
 
+  /**
+   * Messages sent through the contact form.
+   *
+   * This table exists because the legal pages need somewhere to point. Both of
+   * them told people to write to "the address published in the project's
+   * repository", and that repository is private — so a policy promising a right
+   * of erasure, and terms promising a copyright channel, named a route to
+   * nobody. A form writing here is the smallest thing that makes those promises
+   * real, and it has to be a form rather than an address because there is no
+   * mail anywhere in this product to send one to.
+   *
+   * **The body and the sender's address are encrypted, and that is not
+   * symmetry with boards for its own sake.** The messages this table is for are
+   * data-protection requests: by definition they arrive carrying the personal
+   * data of somebody who is asking about their personal data, from people who
+   * mostly have no account here, and often naming the address of one they do.
+   * Storing that in the clear while the boards beside it are sealed would be
+   * the wrong way round. `topic` and the timestamps stay plain so the table can
+   * be triaged and swept without a key.
+   *
+   * No `user_id`, deliberately. Anyone may write here, signed in or not, and a
+   * request to be erased is exactly the one that must not require an account —
+   * so what identifies the sender is whatever they typed, and nothing else is
+   * joined to it.
+   */
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS contact_messages (
+      id          TEXT PRIMARY KEY,
+      topic       TEXT NOT NULL,
+      reply_to    TEXT NOT NULL,
+      body        TEXT NOT NULL,
+      created_at  BIGINT NOT NULL,
+      handled_at  BIGINT
+    );
+
+    -- The only read anybody performs: what has come in and not been dealt with,
+    -- newest first.
+    CREATE INDEX IF NOT EXISTS idx_contact_unhandled
+      ON contact_messages(created_at DESC) WHERE handled_at IS NULL;
+  `)
+
   // Every rate-limit query reaches this table by primary key, so an index on
   // locked_until was only ever write amplification. Dropped rather than left
   // behind, since installs that already ran the old migration still have it.

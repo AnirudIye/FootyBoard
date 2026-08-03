@@ -131,8 +131,18 @@ export default function Assistant() {
     }
   })()
 
+  /**
+   * The panel and the launcher are two independent things now, where they used
+   * to be a positioning wrapper with both inside it.
+   *
+   * That wrapper never actually stacked anything: the panel renders only while
+   * `open` and the launcher only while it is not, so its `flex-col items-end
+   * gap-2` had nothing to lay out and it was a `fixed bottom-4 right-4` and
+   * nothing else. Flattening it is what lets the launcher dock while the panel
+   * goes on floating — see the launcher below for why it has to.
+   */
   return (
-    <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2">
+    <>
       <AnimatePresence>
         {open && (
           <motion.div
@@ -141,8 +151,11 @@ export default function Assistant() {
             exit={{ opacity: 0, y: 16, scale: 0.96 }}
             transition={spring}
             style={{ transformOrigin: 'bottom right' }}
-            className="flex h-[min(460px,70vh)] w-[min(340px,32vw)] min-w-[300px] flex-col overflow-hidden
-              rounded-lg border border-rule bg-surface shadow-2"
+            // The panel floats everywhere and always did. It is 300x460 of
+            // conversation, which is not a thing any row on a phone can hold,
+            // and a panel over the board is the right shape for it anyway.
+            className="fixed bottom-4 right-4 z-40 flex h-[min(460px,70vh)] w-[min(340px,32vw)]
+              min-w-[300px] flex-col overflow-hidden rounded-lg border border-rule bg-surface shadow-2"
           >
             <header className="flex items-center justify-between border-b border-rule px-3 py-2">
               <div className="flex items-baseline gap-2">
@@ -259,20 +272,51 @@ export default function Assistant() {
         )}
       </AnimatePresence>
 
-      {!open && (
-        <motion.button
-          layout
-          onClick={toggle}
-          whileHover={{ y: -2 }}
-          whileTap={{ scale: 0.95 }}
-          transition={spring}
-          className="liquid-glass flex items-center gap-2 rounded-full border border-rule-strong
-            bg-surface px-4 py-2.5 text-[13px] font-medium text-ink shadow-2"
-        >
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
-          Assistant
-        </motion.button>
-      )}
-    </div>
+      {/**
+       * The launcher floats where the rest of the board's chrome floats, and
+       * docks where the rest of it docks. That is the whole rule, and `overlay:`
+       * is the variant that already says it — `HUD` is arranged the same way and
+       * argues the same split.
+       *
+       * **It used to float everywhere, and on a docked screen that meant it
+       * stood on the frame strip.** It is `bottom-4 right-4` and 105x44, so it
+       * owns the last 60px of the viewport's corner; the strip is a docked row
+       * that ends in that same corner. Measured at 375x812 with three frames
+       * captured, `elementFromPoint` at the centre of each strip control
+       * returned this button for both `GIF` and `More`. They were on screen, the
+       * right size, and could not be tapped. A 68px lane on the strip bought its
+       * way out of that and cost the vertical pitch 68px to do it; docking costs
+       * the HUD row 24 and gives the rest back.
+       *
+       * Docked it is a flex item at the right-hand end of the readout row, which
+       * is the one row in the stack with width to spare — four readouts come to
+       * about 334px of the 375 a phone has, and the row is the shortest thing in
+       * the column at 20px precisely because there is nothing in it to hit.
+       * This is the first thing in it there is.
+       *
+       * **It stays mounted while the panel is open, and only hides itself where
+       * it floats.** Unmounting is what it did before, which was free when it
+       * was floating and is not now: a docked row that loses its only 44px child
+       * collapses from 44px to 20px, the canvas above it grows, and the pitch
+       * re-fits — a visible jump on the half of the screen the panel does not
+       * cover, every time somebody opens the assistant. Left in place it also
+       * gives the docked panel a second way to be dismissed, which the floating
+       * one never needed because it had nowhere to sit.
+       */}
+      <motion.button
+        layout
+        onClick={toggle}
+        aria-expanded={open}
+        whileHover={{ y: -2 }}
+        whileTap={{ scale: 0.95 }}
+        transition={spring}
+        className={`liquid-glass flex shrink-0 items-center gap-2 self-center rounded-full
+          border border-rule-strong bg-surface px-4 py-2.5 text-[13px] font-medium text-ink shadow-2
+          overlay:fixed overlay:bottom-4 overlay:right-4 overlay:z-40 ${open ? 'overlay:hidden' : ''}`}
+      >
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
+        Assistant
+      </motion.button>
+    </>
   )
 }
