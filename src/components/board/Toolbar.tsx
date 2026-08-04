@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useBoardStore, HOME_COLOR, AWAY_COLOR } from '../../store/boardStore'
 import { FORMATION_NAMES } from '../../lib/formations'
 import type { BlockHeight } from '../../lib/formations'
-import { Button } from '../ui/Button'
+import { Button, buttonClass } from '../ui/Button'
 import { Toggle } from '../ui/Toggle'
 import { Popover } from '../ui/Popover'
 import { Segmented } from '../ui/Segmented'
@@ -95,6 +95,56 @@ function ResetBoard() {
         >
           Reset the board
         </Button>
+      </div>
+    </Popover>
+  )
+}
+
+/**
+ * The way off the board to the pages that are about it.
+ *
+ * **Measured against the live site rather than reasoned about: `/board` linked
+ * to `/` and `/signup` and to nothing else.** No privacy policy, no terms, no
+ * accessibility statement, and no contact form — on the one page the product
+ * actually is. Everything else lives in a footer, and the board is `h-screen`
+ * with `overflow-hidden` and has never had one.
+ *
+ * That is worse than an inconvenience for two of these. A policy has to be
+ * reachable from the service it describes, and the contact form is the route
+ * both policies name for a data protection request — so the promise and the
+ * only way to act on it were on opposite sides of a page nobody using the board
+ * ever visits. Asked "where is the contact form", the honest answer was that
+ * you had to scroll to y3906 of the 3962px landing page, or type the address.
+ *
+ * `Help` rather than `About`, because the word somebody scans for when they
+ * want a human is help. Contact leads, since it is the one that was missing and
+ * the one that does something; the three policies follow in the order the
+ * footers already list them.
+ *
+ * In the tucked group with Reset, so a phone pays nothing for it until `More
+ * tools` is open, and a desktop gets one more quiet button on a bar that has
+ * the room. It is not in `AccountMenu`, which would have been the other
+ * candidate: that component returns three different trees for signed-out, guest
+ * and signed-in, so it has no one place to put this, and the people most likely
+ * to want it are exactly the ones who are not signed in.
+ */
+function HelpMenu() {
+  const link = buttonClass('secondary', 'w-full justify-start')
+  return (
+    <Popover align="right" className="w-[200px]" trigger="Help">
+      <div className="flex flex-col gap-1.5">
+        <Link to="/contact" className={link}>
+          Contact us
+        </Link>
+        <Link to="/privacy" className={link}>
+          Privacy Policy
+        </Link>
+        <Link to="/terms" className={link}>
+          Terms of Service
+        </Link>
+        <Link to="/accessibility" className={link}>
+          Accessibility
+        </Link>
       </div>
     </Popover>
   )
@@ -310,6 +360,10 @@ export default function Toolbar() {
               button stays in the tab order and Enter still opens it, so the lock
               would hold against a mouse and not against a keyboard. */}
           {!locked && <ResetBoard />}
+          {/* Beside Reset because both are about the board as a whole rather than
+              what is on it, and unlike Reset this one is for everybody: it does
+              not follow the lock, since reading a policy is not an edit. */}
+          <HelpMenu />
         </div>
         </div>
 
