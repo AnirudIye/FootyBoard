@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { migrate, all, run, closePool } from './db.js'
-import { decrypt } from './crypto.js'
+import { decrypt, initEncryption } from './crypto.js'
 
 /**
  * The contact form, which is the only route to a human in this product.
@@ -60,6 +60,12 @@ const rowsFor = async (replyTo) =>
   )
 
 before(async () => {
+  // The spawned server initialises its own; this process reads rows back and
+  // decrypts them, so it needs the key too. Without it every assertion about
+  // what was stored dies on "Encryption is not initialised" — which is how the
+  // first run of this file failed, and is the sort of thing an unrun test file
+  // hides indefinitely.
+  initEncryption()
   await migrate()
   await run('DELETE FROM login_attempts WHERE key LIKE $1', 'contact:%')
 
@@ -157,6 +163,10 @@ test('stops one address filling the table', async () => {
   const statuses = []
   for (let i = 0; i < 7; i++) statuses.push((await send(good({ replyTo }))).status)
 
+  // Five through and the sixth refused, which is `max: 6` — the shared limiter
+  // locks *on* the `max`th call rather than after it, so the constant is one
+  // more than the allowance. This assertion is the thing that pins that, and it
+  // is what caught the route giving four when its comment claimed five.
   assert.deepEqual(statuses.slice(0, 5), [202, 202, 202, 202, 202], 'five get through')
   assert.equal(statuses[5], 429, 'the sixth does not')
   assert.equal(statuses[6], 429)

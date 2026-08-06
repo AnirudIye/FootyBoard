@@ -68,14 +68,23 @@ contactRouter.post('/', async (req, res, next) => {
      * unverified here and a network is shared — which is why the caps are
      * generous enough that a real person sending a genuine follow-up never
      * meets them, and low enough that a loop does within seconds.
+     *
+     * **`max` is one more than the number that gets through, and that is the
+     * shared limiter's meaning rather than a fudge here.** `BUMP_SQL` locks when
+     * `count >= max`, so the `max`th call is the one refused — which reads
+     * naturally for the failure counters it was written for ("five wrong answers
+     * lock the account") and is off by one for an allowance. Six and twenty-one
+     * are therefore five an hour per address and twenty per network, which is
+     * what the numbers below are meant to say. Both boundaries are pinned by
+     * `contact.test.js`, because this is exactly the kind of thing that drifts.
      */
     await consume(`contact:addr:${replyTo}`, {
-      max: 5,
+      max: 6,
       windowMs: 60 * 60 * 1000,
       message: 'That is a lot of messages. Please wait an hour before sending another.',
     })
     await consume(`contact:ip:${req.ip}`, {
-      max: 20,
+      max: 21,
       windowMs: 60 * 60 * 1000,
       message: 'Too many messages from this connection. Please try again later.',
     })

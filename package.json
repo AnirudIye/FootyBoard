@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -b --noEmit",
+    "verify:crawlers": "node scripts/check-crawler-access.mjs https://www.footyboard.me",
     "verify:deployed": "node scripts/check-deployed-headers.mjs"
   },
   "dependencies": {
