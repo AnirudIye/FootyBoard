@@ -232,6 +232,17 @@ interface BoardState extends BoardData {
   /** `defer` holds the undo step open the way `updateDrawing`'s does; see there. */
   deleteDrawings: (ids: string[], defer?: boolean) => void
 
+  /**
+   * Put a whole side in a different kit.
+   *
+   * The squad, not a selection: every player of that side on the pitch and on
+   * the bench, plus the team record itself, which is what everything else reads
+   * afterwards. Recolouring by selecting eleven chips is what people were doing
+   * instead, and it is the reason a format change appeared to shuffle colours —
+   * the substitutes were never part of the selection, so coming back up from
+   * futsal brought default-coloured players on.
+   */
+  setTeamColor: (side: Side, color: string) => void
   /** Flip a player to the other team: recolours and renumbers to fit. */
   switchPlayerTeam: (tokenId: string) => void
   /** Move an on-pitch player to the bench. */
@@ -315,6 +326,23 @@ const makeTeams = (): Team[] => [
   { id: 'home', side: 'home', name: 'Home', color: HOME_COLOR },
   { id: 'away', side: 'away', name: 'Away', color: AWAY_COLOR },
 ]
+
+/**
+ * What colour a side is actually playing in.
+ *
+ * **`teams[].color` was written once and read by nothing**, which is the whole
+ * of the recolouring bug. Every place that had to colour a player reached for
+ * the module constant instead — the two branches in this file, the inspector's
+ * team buttons, the toolbar's team picker — so a board whose home side had been
+ * recoloured still had `HOME_COLOR` as the answer to "what colour is home?", and
+ * any player the store created or moved arrived in it.
+ *
+ * The constants are the *defaults* now and nothing more: they build a fresh
+ * board and they stand in here if a payload arrives with a team missing, which
+ * an older row can. Anything else asks the board.
+ */
+const teamColor = (teams: Team[], side: Side): string =>
+  teams.find((t) => t.side === side)?.color ?? (side === 'home' ? HOME_COLOR : AWAY_COLOR)
 
 function buildTeamTokens(side: Side, color: string, positions: Slot[]): Token[] {
   return positions.map((p) => ({
@@ -841,11 +869,34 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     emit({ type: 'remove', entity: 'selection', ids: selection })
   },
 
+  setTeamColor: (side, color) => {
+    if (teamColor(get().teams, side) === color) return
+    const before = get()._snapshot()
+    set((s) => ({
+      teams: s.teams.map((t) => (t.side === side ? { ...t, color } : t)),
+      // Players only. A ball, a cone and a mannequin are not wearing anybody's
+      // kit, and a team colour that repainted the props would be a theme.
+      tokens: s.tokens.map((t) =>
+        t.type === 'player' && t.teamId === side ? { ...t, color } : t,
+      ),
+      // The bench is the half that was always missed, and missing it is the bug:
+      // a substitute in last week's kit walks onto the pitch the next time the
+      // format changes.
+      bench: s.bench.map((t) => (t.teamId === side ? { ...t, color } : t)),
+    }))
+    get()._pushPast(before)
+    // One op rather than one per player. A squad is up to sixteen chips and the
+    // receiving client can derive every one of them from the side and the
+    // colour, which is what makes this a `team` op rather than a `bulk` one —
+    // `bulk` carries positions and numbers and has nowhere to put a colour.
+    emit({ type: 'team', side, color })
+  },
+
   switchPlayerTeam: (tokenId) => {
     const token = get().tokens.find((t) => t.id === tokenId)
     if (!token || token.type !== 'player') return
     const to: Side = token.teamId === 'home' ? 'away' : 'home'
-    const color = to === 'home' ? HOME_COLOR : AWAY_COLOR
+    const color = teamColor(get().teams, to)
     // Keep the shirt number if it is free on the new team, otherwise take the
     // lowest number that isn't taken, so two players never share one.
     const taken = new Set(
@@ -967,7 +1018,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       let bench = [...s.bench]
 
       for (const side of ['home', 'away'] as Side[]) {
-        const color = side === 'home' ? HOME_COLOR : AWAY_COLOR
+        // The kit this side is actually in, not the default it started in. This
+        // branch invents a player when the bench has run dry, and building that
+        // player from the constant is how a recoloured team ends up with
+        // default-coloured strangers in it after a format change.
+        const color = teamColor(s.teams, side)
         // Keepers first, so a shrinking squad keeps its goalkeeper on the pitch.
         let squad = tokens
           .filter((t) => t.type === 'player' && t.teamId === side)

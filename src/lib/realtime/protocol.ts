@@ -1,4 +1,4 @@
-import type { Token, Drawing, Frame, ViewSettings, CustomFormation } from '../types'
+import type { Token, Drawing, Frame, ViewSettings, CustomFormation, Side } from '../types'
 
 /**
  * What travels between peers in a room.
@@ -52,6 +52,22 @@ export type EntityOp =
   | { type: 'bench'; id: string }
   | { type: 'unbench'; id: string; x: number; y: number }
   | { type: 'view'; patch: Partial<ViewSettings> }
+  /**
+   * A side's kit colour, which repaints up to sixteen chips from four fields.
+   *
+   * The one place this protocol's "outcomes, not intents" rule is worth reading
+   * carefully. Sending a `bulk` of every affected token would be the literal
+   * outcome, and it is the wrong shape: `bulk` carries positions and numbers and
+   * has nowhere to put a colour, a squad is up to sixteen chips of payload, and
+   * a peer joining afterwards would need the team record right anyway. The
+   * colour *is* the outcome here — every player of that side wears it, with
+   * nothing to re-derive and nothing to disagree about.
+   *
+   * Only the colour, deliberately, rather than a `Partial<Team>` patch: a patch
+   * shape would let a peer rewrite a team's `id` or `side`, which is the field
+   * every token's `teamId` points at.
+   */
+  | { type: 'team'; side: Side; color: string }
   /**
    * The whole notes pad, not a diff of it.
    *

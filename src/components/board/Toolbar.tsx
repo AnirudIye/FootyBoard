@@ -11,6 +11,7 @@ import type { Option } from '../ui/Segmented'
 import { ThemeControl } from '../ui/ThemeControl'
 import { boardHandles } from './boardHandles'
 import TokenPalette from './TokenPalette'
+import TeamKits from './TeamKits'
 import AccountMenu from './AccountMenu'
 import BoardPicker from './BoardPicker'
 import SaveStatus from './SaveStatus'
@@ -169,9 +170,18 @@ const BLOCKS: Option<BlockHeight>[] = [
   { id: 'mid', label: 'Mid' },
   { id: 'high', label: 'High' },
 ]
-const TEAMS: Option<Side>[] = [
-  { id: 'home', label: 'Home', dot: HOME_COLOR },
-  { id: 'away', label: 'Away', dot: AWAY_COLOR },
+/**
+ * The team picker's dots come from the board, not from the constants.
+ *
+ * They were `HOME_COLOR` and `AWAY_COLOR`, which is right for a board nobody has
+ * restripped and quietly wrong for one that has been: the control for choosing
+ * which side you are arranging showed the colour that side used to be. `Team
+ * kits` makes that reachable in two clicks, so a fixed dot would now be wrong
+ * within seconds of somebody finding it.
+ */
+const teamOptions = (teams: { side: Side; color: string }[]): Option<Side>[] => [
+  { id: 'home', label: 'Home', dot: teams.find((t) => t.side === 'home')?.color ?? HOME_COLOR },
+  { id: 'away', label: 'Away', dot: teams.find((t) => t.side === 'away')?.color ?? AWAY_COLOR },
 ]
 
 // The tooltips have to name the key the reader's own keyboard has.
@@ -196,6 +206,7 @@ export default function Toolbar() {
 
   const activeTeam = useBoardStore((s) => s.activeTeam)
   const setActiveTeam = useBoardStore((s) => s.setActiveTeam)
+  const teams = useBoardStore((s) => s.teams)
   const [block, setBlock] = useState<BlockHeight>('default')
   const names = FORMATION_NAMES[view.kind]
   const [formation, setFormation] = useState(names[0])
@@ -306,7 +317,7 @@ export default function Toolbar() {
                 </option>
               ))}
             </select>
-            <Segmented options={TEAMS} value={activeTeam} onChange={setActiveTeam} />
+            <Segmented options={teamOptions(teams)} value={activeTeam} onChange={setActiveTeam} />
             <Segmented options={BLOCKS} value={block} onChange={setBlock} />
             {/* Accent-washed rather than solid accent: the header's one filled
                 green belongs to the only thing here a guest cannot already do.
@@ -400,6 +411,12 @@ export default function Toolbar() {
             <ThemeControl />
           </Popover>
           <TokenPalette />
+          {/* Beside `Add props` because both are about what is on the pitch
+              rather than what the pitch is, and behind the lock because a kit is
+              board content: shared with the room, saved, and visible in an
+              export. `Appearance` next to it is the opposite case and stays
+              available to everybody — it is a preference of one browser. */}
+          {!locked && <TeamKits />}
           <Popover align="right" className="w-[220px]" trigger="Pitch options">
             <div className="flex flex-col gap-2.5">
               <Toggle checked={view.grass} onChange={(v) => setView({ grass: v })} label="Mow stripes" />

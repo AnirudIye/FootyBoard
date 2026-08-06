@@ -148,6 +148,23 @@ export function applyOp(state: BoardSlice, op: EntityOp): Partial<BoardSlice> {
       return { view: { ...state.view, ...op.patch } }
 
     /**
+     * A kit change, applied exactly as the sender applied it.
+     *
+     * The three arms have to move together — the team record is what everything
+     * downstream reads, and a client that took the colour onto the chips and not
+     * onto the record would put default-coloured players on the next time the
+     * format changed. Which is the defect this op exists because of.
+     */
+    case 'team':
+      return {
+        teams: state.teams.map((t) => (t.side === op.side ? { ...t, color: op.color } : t)),
+        tokens: state.tokens.map((t) =>
+          t.type === 'player' && t.teamId === op.side ? { ...t, color: op.color } : t,
+        ),
+        bench: state.bench.map((t) => (t.teamId === op.side ? { ...t, color: op.color } : t)),
+      }
+
+    /**
      * Clamped on arrival, because an op is whatever a peer sent.
      *
      * Everything that reaches this function has come off a socket, and the cap

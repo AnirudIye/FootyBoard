@@ -176,6 +176,35 @@ describe('view', () => {
   })
 })
 
+describe('team', () => {
+  it('repaints that side, the bench included, and records it on the team', () => {
+    const state = board({
+      tokens: [token('a'), token('b', { teamId: 'away', color: '#2C5B8A' })],
+      bench: [token('sub', { number: 12 })],
+    })
+    const next = applyOp(state, { type: 'team', side: 'home', color: '#3F6B4A' })
+
+    expect(next.teams?.find((t) => t.side === 'home')?.color).toBe('#3F6B4A')
+    expect(next.tokens?.find((t) => t.id === 'a')?.color).toBe('#3F6B4A')
+    expect(next.bench?.find((t) => t.id === 'sub')?.color).toBe('#3F6B4A')
+    // The other side keeps its own.
+    expect(next.tokens?.find((t) => t.id === 'b')?.color).toBe('#2C5B8A')
+  })
+
+  it('leaves anything that is not a player alone', () => {
+    // A ball, a cone and a mannequin are not wearing anybody's kit. They also
+    // carry no `teamId`, so the guard is belt and braces — and it is the belt
+    // that matters, because a prop dropped by a team-aware tool later would
+    // otherwise start changing colour when somebody picked a strip.
+    const state = board({
+      tokens: [token('a'), { ...token('ball'), type: 'ball', teamId: 'home', color: '#ffffff' }],
+    })
+    const next = applyOp(state, { type: 'team', side: 'home', color: '#3F6B4A' })
+
+    expect(next.tokens?.find((t) => t.id === 'ball')?.color).toBe('#ffffff')
+  })
+})
+
 describe('notes', () => {
   it('replaces the pad wholesale', () => {
     const next = applyOp(board({ notes: 'old' }), { type: 'notes', text: 'press high' })

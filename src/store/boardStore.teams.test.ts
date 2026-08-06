@@ -178,8 +178,93 @@ describe('setPitchKind numbering', () => {
   })
 })
 
+/**
+ * A team's kit colour, which until 2026-08-06 was not a thing this board had.
+ *
+ * `teams[].color` was written once by `buildDefaultData` and read by nothing:
+ * every consumer — the store's own two branches that colour a player, the
+ * inspector's team buttons, the toolbar's team picker — used the module
+ * constants instead. So "recolour the team" meant selecting eleven chips and
+ * recolouring each of them, which left the bench in the old colour and left the
+ * constants as the answer to "what colour is home?".
+ *
+ * **That is the whole of the reported bug**: recolour the eleven on the pitch,
+ * switch to futsal and back, and some of them come back in the original colour.
+ * Nothing is corrupted and nothing is random. Going down to five sends six
+ * recoloured players to the bench, and coming back up pulls whoever is first in
+ * that rail — which is the five original substitutes, still in the default kit,
+ * because the recolour never reached them. `setTeamColor` is the fix rather than
+ * a patch over it: it colours the squad, not a selection.
+ */
+const KIT = '#3F6B4A'
+
+describe('a team kit colour', () => {
+  beforeEach(() => useBoardStore.getState().initDefaultBoard())
+
+  it('reaches the whole squad, the bench included', () => {
+    useBoardStore.getState().setTeamColor('home', KIT)
+
+    for (const t of [...onPitch('home'), ...onBench('home')]) expect(t.color).toBe(KIT)
+    // And it is recorded as the team's, which is what everything else now reads.
+    expect(useBoardStore.getState().teams.find((t) => t.side === 'home')!.color).toBe(KIT)
+    // The other side is untouched: this is one team's kit, not a theme.
+    for (const t of [...onPitch('away'), ...onBench('away')]) expect(t.color).toBe(AWAY_COLOR)
+  })
+
+  it('survives a format change and back, which is the bug as reported', () => {
+    useBoardStore.getState().setTeamColor('home', KIT)
+    useBoardStore.getState().setPitchKind('futsal')
+    useBoardStore.getState().setPitchKind('11')
+
+    const wrong = [...onPitch('home'), ...onBench('home')].filter((t) => t.color !== KIT)
+    expect(wrong.map((t) => `#${t.number}`).join(', ')).toBe('')
+    expectCoherentSquad('home', '11')
+  })
+
+  it('clothes a player invented because the bench had run dry', () => {
+    // Growing a squad takes substitutes first and makes players up when there
+    // are none left. Those were built from the module constant, so a team in any
+    // other kit got default-coloured strangers — the same defect as the shuffle
+    // above, reached without anybody being sent to the bench at all.
+    useBoardStore.getState().setTeamColor('away', KIT)
+    useBoardStore.getState().setPitchKind('futsal')
+    // Emptied *after* going down, which is the only way to reach the branch:
+    // shrinking a squad fills the bench with the players it dropped, so clearing
+    // the rail first simply hands them back on the way up and nothing is ever
+    // invented. Somebody deleting their substitutes is the real route to it.
+    useBoardStore.setState({
+      bench: useBoardStore.getState().bench.filter((t) => t.teamId !== 'away'),
+    })
+    useBoardStore.getState().setPitchKind('11')
+
+    expect(onBench('away')).toHaveLength(0)
+    expect(onPitch('away')).toHaveLength(11)
+    for (const t of onPitch('away')) expect(t.color).toBe(KIT)
+  })
+
+  it('is one undo step, and puts the old kit back', () => {
+    const steps = useBoardStore.getState().history.past.length
+    useBoardStore.getState().setTeamColor('home', KIT)
+    expect(useBoardStore.getState().history.past.length).toBe(steps + 1)
+
+    useBoardStore.getState().undoAction()
+    for (const t of [...onPitch('home'), ...onBench('home')]) expect(t.color).toBe(HOME_COLOR)
+    expect(useBoardStore.getState().teams.find((t) => t.side === 'home')!.color).toBe(HOME_COLOR)
+  })
+})
+
 describe('switchPlayerTeam', () => {
   beforeEach(() => useBoardStore.getState().initDefaultBoard())
+
+  it('hands the newcomer the kit that team is actually wearing', () => {
+    // Read from the team rather than from the constant, or a player switched
+    // into a recoloured side arrives dressed as the side they left.
+    useBoardStore.getState().setTeamColor('away', KIT)
+    const player = home().find((t) => t.number === 6)!
+    useBoardStore.getState().switchPlayerTeam(player.id)
+
+    expect(useBoardStore.getState().tokens.find((t) => t.id === player.id)!.color).toBe(KIT)
+  })
 
   it('flips a player to the other team, recolours, and avoids number clashes', () => {
     const player = home().find((t) => t.number === 6)!

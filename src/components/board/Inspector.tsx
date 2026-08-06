@@ -13,9 +13,17 @@ const ROLES: [TokenShape, string][] = [
   ['outfield', 'Outfield'],
   ['keeper', 'Keeper'],
 ]
-const TEAMS: [Side, string, string][] = [
-  ['home', 'Home', HOME_COLOR],
-  ['away', 'Away', AWAY_COLOR],
+/**
+ * The two sides, in the kit they are currently wearing.
+ *
+ * The dots were the module constants, which stopped being the answer to "what
+ * colour is home?" the moment `Team kits` existed: switching a player into a
+ * restripped side showed the colour that side used to be, on the button that
+ * does the switching, while the chip it produced came out in the new one.
+ */
+const TEAM_LABELS: [Side, string][] = [
+  ['home', 'Home'],
+  ['away', 'Away'],
 ]
 
 /** Breathing room between the panel and the viewport edge, or its anchor. */
@@ -24,6 +32,7 @@ const MARGIN = 8
 export default function Inspector() {
   const inspector = useBoardStore((s) => s.inspector)
   const tokens = useBoardStore((s) => s.tokens)
+  const teams = useBoardStore((s) => s.teams)
   const updateToken = useBoardStore((s) => s.updateToken)
   const commit = useBoardStore((s) => s.commit)
   const switchPlayerTeam = useBoardStore((s) => s.switchPlayerTeam)
@@ -155,7 +164,7 @@ export default function Inspector() {
               <div className="mb-2.5">
                 <span className="block text-[11px] text-ink-3 mb-1">Team</span>
                 <div className="flex gap-1.5">
-                  {TEAMS.map(([side, label, color]) => (
+                  {TEAM_LABELS.map(([side, label]) => (
                     <Button
                       key={side}
                       variant={token.teamId === side ? 'primary' : 'secondary'}
@@ -164,7 +173,7 @@ export default function Inspector() {
                     >
                       <span
                         className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle ring-1 ring-black/15"
-                        style={{ background: color }}
+                        style={{ background: teams.find((t) => t.side === side)?.color }}
                       />
                       {label}
                     </Button>
