@@ -29,7 +29,27 @@
  * out of the business of rewriting board contents nobody asked it to touch.
  */
 
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
+
+/**
+ * How much text the notes pad holds, counted the way every enforcer counts it.
+ *
+ * **UTF-16 code units, which is `String.length`, and that is a decision rather
+ * than an accident.** Four separate things have to agree about "2000
+ * characters": a `<textarea maxLength>`, the counter under it, the store action
+ * that clamps what it is given, and this guard, which both ends run. The
+ * attribute counts code units and cannot be taught to count anything else, so
+ * every other measure would have to be reconciled against it — and a counter
+ * saying 1998 beside a field that has stopped accepting keystrokes is the sort
+ * of thing nobody can explain to the person hitting it. A note of astral
+ * characters therefore holds fewer of them than 2000; that is the cost, and it
+ * is smaller than the cost of four rules that disagree.
+ *
+ * Note what this is *not* a limit on: `MAX_BOARD_BYTES` is what stops a board
+ * being too large to store. This is a limit on one field, so that the pad has a
+ * bottom and a peer's `notes` op has a shape the relay's payload cap can carry.
+ */
+export const MAX_NOTES = 2000
 
 /**
  * How to bring an older payload forward, one version at a time.
@@ -73,6 +93,17 @@ const MIGRATIONS = {
     const { snap: _snap, ...view } = board.view
     return { ...board, view, version: 3 }
   },
+
+  /**
+   * 3 to 4: the notes pad arrived, and boards written before it have no notes.
+   *
+   * An empty string rather than nothing, for the reason the 1 to 2 step gives:
+   * each step returns a *whole* payload at the version it names, so what gets
+   * written back is a current board rather than an old shape with a new number
+   * painted on it. The reader defaults it too, and both are deliberate — the
+   * default covers an in-memory snapshot, this covers a row.
+   */
+  3: (board) => ({ ...board, notes: board.notes ?? '', version: 4 }),
 }
 
 /**
@@ -102,6 +133,21 @@ export function isPersistedBoard(value) {
   if (!value || typeof value !== 'object') return false
   if (!canUpgrade(value.version)) return false
   if (!value.view || typeof value.view !== 'object') return false
+  /**
+   * Notes are optional and capped, and the two clauses answer different rows.
+   *
+   * Absent is every board written before version 4, which must keep loading —
+   * the migration is what fills it in, and the migration runs after this guard.
+   * Present and over the cap, or present and not text at all, is a payload no
+   * client here produces: the store clamps on the way in and the field is a
+   * string from the moment the board is built. Refusing it is what makes the cap
+   * a property of a stored board rather than a hope about the form that wrote
+   * it, and it is refused on *both* ends by construction, because both ends run
+   * this function. See `MAX_NOTES` for why the count is `String.length`.
+   */
+  if (value.notes !== undefined) {
+    if (typeof value.notes !== 'string' || value.notes.length > MAX_NOTES) return false
+  }
   return (
     Array.isArray(value.teams) &&
     Array.isArray(value.tokens) &&

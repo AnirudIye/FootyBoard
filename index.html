@@ -53,15 +53,25 @@
     <meta name="twitter:card" content="summary_large_image" />
 
     <!--
-      There is deliberately no `<link rel="canonical">` here, and no per-page
-      `og:url`. Express serves this one file for every route, so anything
-      absolute in it is served at `/board` and `/join` too: a canonical pointing
-      at `/` would tell Google those two are duplicates of the home page and
-      drop them, which is the exact opposite of what `sitemap.xml` is for. The
-      `og:url` above is the one absolute address kept, because the card is
-      site-wide by design and a share of any page is a share of the product.
-      Per-page tags need the server to fill them in per path, which is the same
-      job as per-board preview images: plan 010, phase 4.
+      This file is a shell and a fallback, not the page anybody is served.
+
+      It used to be both, and the comment here used to explain why it carried no
+      `<link rel="canonical">` and no per-page `og:url`: Express answers every
+      route with this one file, so a canonical pointing at `/` would have told
+      Google that `/board` and `/join` were duplicates of the home page and got
+      them dropped — the exact opposite of what `sitemap.xml` asks for. That
+      reasoning was correct and is now spent. `scripts/prerender.mjs` writes a
+      separate file per route at build time, each with its own title,
+      description, `og:url` and canonical, so the objection no longer applies to
+      any address a person can reach.
+
+      Everything above is therefore the default rather than the answer. It is
+      what a route nobody prerendered still gets, and it is what the dev server
+      serves, since the prerender runs after `vite build` and dev never builds.
+
+      The tags themselves are still static and still in the shipped HTML for the
+      original reason: social crawlers fetch this and do not execute JavaScript,
+      so a tag injected by a component is a tag no crawler will ever see.
     -->
   </head>
   <body>

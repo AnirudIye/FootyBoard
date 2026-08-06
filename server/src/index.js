@@ -15,7 +15,7 @@ import { sharesRouter, redeemRouter } from './routes/shares.js'
 import { assistantRouter } from './routes/assistant.js'
 import { contactRouter } from './routes/contact.js'
 import { TooManyRequests } from './rateLimit.js'
-import { ORIGIN, APP_ENV, isProduction, isAllowedOrigin } from './env.js'
+import { ORIGINS, APP_ENV, isProduction, isAllowedOrigin } from './env.js'
 
 // The second import that crosses into the frontend tree, after `boardSchema.js`
 // in `validate.js` and for the same reason: this process serves the document
@@ -23,6 +23,12 @@ import { ORIGIN, APP_ENV, isProduction, isAllowedOrigin } from './env.js'
 // be exactly one of those. See `src/lib/csp.js`. Deploying the API without
 // `src/lib/` beside it breaks it at boot.
 import { DOCUMENT_CSP } from '../../src/lib/csp.js'
+// The third, and the same bargain again: `scripts/prerender.mjs` writes one
+// file per marketing route and this process is what hands them out, so both
+// ends have to agree on the path-to-file mapping. One list, imported twice,
+// rather than a copy here that silently stops matching the day a route is
+// added. Same deployment note as above: `src/` has to travel with the API.
+import { PAGES } from '../../src/content/marketing.js'
 
 const PORT = Number(process.env.PORT ?? 8787)
 const INSTANCE_LABEL = process.env.INSTANCE_LABEL ?? `pid-${process.pid}`
@@ -388,6 +394,22 @@ if (SERVES_DOCUMENTS) {
   // fallback does; the fallback is the one place index.html is sent from.
   app.use(express.static(dist, { index: false }))
 
+  /**
+   * Which file answers which path.
+   *
+   * `scripts/prerender.mjs` writes one file per marketing route, each carrying
+   * its own title, description, canonical and a body a crawler can read. This
+   * is the half that hands them out; without it they sit in `dist` and every
+   * route still gets the shell, which is the state that made all of them look
+   * like copies of one document.
+   *
+   * Built once at boot rather than per request. It is a fixed list either way,
+   * and `PAGES` is the same import the prerender uses, so a route added there
+   * is served here without a second edit — the drift this would otherwise grow
+   * is a page that exists in `dist` and that nothing will ever send.
+   */
+  const prerendered = new Map(PAGES.map((page) => [page.path, join(dist, page.file)]))
+
   // A plain middleware rather than a wildcard route: Express 5 parses route
   // strings with path-to-regexp v8, where a bare '*' is no longer a valid
   // pattern, and a rule that throws at boot is a worse failure than the one it
@@ -395,7 +417,24 @@ if (SERVES_DOCUMENTS) {
   app.use((req, res, next) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next()
     if (req.path.startsWith('/api/')) return next()
-    res.sendFile(join(dist, 'index.html'))
+
+    /**
+     * The trailing slash is normalised rather than listed twice, because
+     * `/privacy` and `/privacy/` are one page to a person and two URLs to a
+     * search engine, and serving only one of them is how the other becomes a
+     * soft 404 in a report nobody reads. `/` survives the strip as `''`, which
+     * is why the lookup falls back to it.
+     */
+    const path = req.path.length > 1 ? req.path.replace(/\/+$/, '') : req.path
+    const file = prerendered.get(path || '/')
+
+    /**
+     * Anything unlisted still gets the shell, and that is deliberate. `/login`,
+     * `/2fa` and the rest are real pages React draws; they have no prerendered
+     * copy because `robots.txt` asks for them not to be indexed, and giving
+     * them one would be work in service of the opposite of what that file says.
+     */
+    res.sendFile(file ?? join(dist, 'index.html'))
   })
 }
 
@@ -487,7 +526,10 @@ if (process.env.RUN_MAINTENANCE !== 'false') {
 
 server.listen(PORT, () => {
   console.log(
-    `API instance ${INSTANCE_LABEL} on :${PORT} (ws /ws, ${APP_ENV}, allowing ${ORIGIN})`,
+    // Every allowed origin, not the first one. This line is the only place a
+    // deployment states its origin policy out loud, and a log that named one of
+    // three would be the reassuring half of a mistake rather than a record of it.
+    `API instance ${INSTANCE_LABEL} on :${PORT} (ws /ws, ${APP_ENV}, allowing ${ORIGINS.join(', ')})`,
   )
 })
 

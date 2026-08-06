@@ -52,6 +52,24 @@ export type EntityOp =
   | { type: 'bench'; id: string }
   | { type: 'unbench'; id: string; x: number; y: number }
   | { type: 'view'; patch: Partial<ViewSettings> }
+  /**
+   * The whole notes pad, not a diff of it.
+   *
+   * Every other op here carries the outcome of one action, and this is the same
+   * rule applied to a field that has no smaller unit: there is no character
+   * range in a `<textarea>` that means anything to a peer whose copy has been
+   * edited since. Last-write-wins on the whole string is what the rest of this
+   * protocol already promises, and for a pad two people rarely type in at once
+   * it is the honest behaviour rather than a shortcut.
+   *
+   * `MAX_NOTES` is what keeps it sendable. 2000 characters is at most 6000 bytes
+   * of UTF-8, which is past `MAX_OP_BYTES` for text that encodes to three bytes
+   * a character — CJK, most of Indic — so the store checks the op against
+   * `withinSizeLimit` and falls back to `replaced` for the notes that do not
+   * fit. Without that the op would be dropped silently by `write` below and the
+   * next peer to autosave would write their older notes over them.
+   */
+  | { type: 'notes'; text: string }
 
 export interface BulkToken {
   id: string

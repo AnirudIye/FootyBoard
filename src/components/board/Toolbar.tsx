@@ -75,12 +75,14 @@ function ResetBoard() {
         </p>
         {/* Named one by one rather than as "everything", because these are work
             somebody did and would not expect a button called Reset to take.
-            `buildDefaultData` returns `customFormations: []`, so the saved
-            shapes really do go, and that is the one people would be sorriest to
-            lose without having been told. */}
+            `buildDefaultData` returns `customFormations: []` and `notes: ''`, so
+            the saved shapes and the notes pad really do go, and those are the
+            two people would be sorriest to lose without having been told. */}
         <p className="text-[13px] leading-relaxed text-ink-2">
-          <strong className="text-ink">Drawings, frames and saved shapes are cleared.</strong> The
-          board keeps its name, sharing and members.
+          <strong className="text-ink">
+            Drawings, frames, saved shapes and the notes are cleared.
+          </strong>{' '}
+          The board keeps its name, sharing and members.
         </p>
         <p className="text-[13px] leading-relaxed text-ink-3">
           Undo brings it back, though everyone else in the room sees the board change twice.

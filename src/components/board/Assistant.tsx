@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useAssistantStore } from '../../store/assistantStore'
+import { useNotesStore } from '../../store/notesStore'
 import { useBoardStore } from '../../store/boardStore'
 import { useReducedMotion } from '../../hooks/useReducedMotion'
 import { api } from '../../lib/api'
@@ -62,8 +63,24 @@ export default function Assistant() {
   const aiConsented = useAssistantStore((s) => s.aiConsented)
   const setAiConsented = useAssistantStore((s) => s.setAiConsented)
   const thinking = useAssistantStore((s) => s.thinking)
+  const notesOpen = useNotesStore((s) => s.open)
   const undoAction = useBoardStore((s) => s.undoAction)
   const reduced = useReducedMotion()
+
+  /**
+   * Opening this puts the notes pad away, and `Notes` does the same in reverse.
+   *
+   * Both panels are `bottom-4 right-4` and both are at least 300px wide, so on a
+   * 375px phone they cannot both be there. Two of them open would mean deciding
+   * which one hides behind the other, and a panel somebody opened being covered
+   * by a panel they did not is worse than the one they asked for replacing the
+   * one they had finished with. The collapse button uses the plain toggle: it is
+   * already closing this one, and nothing should reopen anything.
+   */
+  const openHere = () => {
+    if (!open) useNotesStore.getState().setOpen(false)
+    toggle()
+  }
 
   const [value, setValue] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -305,14 +322,32 @@ export default function Assistant() {
        */}
       <motion.button
         layout
-        onClick={toggle}
+        onClick={openHere}
         aria-expanded={open}
         whileHover={{ y: -2 }}
         whileTap={{ scale: 0.95 }}
         transition={spring}
+        /**
+         * **The corner positioning moved out to `BoardPage`, and the launcher
+         * kept everything else.** There are two of these buttons now — this and
+         * the notes pad's — and they share one corner, so the thing that has to
+         * be positioned is the pair rather than each of them: two `fixed`
+         * buttons at `bottom-4 right-4` would be one button on top of another,
+         * and the alternative is a hand-measured inset on the second, which is
+         * exactly the arrangement `BoardPage`'s own opening comment rejects for
+         * the rest of this chrome. The wrapper carries `overlay:fixed
+         * overlay:bottom-4 overlay:right-4 overlay:z-40`; docked it is a flex
+         * item in the readout row, which is where this button already lived.
+         *
+         * `overlay:hidden` still belongs here rather than on the wrapper,
+         * because docked the row must keep its children — see the long note
+         * below — and it now watches the notes panel too: either panel open
+         * covers this corner, and a launcher underneath one is a target
+         * `elementFromPoint` cannot reach.
+         */
         className={`liquid-glass flex shrink-0 items-center gap-2 self-center rounded-full
           border border-rule-strong bg-surface px-4 py-2.5 text-[13px] font-medium text-ink shadow-2
-          overlay:fixed overlay:bottom-4 overlay:right-4 overlay:z-40 ${open ? 'overlay:hidden' : ''}`}
+          ${open || notesOpen ? 'overlay:hidden' : ''}`}
       >
         <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
         Assistant

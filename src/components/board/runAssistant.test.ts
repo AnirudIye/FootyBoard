@@ -221,6 +221,31 @@ describe('a tactical question', () => {
     expect(lastReply()).toMatch(/holder is alone/)
   })
 
+  /**
+   * The notes pad does not leave the device with the question.
+   *
+   * Asserted positively rather than left as a property of `describeBoard`'s
+   * argument list, because the change that would break it is the natural one:
+   * somebody making the assistant more useful adds "and here is what the coach
+   * wrote about this board" to the summary, and a paragraph that may name
+   * players, injuries or an opposition report goes to Google with it. The panel
+   * promises that what it sends is the message and a summary of the board. If
+   * that is ever meant to include the notes, it has to be a deliberate edit
+   * here and a change to what the consent notice says.
+   */
+  it('never sends the notes pad to the model', async () => {
+    useAssistantStore.setState({ aiAvailable: true, aiConsented: true })
+    askAssistant.mockResolvedValue({ reply: 'Play either side of him.', command: null })
+    useBoardStore.getState().setNotes('Ellis is carrying a hamstring — do not start him.')
+
+    runAssistant(question)
+    await settle()
+
+    const sent = JSON.stringify(askAssistant.mock.calls[0][0])
+    expect(sent).not.toContain('hamstring')
+    expect(sent).not.toContain('Ellis')
+  })
+
   it('says where the answer would have to come from when the AI is off', async () => {
     runAssistant(question)
     await settle()

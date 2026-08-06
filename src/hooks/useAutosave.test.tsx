@@ -315,6 +315,39 @@ describe('an edit that defers its undo step', () => {
     // Saved, and still nothing in history until the run is committed.
     expect(useBoardStore.getState().history.past).toHaveLength(0)
   })
+
+  /**
+   * The notes pad is the same rule on a field that is a string rather than an
+   * array, which is the one way it could have been left out.
+   *
+   * `persistableChanged` compares the other seven by reference, because every
+   * action replaces the array or object outright. Notes are compared by value,
+   * and a field omitted from that list is written into every save and triggers
+   * none — a pad that keeps what you typed only if you happen to move a chip
+   * afterwards, and forgets it if you do not.
+   */
+  it('saves the notes pad without waiting for anything else to change', async () => {
+    await openBoard()
+    // Everything the open itself scheduled has to have run *before* the counter
+    // is cleared, or a save that was already on its way would stand in for the
+    // one the notes are supposed to cause — and this test would pass with the
+    // notes left out of `persistableChanged` entirely, which is exactly the
+    // omission it exists to catch. Confirmed by removing that clause: with the
+    // wait, this fails; without it, it does not.
+    await waitOutEveryTimer()
+    mockApi.saveBoard.mockClear()
+
+    act(() => {
+      for (const notes of ['P', 'Pr', 'Press high']) {
+        useBoardStore.getState().setNotes(notes, true)
+      }
+    })
+    await waitOutEveryTimer()
+
+    expect(mockApi.saveBoard).toHaveBeenCalled()
+    const written = mockApi.saveBoard.mock.calls.at(-1)![2] as PersistedBoard
+    expect(written.notes).toBe('Press high')
+  })
 })
 
 /**

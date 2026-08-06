@@ -9,11 +9,12 @@ import type {
 
 import {
   SCHEMA_VERSION,
+  MAX_NOTES,
   isPersistedBoard as isBoard,
   upgradeBoard as upgrade,
 } from './boardSchema.js'
 
-export { SCHEMA_VERSION }
+export { SCHEMA_VERSION, MAX_NOTES }
 
 export interface PersistedBoard {
   version: number
@@ -25,6 +26,17 @@ export interface PersistedBoard {
   frames: Frame[]
   view: ViewSettings
   customFormations: CustomFormation[]
+  /**
+   * The board's notes pad: free text, at most `MAX_NOTES` characters.
+   *
+   * Part of the board rather than of this browser, which is the whole of what
+   * makes it worth having — it is saved with the board, shared with the room,
+   * and sealed with the rest of the payload by `encrypt()` on the way to the
+   * database. Required by this interface and optional to the guard, exactly as
+   * `bench` is: everything this build writes has one, and rows written before
+   * version 4 do not.
+   */
+  notes: string
 }
 
 /**

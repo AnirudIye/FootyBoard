@@ -119,20 +119,56 @@ if (isProduction) {
 export const SESSION_SECRET = secret || 'dev'
 
 /**
- * The one origin allowed to reach the API, over REST and over the socket alike.
+ * The origins allowed to reach the API, over REST and over the socket alike.
  *
  * Read here rather than in each of them so the two cannot drift: a WebSocket
  * handshake bypasses CORS entirely, so the socket has to apply this itself and
- * has to apply the same value.
+ * has to apply the same values.
+ *
+ * **A list, comma separated, and it was one value until 2026-08-06.** The reason
+ * is written in `handoff.md` under "being findable": `tunnel.footyboard.me` is
+ * routed so that a load test or a staging check can be aimed somewhere other
+ * than `www`, and with a single origin the page loaded there and then connected
+ * to nothing — the socket refused the upgrade at the handshake, so staging was
+ * an environment where everything worked except the product. One origin is still
+ * the ordinary case and the syntax for it is unchanged.
+ *
+ * Every entry is held to the same rules, which is the property worth stating:
+ * the list is not a way to smuggle in a cleartext origin beside a good one.
  */
 const DEFAULT_ORIGIN = 'http://localhost:5173'
 
 const configuredOrigin = process.env.CORS_ORIGIN?.trim()
 
-export const ORIGIN = configuredOrigin || DEFAULT_ORIGIN
+/**
+ * Split, trimmed, and emptied entries dropped.
+ *
+ * `a, b,` is a list of two rather than an error, because a trailing comma in an
+ * environment variable is a typo with an obvious intent, and refusing the boot
+ * over one would be refusing it over punctuation. A value that is *only*
+ * separators has nothing in it at all, and falls through to the default so that
+ * the branch below reports it as unset — which is what it effectively is.
+ */
+const requestedOrigins = (configuredOrigin ?? '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean)
 
 /**
- * The floor under it, which it went without while the two beside it had one.
+ * Every origin allowed to call this API with credentials, in the order given.
+ *
+ * Frozen because it is a policy rather than a collection: `isAllowedOrigin` is
+ * the one gate every REST request and every socket handshake passes through, and
+ * a module that could push onto this array would be widening that gate from
+ * anywhere, at any time, with nothing at the boot to say so.
+ */
+export const ORIGINS = Object.freeze(
+  requestedOrigins.length > 0 ? requestedOrigins : [DEFAULT_ORIGIN],
+)
+
+/**
+ * The floor under them, which they went without while the two beside them had
+ * one.
  *
  * **The scheme is the part that matters, and the default is the reason.** This
  * variable falls back to an `http://` origin, so leaving it unset in production
@@ -153,42 +189,53 @@ export const ORIGIN = configuredOrigin || DEFAULT_ORIGIN
  * and port and nothing else", so comparing the value against its own origin is
  * the whole check.
  *
+ * **Checked entry by entry, and the first bad one stops the boot.** A list is
+ * exactly where a permissive value would hide: `https://www.example.com,
+ * http://staging.example.com` looks like it was written by somebody being
+ * careful, and it hands every session cookie on the second host to anybody on
+ * the network path. Nothing here is lenient because a good origin was named
+ * beside it.
+ *
  * Development and test keep the http default deliberately, for the reason
  * `allowsDerivedKey` already gives about `ENCRYPTION_KEY`: requiring TLS on a
  * laptop would stop every developer and the suite at once, to protect a session
  * that is worth nothing.
  */
-const howItWasSet = configuredOrigin
+const howItWasSet = requestedOrigins.length
   ? ''
   : ` CORS_ORIGIN is unset, so it defaulted to ${DEFAULT_ORIGIN}.`
 
-let parsedOrigin = null
-try {
-  parsedOrigin = new URL(ORIGIN)
-} catch {
-  // Not a URL at all. Reported by the same branch as a URL of the wrong shape,
-  // because to the person reading the message they are one mistake.
-}
+for (const origin of ORIGINS) {
+  let parsed = null
+  try {
+    parsed = new URL(origin)
+  } catch {
+    // Not a URL at all. Reported by the same branch as a URL of the wrong shape,
+    // because to the person reading the message they are one mistake.
+  }
 
-if (
-  !parsedOrigin ||
-  (parsedOrigin.protocol !== 'http:' && parsedOrigin.protocol !== 'https:') ||
-  parsedOrigin.origin !== ORIGIN
-) {
-  throw new Error(
-    `CORS_ORIGIN must be a bare http:// or https:// origin: scheme, host and port, with no ` +
-      `trailing slash, path, query or credentials (got "${ORIGIN}").${howItWasSet} ` +
-      'A browser sends exactly that and nothing else, so any other shape matches no request ' +
-      'that will ever arrive and locks the frontend out of its own API.',
-  )
-}
+  if (
+    !parsed ||
+    (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+    parsed.origin !== origin
+  ) {
+    throw new Error(
+      `CORS_ORIGIN must be a bare http:// or https:// origin: scheme, host and port, with no ` +
+        `trailing slash, path, query or credentials (got "${origin}").${howItWasSet} ` +
+        'A browser sends exactly that and nothing else, so any other shape matches no request ' +
+        'that will ever arrive and locks the frontend out of its own API. ' +
+        'Several may be given, separated by commas.',
+    )
+  }
 
-if (isProduction && parsedOrigin.protocol !== 'https:') {
-  throw new Error(
-    `CORS_ORIGIN must be an https:// origin when APP_ENV is "${APP_ENV}" (got "${ORIGIN}").` +
-      `${howItWasSet} It is the origin allowed to call this API with credentials, so a cleartext ` +
-      'one hands every session cookie to anybody on the network path.',
-  )
+  if (isProduction && parsed.protocol !== 'https:') {
+    throw new Error(
+      `CORS_ORIGIN must be an https:// origin when APP_ENV is "${APP_ENV}" (got "${origin}").` +
+        `${howItWasSet} It is the origin allowed to call this API with credentials, so a cleartext ` +
+        'one hands every session cookie to anybody on the network path. ' +
+        'Every entry in the list is held to this, however good the others are.',
+    )
+  }
 }
 
 /**
@@ -212,7 +259,7 @@ if (isProduction && parsedOrigin.protocol !== 'https:') {
  */
 export function isAllowedOrigin(origin) {
   if (!origin) return true
-  if (origin === ORIGIN) return true
+  if (ORIGINS.includes(origin)) return true
   if (APP_ENV !== 'development') return false
   try {
     const { hostname } = new URL(origin)

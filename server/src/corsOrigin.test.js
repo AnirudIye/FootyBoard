@@ -80,9 +80,79 @@ test('production refuses a cleartext origin that was set on purpose', async () =
 
 test('production boots on https, and exports it unchanged', async () => {
   const env = await loadEnv({ ...PRODUCTION, CORS_ORIGIN: 'https://app.example.com' })
-  assert.equal(env.ORIGIN, 'https://app.example.com')
+  assert.deepEqual([...env.ORIGINS], ['https://app.example.com'])
   assert.equal(env.isAllowedOrigin('https://app.example.com'), true)
   assert.equal(env.isAllowedOrigin('http://app.example.com'), false)
+})
+
+/**
+ * More than one origin, which is what staging needs and what this variable could
+ * not express until 2026-08-06.
+ *
+ * `tunnel.footyboard.me` is routed so a load test or a staging check can be
+ * aimed somewhere other than `www`. With one origin the page loaded there and
+ * then connected to nothing: the socket applies this same policy at the
+ * handshake, which CORS never reaches, so staging was an environment in which
+ * everything worked except the product.
+ */
+test('several origins may be allowed, and only those', async () => {
+  const env = await loadEnv({
+    ...PRODUCTION,
+    CORS_ORIGIN: 'https://www.example.com,https://tunnel.example.com',
+  })
+
+  assert.deepEqual([...env.ORIGINS], ['https://www.example.com', 'https://tunnel.example.com'])
+  assert.equal(env.isAllowedOrigin('https://www.example.com'), true)
+  assert.equal(env.isAllowedOrigin('https://tunnel.example.com'), true)
+  // The list is a list, not a pattern: a sibling host nobody named is refused.
+  assert.equal(env.isAllowedOrigin('https://evil.example.com'), false)
+  assert.equal(env.isAllowedOrigin('https://example.com'), false)
+})
+
+test('spacing and a trailing comma are typos, not configuration', async () => {
+  const env = await loadEnv({
+    ...PRODUCTION,
+    CORS_ORIGIN: ' https://www.example.com , https://tunnel.example.com , ',
+  })
+  assert.deepEqual([...env.ORIGINS], ['https://www.example.com', 'https://tunnel.example.com'])
+})
+
+/**
+ * The direction a list makes newly possible, and the one it must not open.
+ *
+ * `https://www.example.com,http://staging.example.com` is written by somebody
+ * being careful and hands every session cookie on the second host to anybody on
+ * the network path. A check that passed because a good origin was named beside a
+ * bad one would be worse than no check: the boot log would print the pair and
+ * look right.
+ */
+test('one bad entry stops the boot, however good the others are', async () => {
+  await assert.rejects(
+    () => loadEnv({ ...PRODUCTION, CORS_ORIGIN: 'https://www.example.com,http://staging.example.com' }),
+    (err) => {
+      assert.match(err.message, /CORS_ORIGIN/)
+      // Named, so the operator does not have to work out which of them it meant.
+      assert.match(err.message, /staging\.example\.com/)
+      return true
+    },
+    'a cleartext origin was allowed because an https one was listed beside it',
+  )
+
+  await assert.rejects(
+    () => loadEnv({ APP_ENV: 'development', CORS_ORIGIN: 'http://localhost:5173,not a url' }),
+    /CORS_ORIGIN/,
+    'a malformed origin was allowed because a good one was listed beside it',
+  )
+})
+
+test('a value that is nothing but separators is treated as unset', async () => {
+  // It is unset in every way that matters, so it says so rather than throwing
+  // about an empty string nobody can see in their env file.
+  await assert.rejects(
+    () => loadEnv({ ...PRODUCTION, CORS_ORIGIN: ' , , ' }),
+    /localhost:5173/,
+    'an empty list did not report itself as an unset variable',
+  )
 })
 
 /**
@@ -96,7 +166,7 @@ test('production boots on https, and exports it unchanged', async () => {
 test('development and test keep the http default they exist for', async () => {
   for (const APP_ENV of ['development', 'test']) {
     const env = await loadEnv({ APP_ENV })
-    assert.equal(env.ORIGIN, 'http://localhost:5173')
+    assert.deepEqual([...env.ORIGINS], ['http://localhost:5173'])
   }
 })
 

@@ -121,6 +121,72 @@ test('the bundle is not served under a policy stricter than the page', async () 
 })
 
 /* -------------------------------------------------------------------------- */
+/* Each marketing route is its own document, not a copy of the shell           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The property, stated as itself: two routes must not ship one title.
+ *
+ * Asserting that `/privacy` returns 200 `text/html` would pass against the
+ * defect this covers, which is the same trap the header of this file describes
+ * for the CSP. Every route did return a page; they all returned *the same*
+ * page, and to a search engine six URLs carrying one identical title and one
+ * identical description are six copies of one document while `sitemap.xml` asks
+ * for all of them.
+ *
+ * **Skipped rather than failed on a clean checkout.** The rest of this file
+ * deliberately never touches `dist/`, because a suite that needs a build fails
+ * for a reason that is not about what it tests. This one genuinely cannot: the
+ * bytes it checks are written by `scripts/prerender.mjs`, which runs after
+ * `vite build`. So it asks first, and says which it did rather than passing
+ * silently — a skipped test that reads as a green one is how this stops
+ * covering anything.
+ */
+const titleOf = (html) => html.match(/<title>([^<]*)<\/title>/i)?.[1] ?? null
+
+test('the marketing routes each carry their own title and canonical', async (t) => {
+  const home = await get(STATIC_PORT, '/')
+  if (!home.ok) return t.skip('dist/ is not built, so there is nothing prerendered to serve')
+
+  const homeHtml = await home.text()
+  if (!homeHtml.includes('rel="canonical"')) {
+    return t.skip('dist/ predates the prerender step; rebuild to cover this')
+  }
+
+  const privacyHtml = await (await get(STATIC_PORT, '/privacy')).text()
+
+  assert.notEqual(
+    titleOf(privacyHtml),
+    titleOf(homeHtml),
+    '/privacy and / shipped the same <title>, which is what makes them duplicates',
+  )
+  assert.match(privacyHtml, /<link rel="canonical" href="https:\/\/www\.footyboard\.me\/privacy"/)
+  assert.match(homeHtml, /<link rel="canonical" href="https:\/\/www\.footyboard\.me\/"/)
+})
+
+test('a trailing slash gets the same page as the bare path', async (t) => {
+  // `/privacy` and `/privacy/` are one page to a person and two URLs to a
+  // crawler. Serving the shell for one of them turns it into a soft 404 in a
+  // report nobody opens.
+  const bare = await get(STATIC_PORT, '/privacy')
+  if (!bare.ok) return t.skip('dist/ is not built')
+
+  const bareHtml = await bare.text()
+  if (!bareHtml.includes('rel="canonical"')) return t.skip('dist/ predates the prerender step')
+
+  const slashed = await (await get(STATIC_PORT, '/privacy/')).text()
+  assert.equal(titleOf(slashed), titleOf(bareHtml))
+})
+
+test('an unlisted client route still gets the shell rather than a 404', async (t) => {
+  // `/login` has no prerendered copy on purpose: `robots.txt` asks for it not
+  // to be indexed. It is still a real page React draws, so it has to be served.
+  const res = await get(STATIC_PORT, '/login')
+  if (!res.ok) return t.skip('dist/ is not built')
+  assert.match(await res.text(), /<div id="root"/)
+})
+
+/* -------------------------------------------------------------------------- */
 /* The API keeps the policy the API needs                                      */
 /* -------------------------------------------------------------------------- */
 

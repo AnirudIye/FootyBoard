@@ -10,7 +10,7 @@ import type {
   Side,
 } from '../lib/types'
 import type { PersistedBoard } from '../lib/persistence'
-import { SCHEMA_VERSION } from '../lib/persistence'
+import { SCHEMA_VERSION, MAX_NOTES } from '../lib/persistence'
 import type { Pos, Slot, BlockHeight } from '../lib/formations'
 import { getFormation, applyBlock, mirror, formationCode, FORMATION_NAMES } from '../lib/formations'
 import type { PitchKind } from '../lib/types'
@@ -25,6 +25,7 @@ import { id } from '../lib/id'
 import { HOME_COLOR, AWAY_COLOR } from '../theme/teamColors'
 import { emit, emitFinal, emitReplaced, runAsRemote } from '../lib/realtime/bridge'
 import { applyOp } from '../lib/realtime/apply'
+import { withinSizeLimit } from '../lib/realtime/protocol'
 import type { EntityOp } from '../lib/realtime/protocol'
 
 /**
@@ -95,6 +96,8 @@ interface BoardData {
   frames: Frame[]
   view: ViewSettings
   customFormations: CustomFormation[]
+  /** The notes pad. Board content, capped at `MAX_NOTES`; see `setNotes`. */
+  notes: string
 }
 
 export interface InspectorTarget {
@@ -242,6 +245,25 @@ interface BoardState extends BoardData {
   clearSelection: () => void
   setTool: (tool: ToolMode) => void
 
+  // notes
+  /**
+   * Write the notes pad.
+   *
+   * `defer` holds the undo step open in `_pending` the way `updateToken`'s does,
+   * because typing is one gesture: the pad is a `<textarea>` somebody writes a
+   * paragraph in, and a history step per keystroke would spend all fifty slots
+   * on one sentence and walk an undo back letter by letter. The caller ends the
+   * run with `commit()`, which is the same call a drag ends with.
+   */
+  setNotes: (text: string, defer?: boolean) => void
+  /**
+   * Whether the last notes op was too large to send.
+   *
+   * Set by `setNotes` and read by `commit`, which answers it with a `replaced`.
+   * Internal, and named like the other two internals for that reason.
+   */
+  _notesOversized: boolean
+
   // view
   setView: (patch: Partial<ViewSettings>) => void
   /** Switch format and resize both squads to match (11-a-side, 7-a-side, futsal). */
@@ -334,6 +356,7 @@ function buildDefaultData(): BoardData {
     frames: [],
     view: { ...defaultView },
     customFormations: [],
+    notes: '',
   }
 }
 
@@ -426,6 +449,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   history: createHistory<PersistedBoard>(),
   _pending: null,
   _touched: new Set<string>(),
+  _notesOversized: false,
   inspector: null,
   formationEpoch: 0,
   zoom: 1,
@@ -566,6 +590,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       tool: 'select',
       history: createHistory<PersistedBoard>(),
       _pending: null,
+      // Beside `_pending` wherever it is cleared, and for the same reason: both
+      // describe a run that was open on a board this store is no longer holding.
+      // Left set, the next `commit()` on the *new* board would answer it with a
+      // save and a room-wide re-read that nothing here asked for.
+      _notesOversized: false,
       inspector: null,
       playback: clampPlayhead(s.playback, 0),
     })),
@@ -595,10 +624,16 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         frames,
         view: structuredClone(data.view),
         customFormations: structuredClone(data.customFormations),
+        // Defaulted for the same reason `bench` is: a payload that never went
+        // through a migration — an in-memory snapshot rather than a row — can
+        // still arrive without it, and a `<textarea>` handed undefined stops
+        // being controlled.
+        notes: data.notes ?? '',
         selection: [],
         tool: 'select',
         history: createHistory<PersistedBoard>(),
         _pending: null,
+        _notesOversized: false,
         inspector: null,
         playback: clampPlayhead(s.playback, frames.length),
       }
@@ -617,6 +652,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       frames: s.frames,
       view: s.view,
       customFormations: s.customFormations,
+      notes: s.notes,
     })
   },
 
@@ -637,11 +673,27 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         frames,
         view: structuredClone(snap.view),
         customFormations: structuredClone(snap.customFormations),
+        notes: snap.notes ?? '',
         playback: clampPlayhead(s.playback, frames.length),
       }
     }),
 
   commit: () => {
+    /**
+     * A note too long to send as an op is announced instead, and this runs
+     * before the `_pending` guard rather than after it.
+     *
+     * The two are unrelated conditions: `_pending` is "there is an undo step
+     * open", and a paste into the pad that was already deferred by an earlier
+     * keystroke leaves the flag set with no step of its own. Behind the guard
+     * this would fire for some oversized notes and not others, which is the
+     * worst version of a fallback — it would look like it worked.
+     */
+    if (get()._notesOversized) {
+      set({ _notesOversized: false })
+      emitReplaced()
+    }
+
     const p = get()._pending
     if (!p) return
     // The gesture is over, so send exactly where things came to rest. Without
@@ -870,6 +922,40 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     emit({ type: 'view', patch })
   },
 
+  setNotes: (text, defer = false) => {
+    /**
+     * Clamped here rather than only in the field.
+     *
+     * `maxLength` on the `<textarea>` stops typing and does nothing about a
+     * paste, an autofill or a `setNotes` call from anywhere else, and the guard
+     * both ends share refuses a board whose notes are over the cap — so an
+     * unclamped value would not be a long note, it would be a board that stops
+     * saving, with the refusal landing 800ms later on a save nobody connected to
+     * what they pasted.
+     */
+    const notes = text.slice(0, MAX_NOTES)
+    if (notes === get().notes) return
+    const before = defer ? null : get()._snapshot()
+    if (defer && !get()._pending) set({ _pending: get()._snapshot() })
+    set({ notes })
+    if (before) get()._pushPast(before)
+
+    /**
+     * The op, or a `replaced` when the op will not fit.
+     *
+     * 2000 characters is up to 6000 bytes of UTF-8, and `MAX_OP_BYTES` is 5000,
+     * so a long note in a three-byte script has no message that can carry it.
+     * The socket would drop it silently — `write` warns in dev and returns — and
+     * the damage is not the peers being behind: the next peer to autosave writes
+     * their whole board, notes included, over these. `replaced` is what this
+     * repo already does with a change too big to send as an op, and it is
+     * answered in `commit` rather than here, because doing it per keystroke
+     * would be a save and a room-wide re-read per character.
+     */
+    if (withinSizeLimit({ type: 'notes', text: notes })) emit({ type: 'notes', text: notes }, 'notes')
+    else set({ _notesOversized: true })
+  },
+
   setPitchKind: (kind) => {
     if (get().view.kind === kind) return
     const before = get()._snapshot()
@@ -1031,12 +1117,16 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           frames,
           view: structuredClone(data.view),
           customFormations: structuredClone(data.customFormations),
+          notes: data.notes ?? '',
           // Keep whatever of your selection survived, rather than dropping it
           // and interrupting someone mid-edit.
           selection: s.selection.filter((i) => alive.has(i)),
           inspector: s.inspector && alive.has(s.inspector.tokenId) ? s.inspector : null,
           history: createHistory<PersistedBoard>(),
           _pending: null,
+          // The board underneath has been replaced, so a note that was waiting
+          // to be announced describes contents this client no longer holds.
+          _notesOversized: false,
           formationEpoch: s.formationEpoch + 1,
           playback: clampPlayhead(s.playback, frames.length),
         }

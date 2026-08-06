@@ -34,7 +34,13 @@ function persistableChanged(a: BoardState, b: BoardState): boolean {
     a.drawings !== b.drawings ||
     a.frames !== b.frames ||
     a.view !== b.view ||
-    a.customFormations !== b.customFormations
+    a.customFormations !== b.customFormations ||
+    // A string, so this is a value comparison where the rest are reference ones.
+    // It is the same test either way — "did `_snapshot()` change?" — and leaving
+    // notes out of this list is precisely how a field gets written into every
+    // save and never triggers one, which reads as a pad that forgets what you
+    // typed unless you happened to move a chip afterwards.
+    a.notes !== b.notes
   )
 }
 

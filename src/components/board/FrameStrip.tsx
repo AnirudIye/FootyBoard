@@ -204,18 +204,42 @@ export default function FrameStrip() {
          * the screen with nothing to scroll".
          *
          * **`overlay:max-w-` is the second guarantee, and it is about the
-         * assistant's launcher rather than about the screen.** Where the board's
-         * chrome floats, so does that launcher — `bottom-4 right-4`, 105px wide,
-         * so it owns 121px of the right edge — and this bar is centred, so it
-         * reaches that corner the moment it is wider than the window less twice
-         * 121. No breakpoint can hold that off, because the bar's width is a
-         * function of how many frames somebody captured rather than of the
-         * window: at three frames it is 920px and clears a 1440px desktop
+         * launchers rather than about the screen.** Where the board's chrome
+         * floats, so do they — `bottom-4 right-4` — and this bar is centred, so
+         * it reaches that corner the moment it is wider than the window less
+         * twice the lane. No breakpoint can hold that off, because the bar's
+         * width is a function of how many frames somebody captured rather than
+         * of the window: at three frames it is 920px and clears a 1440px desktop
          * easily, and at twelve it is 1262 and does not. Capping the width makes
-         * it wrap into the space it has instead of sliding under the button.
-         * 240 rather than the measured 210 leaves room for a launcher that
-         * renders wider than 105px — a fallback font would do it — and 1440px
-         * still allows 1168, so no bar anybody has today notices this at all.
+         * it wrap into the space it has instead of sliding under the buttons.
+         *
+         * **440 rather than 240, because there are two launchers now.** The
+         * notes pad's pill sits beside the assistant's — measured at 1440x900,
+         * the pair spans x1229..1424, so the lane is 211px rather than 121 and
+         * twice it is 422. The old figure would have left a twelve-frame bar
+         * ending at x1304 and the notes pill starting at x1229, which is the
+         * exact defect this cap was added to stop, reintroduced by a button
+         * somewhere else. The extra 18px over the arithmetic is the same margin
+         * 240 carried over its own 242: room for a pill that renders wider than
+         * measured, which a fallback font would do.
+         *
+         * What it costs is stated rather than buried: at 1440 the bar may be
+         * 1000px instead of 1200, so a sequence long enough to need more than
+         * that wraps a row earlier than it used to. That is the failure this
+         * whole arrangement already prefers — a wrapped bar against a bar with
+         * controls underneath a button.
+         *
+         * **The `max(288px, …)` floor is what stops the wider lane reaching
+         * screens it would ruin.** A bare `100% - 440` is smaller than this
+         * bar's own compact minimum on anything under about 730px, and a
+         * max-width below the minimum does not narrow a bar, it turns it into a
+         * tall column — the 48px-wide, 302px-high shape that put the lane back
+         * in the first place. Those widths are real and are the worst screens
+         * the app has: an iPhone SE held sideways is 667x375, and `overlay` is
+         * true there on the short-screen clause, so it takes this rule rather
+         * than the lane. Floored, such a screen keeps the bar it has today and
+         * the cap simply stops applying, which is the same trade as `min-[560px]`
+         * below and reached by arithmetic rather than by a second breakpoint.
          *
          * Docked there is no cap, because docked the launcher is a flex item in
          * the readout row and is not over this bar at any width. See `BoardPage`.
@@ -225,7 +249,7 @@ export default function FrameStrip() {
          */
         className="flex max-w-full flex-wrap items-center justify-center gap-3 rounded-lg
           border border-rule bg-surface/95 px-3 py-2 shadow-2 backdrop-blur-[2px]
-          overlay:min-[560px]:max-w-[calc(100%-240px)]"
+          overlay:min-[560px]:max-w-[max(288px,calc(100%-440px))]"
       >
         <div className="flex items-center gap-2">
           <Button

@@ -7,6 +7,7 @@ import Inspector from './Inspector'
 import Toasts from './Toasts'
 import HUD from './HUD'
 import Assistant from './Assistant'
+import Notes from './Notes'
 import NameNotice from './NameNotice'
 import { useKeyboard } from '../../hooks/useKeyboard'
 import { useAutosave } from '../../hooks/useAutosave'
@@ -127,7 +128,24 @@ export default function BoardPage() {
             `HUD`, which gave them up for exactly this. */}
         <div className="flex items-center gap-2 border-t border-rule px-3 overlay:contents">
           <HUD />
-          <Assistant />
+          {/* The two launchers, which are one thing to position and two things
+              to press. Both panels open at `bottom-4 right-4`, so both pills
+              belong in that corner; giving each its own `fixed` would stack one
+              on the other, and giving the second a hand-measured inset is the
+              arrangement the comment at the top of this file rejects for the
+              rest of the chrome — a guess that comes apart the first time a
+              label changes width.
+
+              So the pair is the box. Floating it is one `fixed` group in the
+              corner; docked it is a single flex item at the right-hand end of
+              the readout row, which is where the assistant's launcher already
+              was. Each button keeps its own `overlay:hidden` rule, because
+              docked the row has to keep its children — an emptied row collapses
+              from 44px to 20px and the pitch re-fits underneath it. */}
+          <div className="flex items-center gap-2 overlay:fixed overlay:bottom-4 overlay:right-4 overlay:z-40">
+            <Notes />
+            <Assistant />
+          </div>
         </div>
         <DrawingToolbar />
       </div>

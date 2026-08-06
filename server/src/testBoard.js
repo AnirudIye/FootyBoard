@@ -58,5 +58,10 @@ export const testBoard = (overrides = {}) => ({
     pitchTheme: 'dark',
   },
   customFormations: [],
+  // Present and empty, which is what a version 4 board written by the app looks
+  // like. The guard accepts its absence — that is every row from before the
+  // notes pad — but a fixture standing in for "what the client saves" should not
+  // be exercising the older shape by accident.
+  notes: '',
   ...overrides,
 })

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isPersistedBoard, upgradeBoard, SCHEMA_VERSION } from './persistence'
+import { isPersistedBoard, upgradeBoard, SCHEMA_VERSION, MAX_NOTES } from './persistence'
 import type { PersistedBoard } from './persistence'
 import type { ViewSettings } from './types'
 import { useBoardStore, defaultPersistedBoard } from '../store/boardStore'
@@ -22,6 +22,7 @@ const sample: PersistedBoard = {
   frames: [],
   view,
   customFormations: [],
+  notes: '',
 }
 
 /**
@@ -73,6 +74,31 @@ describe('persistence', () => {
     const { bench: _bench, ...withoutBench } = sample
     expect(isPersistedBoard(withoutBench)).toBe(true)
   })
+
+  /**
+   * The notes cap, which both ends enforce because both ends run this function.
+   *
+   * Absent has to stay acceptable or every row written before version 4 stops
+   * being a board — the guard runs before the migration that fills it in. Over
+   * the cap has to be refused, or the limit is a thing the form asks for rather
+   * than a thing a stored board has, and the one caller that would notice is the
+   * API accepting a write this client could then not open.
+   */
+  it('accepts a board with no notes, which is every row before version 4', () => {
+    const { notes: _notes, ...withoutNotes } = sample
+    expect(isPersistedBoard(withoutNotes)).toBe(true)
+  })
+
+  it('accepts notes right up to the cap and refuses one character more', () => {
+    expect(isPersistedBoard({ ...sample, notes: 'x'.repeat(MAX_NOTES) })).toBe(true)
+    expect(isPersistedBoard({ ...sample, notes: 'x'.repeat(MAX_NOTES + 1) })).toBe(false)
+  })
+
+  it('refuses notes that are not text', () => {
+    expect(isPersistedBoard({ ...sample, notes: 42 })).toBe(false)
+    expect(isPersistedBoard({ ...sample, notes: ['a'] })).toBe(false)
+    expect(isPersistedBoard({ ...sample, notes: null })).toBe(false)
+  })
 })
 
 /**
@@ -108,8 +134,22 @@ describe('a board stored by an older version', () => {
     // in the payload would be carried into the store and written straight back
     // out on the next save, for ever.
     expect('snap' in upgraded.view).toBe(false)
+    // The 3 to 4 step. An empty pad rather than a missing field, so what is
+    // written back is a whole current board: `loadPersisted` would default it
+    // either way, and a payload that leans on every future reader remembering to
+    // is the half-upgraded board this table exists to avoid.
+    expect(upgraded.notes).toBe('')
     // And the rest of the board is untouched.
     expect(upgraded.view.lineColor).toBe(view.lineColor)
+  })
+
+  it('leaves notes alone when a board already has them', () => {
+    // Idempotence is asserted below on a whole board; this is the field the
+    // newest step touches, where a step written as `notes: ''` rather than
+    // `notes: board.notes ?? ''` would silently empty the pad of any board that
+    // arrives at version 3 carrying one.
+    const atV3 = { ...sample, version: 3, notes: 'press high, squeeze the second ball' }
+    expect(upgradeBoard(atV3 as never).notes).toBe('press high, squeeze the second ball')
   })
 
   it('comes out of the upgrade as something both ends accept', () => {

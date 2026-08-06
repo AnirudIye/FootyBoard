@@ -112,8 +112,12 @@ export default function PrivacyPolicy() {
           </li>
           <li>
             <strong className="text-ink">Your boards</strong>: player positions, drawings,
-            animation frames, and view settings. These are encrypted before they are stored. The
-            board's <em>name</em> is not, which is a deliberate trade covered below.
+            animation frames, view settings, and anything you write in the board's notes pad. These
+            are encrypted before they are stored. The board's <em>name</em> is not, which is a
+            deliberate trade covered below. The notes are named here rather than left inside
+            &ldquo;your boards&rdquo; because they are the one part of a board somebody writes
+            sentences into: they are stored the way the rest of the board is, they are shown to
+            everybody that board is shared with, and they are not sent to the assistant.
           </li>
           <li>
             <strong className="text-ink">Session records</strong>, so you stay signed in, and a
@@ -194,8 +198,8 @@ export default function PrivacyPolicy() {
           <li>the list of formation names this pitch offers, and which team is currently selected.</li>
         </ul>
         <p>
-          Your email address, your account, the board's name, and the board's saved file are not
-          part of that request. The reply comes back through our server and is not stored by us.
+          Your email address, your account, the board's name, the board's notes and the board's
+          saved file are not part of that request. The reply comes back through our server and is not stored by us.
           What Google does with the request is governed by their own terms for that API, and is
           outside our control, which is the honest reason this is a choice and not a default.
         </p>

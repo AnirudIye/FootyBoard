@@ -1,5 +1,6 @@
 import type { Team, Token, Drawing, Frame, ViewSettings, CustomFormation } from '../types'
 import { shiftAttached } from '../drawings'
+import { MAX_NOTES } from '../persistence'
 import type { EntityOp } from './protocol'
 
 /**
@@ -24,6 +25,7 @@ export interface BoardSlice {
   frames: Frame[]
   view: ViewSettings
   customFormations: CustomFormation[]
+  notes: string
 }
 
 /** Annotations pinned to a player travel with them, exactly as they do locally. */
@@ -144,5 +146,19 @@ export function applyOp(state: BoardSlice, op: EntityOp): Partial<BoardSlice> {
 
     case 'view':
       return { view: { ...state.view, ...op.patch } }
+
+    /**
+     * Clamped on arrival, because an op is whatever a peer sent.
+     *
+     * Everything that reaches this function has come off a socket, and the cap
+     * is a property of a stored board: `isPersistedBoard` refuses a payload over
+     * it, so a peer who sent 4000 characters — by editing their bundle, or by
+     * running an older one — would leave this client holding a board it could
+     * no longer save, with the failure landing on the wrong person entirely.
+     * Truncating is the one answer that keeps the board writable, and it costs
+     * nothing to a peer running this build, whose store clamped it first.
+     */
+    case 'notes':
+      return { notes: String(op.text ?? '').slice(0, MAX_NOTES) }
   }
 }

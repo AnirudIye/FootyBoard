@@ -3,9 +3,11 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { migrate, run, closePool } from './db.js'
+import { migrate, get, run, closePool } from './db.js'
 import { createSession, COOKIE_NAME } from './auth.js'
+import { decrypt, initEncryption } from './crypto.js'
 import { testBoard } from './testBoard.js'
+import { MAX_NOTES } from '../../src/lib/boardSchema.js'
 
 /**
  * What the write path will accept as a board.
@@ -102,6 +104,11 @@ const read = async (res) => {
 
 before(async () => {
   await migrate()
+  // This suite reads a stored row back to prove what is on disk, which needs the
+  // same key the instance below writes with. Both come from the environment, or
+  // are derived from `SESSION_SECRET` in a local environment; either way there
+  // is one key and this is the process asking for it.
+  initEncryption()
 
   const id = randomUUID()
   await run(
@@ -194,6 +201,77 @@ test('PUT refuses the same, over a board that was fine', async () => {
   // on this endpoint: a refused write must not be a half-applied one.
   const survived = await read(await call(`/boards/${id}`, {}))
   assert.equal(survived.body.board.data.tokens.length, 2)
+})
+
+/**
+ * The notes pad, which is the first board field with a limit of its own.
+ *
+ * The cap lives in `boardSchema.js` beside the guard, so it is enforced here by
+ * the same function the client checks with rather than by a second rule that
+ * could drift. What that buys is stated as two tests rather than one: the write
+ * path refuses an over-long pad, and — the half that would otherwise be a
+ * comment — what lands in the database cannot be read without the key.
+ */
+test('notes ride with the board and come back out of it', async () => {
+  const notes = 'Press high for fifteen, then drop into a mid block.'
+  const created = await read(await post({ name: 'With notes', data: testBoard({ notes }) }))
+  assert.equal(created.status, 201, created.text)
+  const { id } = created.body.board
+
+  const loaded = await read(await call(`/boards/${id}`, {}))
+  assert.equal(loaded.body.board.data.notes, notes)
+
+  // Emptied is a value, not an absence: a pad somebody cleared has to stay
+  // cleared rather than falling back to whatever was there before.
+  const cleared = await read(await put(id, { data: testBoard({ notes: '' }) }))
+  assert.equal(cleared.status, 200, cleared.text)
+  assert.equal((await read(await call(`/boards/${id}`, {}))).body.board.data.notes, '')
+})
+
+test('notes over the cap are refused on both endpoints', async () => {
+  const overLong = testBoard({ notes: 'x'.repeat(MAX_NOTES + 1) })
+  const atCap = testBoard({ notes: 'x'.repeat(MAX_NOTES) })
+
+  const refused = await read(await post({ name: 'Too much', data: overLong }))
+  assert.equal(refused.status, 400, refused.text)
+  assert.equal(refused.body.field, 'data')
+
+  // The boundary itself is accepted, which is the assertion that stops the cap
+  // being quietly off by one.
+  const created = await read(await post({ name: 'At the cap', data: atCap }))
+  assert.equal(created.status, 201, created.text)
+  const { id } = created.body.board
+
+  const overwritten = await read(await put(id, { data: overLong }))
+  assert.equal(overwritten.status, 400, overwritten.text)
+  assert.equal(overwritten.body.field, 'data')
+
+  // And the board it was aimed at still holds the notes it had.
+  const survived = await read(await call(`/boards/${id}`, {}))
+  assert.equal(survived.body.board.data.notes.length, MAX_NOTES)
+})
+
+/**
+ * What is actually on disk.
+ *
+ * Notes are the one field on a board somebody writes sentences into, so "the
+ * board is encrypted at rest" stops being an architectural claim and becomes a
+ * promise about a specific paragraph. This reads the row the API wrote, past the
+ * API, and asserts three things: the stored value carries the `v1:` envelope
+ * `crypto.js` writes, the words are not in it anywhere, and the key turns it
+ * back into the pad. Without the middle assertion the other two would pass over
+ * a column that happened to hold both.
+ */
+test('the notes are ciphertext in the database, not text', async () => {
+  const notes = 'Marking assignments: Ellis on their nine, Okafor drops to sweep.'
+  const created = await read(await post({ name: 'Sealed', data: testBoard({ notes }) }))
+  const { id } = created.body.board
+
+  const row = await get('SELECT data FROM boards WHERE id = $1', id)
+  assert.ok(row.data.startsWith('v1:'), 'stored board is not in the v1 envelope')
+  assert.ok(!row.data.includes('Ellis'), 'a word from the notes is readable in the row')
+  assert.ok(!row.data.includes(notes), 'the notes are stored in the clear')
+  assert.equal(JSON.parse(decrypt(row.data)).notes, notes)
 })
 
 test('a missing board is still refused, and says so about the right field', async () => {

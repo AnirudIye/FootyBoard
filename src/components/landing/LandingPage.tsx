@@ -18,6 +18,10 @@ import PlasmaWave from './fx/PlasmaWave'
 import DotField from './fx/DotField'
 import { useReducedMotion } from '../../hooks/useReducedMotion'
 import { useAuthStore, selectSignedIn, selectEmail } from '../../store/authStore'
+// The copy, from the one file the build's prerenderer can also read. It used to
+// live below as two literals; a crawler never runs any of this, so the same
+// sentences now have to exist somewhere Node can import without a build step.
+import { HERO, SHAPING as SHAPING_COPY, MOVING as MOVING_COPY } from '../../content/marketing.js'
 
 // The page's three greens, named once. The signal is the accent token itself;
 // the deep and the pale are the ends of the headline's own ramp.
@@ -132,51 +136,35 @@ function NavItem({ item, className }: { item: (typeof NAV)[number]; className: s
 /** The three policy links in the footer, which `NavItem` does not render. */
 const footerLink = 'inline-flex items-center justify-center transition-colors hover:text-accent'
 
+/**
+ * What `SHAPING` and `MOVING` are, now that they arrive from elsewhere.
+ *
+ * The two bands exist because there are two jobs and they happen in order: you
+ * put a shape down, then you move it. The old grid was six equal cards, which
+ * said the six were interchangeable, and they are not — Formations is the one
+ * people come for and it leads its band at twice the size.
+ *
+ * The arrays themselves moved to `src/content/marketing.js` so the build's
+ * prerenderer can read the same sentences without importing this file, which
+ * pulls in framer-motion, WebGL and Konva and would not survive Node.
+ *
+ * **The cast is where the type checking stops, and it is worth being honest
+ * about that.** `allowJs` widens a string literal in a `.js` file to `string`,
+ * so `diagram` arrives as `string` and nothing here can prove it names a
+ * drawing that exists. A `.d.ts` could restore it, but only by importing
+ * `DiagramName` into a content file, which would make the words depend on the
+ * pictures. The failure this leaves open is small and visible: `FeatureDiagram`
+ * renders nothing for a name it does not know, so a typo shows up as a missing
+ * illustration on the page rather than as a crash.
+ */
 interface Feature {
   diagram: DiagramName
   title: string
   body: string
 }
 
-// Two bands, because there are two jobs and they happen in order: you put a
-// shape down, then you move it. The old grid was six equal cards, which said
-// the six were interchangeable, and they are not: Formations is the one people
-// come for and it leads its band at twice the size.
-const SHAPING: Feature[] = [
-  {
-    diagram: 'formations',
-    title: 'Formations',
-    body: 'Ten shapes for eleven-a-side, plus sets for 7-a-side and futsal. Numbers follow the roles, so your 6 sits where a 6 sits. Mid-block and high-line versions of each.',
-  },
-  {
-    diagram: 'assistant',
-    title: 'The assistant',
-    body: 'Type what you want and the board does it. No account, no network. It reads your words on the machine you are sat at.',
-  },
-  {
-    diagram: 'canvas',
-    title: 'Room to think',
-    body: 'The pitch has edges. The canvas around it does not, so you can park a set piece off to one side and come back to it later.',
-  },
-]
-
-const MOVING: Feature[] = [
-  {
-    diagram: 'frames',
-    title: 'Frames',
-    body: 'Capture a position. Move people. Capture again. Scrub back through it, or export the whole move as a GIF or a clip.',
-  },
-  {
-    diagram: 'rooms',
-    title: 'Rooms',
-    body: 'Boards live at a URL. Send it on and someone else is looking at the same pitch.',
-  },
-  {
-    diagram: 'sharing',
-    title: 'Sharing',
-    body: 'The address bar is the share link. Nobody has to sign up to look at what you made.',
-  },
-]
+const SHAPING = SHAPING_COPY as Feature[]
+const MOVING = MOVING_COPY as Feature[]
 
 // Shapes the board ships with — honest marquee content, not invented clients.
 const SHAPES = ['4-3-3', '4-2-3-1', '3-5-2', '4-4-2', '5-3-2', '4-1-4-1', '3-4-3', '4-3-2-1']
@@ -475,17 +463,22 @@ export default function LandingPage() {
                 className="font-display font-normal leading-[1.02] tracking-[-0.035em]
                   text-[clamp(4.25rem,17vw,13.75rem)]"
               >
-                <span className="text-foreground">Total </span>
+                {/* Split on the last space rather than on two literals, so the
+                    gradient is a typographic decision made here and the
+                    sentence stays one string in `marketing.js`. The prerender
+                    writes that same string into a static <h1>, and two hand-kept
+                    halves are exactly how those two drift apart. */}
+                <span className="text-foreground">{HERO.headline.replace(/\s+\S+$/, '')} </span>
                 <span
                   className="bg-clip-text text-transparent"
                   style={{ backgroundImage: HEADLINE_GRADIENT }}
                 >
-                  Football
+                  {HERO.headline.slice(HERO.headline.lastIndexOf(' ') + 1)}
                 </span>
               </h1>
 
               <p className="mt-[9px] max-w-md text-lg leading-8 text-hero-sub opacity-80">
-                Two teams, a pitch, and nothing in the way. Set the shape, move it, send the link.
+                {HERO.sub}
               </p>
 
               <div className="mt-[25px] flex flex-col items-center gap-[18px]">

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { applyOp } from './apply'
 import type { BoardSlice } from './apply'
+import { MAX_NOTES } from '../persistence'
 import type { Token, Drawing } from '../types'
 
 /**
@@ -49,6 +50,7 @@ const board = (over: Partial<BoardSlice> = {}): BoardSlice => ({
     pitchTheme: 'dark',
   },
   customFormations: [],
+  notes: '',
   ...over,
 })
 
@@ -171,6 +173,32 @@ describe('view', () => {
   it('merges into the existing settings rather than replacing them', () => {
     const next = applyOp(board(), { type: 'view', patch: { view: 'attackHalf' } })
     expect(next.view).toMatchObject({ view: 'attackHalf', kind: '11', grass: true })
+  })
+})
+
+describe('notes', () => {
+  it('replaces the pad wholesale', () => {
+    const next = applyOp(board({ notes: 'old' }), { type: 'notes', text: 'press high' })
+    expect(next.notes).toBe('press high')
+  })
+
+  it('accepts an empty pad, which is how a peer clears it', () => {
+    // `{}` would mean "nothing changed" to the caller, so an emptied pad has to
+    // come back as an empty string rather than as no answer.
+    expect(applyOp(board({ notes: 'old' }), { type: 'notes', text: '' })).toEqual({ notes: '' })
+  })
+
+  /**
+   * The cap is enforced on arrival as well as on the way out.
+   *
+   * An op is whatever a peer sent. A note over `MAX_NOTES` would leave this
+   * client holding a board `isPersistedBoard` refuses, so every save from here
+   * on would fail — the failure landing on the person who received the op rather
+   * than the one who sent it, which is the worst place for it.
+   */
+  it('truncates a note from a peer that is over the cap', () => {
+    const next = applyOp(board(), { type: 'notes', text: 'x'.repeat(MAX_NOTES + 500) })
+    expect(next.notes).toHaveLength(MAX_NOTES)
   })
 })
 
