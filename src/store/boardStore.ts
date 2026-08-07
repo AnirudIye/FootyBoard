@@ -344,6 +344,60 @@ const makeTeams = (): Team[] => [
 const teamColor = (teams: Team[], side: Side): string =>
   teams.find((t) => t.side === side)?.color ?? (side === 'home' ? HOME_COLOR : AWAY_COLOR)
 
+/**
+ * A side whose whole on-pitch squad is wearing one colour *is* wearing that kit.
+ *
+ * **This is the half of the recolouring bug that `setTeamColor` did not fix, and
+ * the fix had to be a rule about state rather than a second button.** `Team
+ * kits` colours a squad, and it works — but nobody reaches for a new control to
+ * do a thing they already know how to do, and what they already know is the
+ * swatch row on the selection bar, which writes one chip at a time. Eleven
+ * `updateToken` calls leave eleven green players, a bench still in red, and a
+ * team record that says red. Switch to futsal and back and five red substitutes
+ * walk on. Measured in the dev store: two distinct colours on the pitch after a
+ * round trip, against one before it.
+ *
+ * (Described rather than quoted, because `teamColors.test.ts` fails on a team
+ * hex written anywhere under `src/` except the module that owns it — and it
+ * failed on the first draft of this comment, which is the test doing its job.)
+ *
+ * So the team record stops being a thing somebody has to remember to set. If a
+ * side's players are all one colour, that is the kit — however they got there,
+ * one at a time or eleven at once — and the bench follows. Stated as an
+ * invariant, it also explains itself in the interface: the picker's dot and the
+ * kit panel's pressed swatch both read the record, so recolouring a whole team
+ * by hand now moves them, which is what somebody who has just done it expects.
+ *
+ * Deliberately only when the squad is *unanimous*. A mixed pitch means somebody
+ * has coloured individuals — a trialist, a neutral, the player being talked
+ * about — and there is no kit to infer. Returns null when there is nothing to
+ * change, so the caller can tell a settle from a no-op and emit accordingly.
+ */
+/** Which side a token plays for, or null if it is not a player at all. */
+const tokenSide = (tokens: Token[], tokenId: string): Side | null => {
+  const token = tokens.find((t) => t.id === tokenId)
+  if (!token || token.type !== 'player') return null
+  return token.teamId === 'home' || token.teamId === 'away' ? token.teamId : null
+}
+
+function settleKit(
+  teams: Team[],
+  tokens: Token[],
+  bench: Token[],
+  side: Side,
+): { teams: Team[]; bench: Token[]; color: string } | null {
+  const squad = tokens.filter((t) => t.type === 'player' && t.teamId === side)
+  if (squad.length === 0) return null
+  const color = squad[0].color
+  if (!squad.every((t) => t.color === color)) return null
+  if (teamColor(teams, side) === color) return null
+  return {
+    teams: teams.map((t) => (t.side === side ? { ...t, color } : t)),
+    bench: bench.map((t) => (t.teamId === side ? { ...t, color } : t)),
+    color,
+  }
+}
+
 function buildTeamTokens(side: Side, color: string, positions: Slot[]): Token[] {
   return positions.map((p) => ({
     id: id(),
@@ -815,11 +869,35 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     // still fires for the originator, because it watches the token array's
     // identity and not the history.
     if (defer && !get()._pending) set({ _pending: get()._snapshot() })
-    set((s) => ({
-      tokens: s.tokens.map((t) => (t.id === tokenId ? { ...t, ...patch } : t)),
-    }))
+
+    const tokens = get().tokens.map((t) => (t.id === tokenId ? { ...t, ...patch } : t))
+
+    /**
+     * A colour patch can finish a kit, and this is where that is noticed.
+     *
+     * The selection bar recolours a squad one `updateToken` at a time, so no
+     * caller here ever sees "the whole team" — which is why the bench and the
+     * team record were left behind by the only recolouring control anybody
+     * uses. Asking after each colour patch whether the side is now unanimous
+     * catches it however it was done: eleven chips selected and one swatch
+     * pressed, or eleven separate edits from the inspector, or the last chip of
+     * a team somebody has been working through all afternoon.
+     *
+     * Computed before the `set` rather than inside the updater, so this stays a
+     * pure read followed by one write, and so the emit below knows what
+     * happened without reaching back into the store.
+     */
+    const side = patch.color !== undefined ? tokenSide(tokens, tokenId) : null
+    const settled = side ? settleKit(get().teams, tokens, get().bench, side) : null
+
+    set(settled ? { tokens, teams: settled.teams, bench: settled.bench } : { tokens })
     if (before) get()._pushPast(before)
     emit({ type: 'patch', entity: 'token', id: tokenId, patch })
+    // Second, and after the patch, because it describes what the patch turned
+    // out to mean. A peer applying both in order lands where this client is; a
+    // peer that somehow saw only the first would have the chips right and the
+    // bench stale, which is the state this whole fix is about.
+    if (settled && side) emit({ type: 'team', side, color: settled.color })
   },
 
   addToken: (token) => {

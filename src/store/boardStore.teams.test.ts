@@ -253,6 +253,73 @@ describe('a team kit colour', () => {
   })
 })
 
+/**
+ * The half `setTeamColor` did not fix, and the way the bug was actually met.
+ *
+ * Nobody reaches for a new control to do something they already know how to do,
+ * and what they already know is the swatch row on the selection bar — which
+ * recolours a squad one `updateToken` at a time. Eleven green players, a bench
+ * still in red, a team record that says red, and five red substitutes walking on
+ * at the next format change. Reported as still broken after the first fix
+ * shipped, and reproduced in the dev store before any of this was written:
+ * `pitch #6B5B95 and #2C5B8A` after a round trip.
+ *
+ * So the record is inferred rather than remembered: a side whose on-pitch squad
+ * is unanimous *is* wearing that kit, however it got there.
+ */
+describe('a squad recoloured a chip at a time', () => {
+  beforeEach(() => useBoardStore.getState().initDefaultBoard())
+
+  const recolourEveryPlayer = (side: Side, color: string) => {
+    for (const t of onPitch(side)) useBoardStore.getState().updateToken(t.id, { color })
+  }
+
+  it('becomes the team kit once the last chip is done', () => {
+    recolourEveryPlayer('home', KIT)
+
+    expect(useBoardStore.getState().teams.find((t) => t.side === 'home')!.color).toBe(KIT)
+    // The bench follows, which is the part no per-chip caller could have done.
+    for (const t of onBench('home')) expect(t.color).toBe(KIT)
+  })
+
+  it('survives the format round trip that started all this', () => {
+    recolourEveryPlayer('away', KIT)
+    useBoardStore.getState().setPitchKind('7aside')
+    useBoardStore.getState().setPitchKind('11')
+
+    const colours = new Set([...onPitch('away'), ...onBench('away')].map((t) => t.color))
+    expect([...colours]).toEqual([KIT])
+  })
+
+  it('leaves a part-recoloured side alone, because there is no kit to infer', () => {
+    // A mixed pitch means somebody has coloured individuals — a trialist, a
+    // neutral, the player being talked about. Inferring a kit from the majority
+    // would repaint a bench nobody asked about.
+    const [first, second] = onPitch('home')
+    useBoardStore.getState().updateToken(first.id, { color: KIT })
+    useBoardStore.getState().updateToken(second.id, { color: KIT })
+
+    expect(useBoardStore.getState().teams.find((t) => t.side === 'home')!.color).toBe(HOME_COLOR)
+    for (const t of onBench('home')) expect(t.color).toBe(HOME_COLOR)
+  })
+
+  it('does not touch the other side', () => {
+    recolourEveryPlayer('home', KIT)
+    expect(useBoardStore.getState().teams.find((t) => t.side === 'away')!.color).toBe(AWAY_COLOR)
+    for (const t of [...onPitch('away'), ...onBench('away')]) expect(t.color).toBe(AWAY_COLOR)
+  })
+
+  it('is undone chip by chip, kit included', () => {
+    recolourEveryPlayer('home', KIT)
+    // The settle rides in the last chip's undo step rather than in one of its
+    // own, so a single undo puts back both that chip and the kit it implied.
+    useBoardStore.getState().undoAction()
+
+    expect(useBoardStore.getState().teams.find((t) => t.side === 'home')!.color).toBe(HOME_COLOR)
+    for (const t of onBench('home')) expect(t.color).toBe(HOME_COLOR)
+  })
+})
+
 describe('switchPlayerTeam', () => {
   beforeEach(() => useBoardStore.getState().initDefaultBoard())
 
