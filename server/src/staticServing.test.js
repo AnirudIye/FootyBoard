@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { DATABASE_URL } from './env.js'
 import { DOCUMENT_CSP } from '../../src/lib/csp.js'
+import { PAGES } from '../../src/content/marketing.js'
 
 /**
  * `SERVE_STATIC=true`, which is the whole of the single-origin deployment.
@@ -222,6 +223,39 @@ test('a file in public/ is served verbatim rather than as the shell', async (t) 
   assert.equal(Buffer.byteLength(body, 'utf8'), 53)
   // And the half that says which mistake this is guarding against.
   assert.doesNotMatch(body, /<div id="root"/)
+})
+
+/**
+ * The sitemap names every page this origin actually serves, and nothing else.
+ *
+ * It was hand-written and had drifted: `/contact` was prerendered, indexable and
+ * allowed by `robots.txt`, and missing from the list — so the one page both
+ * policies name as the route for a data protection request was the one page
+ * Google was never told about. It is generated from `PAGES` now, and this is the
+ * assertion that keeps the generator honest end to end: not "the script would
+ * write the right thing" but "the origin is serving it".
+ *
+ * Both directions matter. A missing URL is a page nobody is told about; an extra
+ * one is a promise the server does not keep, which is what a search engine
+ * reports back as an error against the sitemap rather than against the page.
+ */
+test('the sitemap lists exactly the pages that are served', async (t) => {
+  const res = await get(STATIC_PORT, '/sitemap.xml')
+  if (!res.ok) return t.skip('dist/ is not built')
+
+  const xml = await res.text()
+  const listed = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1])
+  if (listed.length === 0) return t.skip('dist/ predates the generated sitemap')
+
+  const expected = PAGES.map((page) => `https://www.footyboard.me${page.path}`)
+  assert.deepEqual(listed.slice().sort(), expected.slice().sort())
+
+  // And every one of them is a page, rather than a URL the sitemap invented.
+  for (const url of listed) {
+    const path = new URL(url).pathname
+    const page = await get(STATIC_PORT, path)
+    assert.equal(page.status, 200, `${path} is in the sitemap and answers ${page.status}`)
+  }
 })
 
 /* -------------------------------------------------------------------------- */
