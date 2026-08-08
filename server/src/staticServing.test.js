@@ -207,8 +207,20 @@ test('a file in public/ is served verbatim rather than as the shell', async (t) 
   if (!res.ok) return t.skip('dist/ is not built')
 
   const body = await res.text()
-  assert.equal(body.trim(), 'google-site-verification: google7c8f404330a3c9e6.html')
-  // The half that says which mistake this is guarding against.
+
+  /**
+   * Exactly, with no `trim()`.
+   *
+   * A trim would accept the one change most likely to happen to this file: an
+   * editor adding a trailing newline on the way past. Search Console compares
+   * the body it fetches against the file it issued, so a byte is a byte, and a
+   * test that tolerates a difference is a test that would let the property
+   * un-verify quietly. `.gitattributes` marks the file `-text` so git cannot
+   * rewrite it either; this is the half that notices if something else does.
+   */
+  assert.equal(body, 'google-site-verification: google7c8f404330a3c9e6.html')
+  assert.equal(Buffer.byteLength(body, 'utf8'), 53)
+  // And the half that says which mistake this is guarding against.
   assert.doesNotMatch(body, /<div id="root"/)
 })
 

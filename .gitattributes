@@ -5,3 +5,12 @@
 *.woff binary
 *.woff2 binary
 *.svg text eol=lf
+
+# Search Console's verification file is a token, not prose, and `text=auto`
+# above gives git permission to rewrite it. There is nothing to rewrite today —
+# it is one line with no trailing newline — which is exactly why this is worth
+# pinning rather than leaving to luck: the first editor that adds a newline, or
+# a checkout that decides on CRLF, changes the bytes Google compares against the
+# file it issued, and the property silently un-verifies. `-text` means "never
+# convert line endings in this file"; the diff stays readable.
+public/google7c8f404330a3c9e6.html -text
