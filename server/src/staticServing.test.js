@@ -186,6 +186,32 @@ test('an unlisted client route still gets the shell rather than a 404', async (t
   assert.match(await res.text(), /<div id="root"/)
 })
 
+/**
+ * A file dropped in `public/` is served as itself, not as the app.
+ *
+ * This is the property a search engine's verification file rests on, and it is
+ * one middleware away from silently not holding: `express.static` runs first and
+ * answers with the file, and the catch-all below it answers *everything else*
+ * with the shell. Reverse those two, or make the catch-all a little more eager,
+ * and `/google….html` starts returning `<div id="root">` — a page that is
+ * plainly a 200 and plainly not what was asked for, which is exactly the shape
+ * of failure nobody investigates. Google re-checks verification periodically and
+ * un-verifies a property that stops answering, so this is not only about the
+ * first check passing.
+ *
+ * Asserted on the real file rather than on a fixture, because the fixture would
+ * go on passing after somebody deleted the real one.
+ */
+test('a file in public/ is served verbatim rather than as the shell', async (t) => {
+  const res = await get(STATIC_PORT, '/google7c8f404330a3c9e6.html')
+  if (!res.ok) return t.skip('dist/ is not built')
+
+  const body = await res.text()
+  assert.equal(body.trim(), 'google-site-verification: google7c8f404330a3c9e6.html')
+  // The half that says which mistake this is guarding against.
+  assert.doesNotMatch(body, /<div id="root"/)
+})
+
 /* -------------------------------------------------------------------------- */
 /* The API keeps the policy the API needs                                      */
 /* -------------------------------------------------------------------------- */
