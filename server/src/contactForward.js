@@ -85,10 +85,16 @@ export function emailFor({ topic, replyTo, body, receivedAt }) {
  * either way, and an error mentioning a mail provider would be describing this
  * service's plumbing to a stranger.
  *
- * Timed out rather than left to hang. This runs inside the request, so a
- * provider that accepts a connection and then stops talking would hold the
- * response open for as long as it liked; ten seconds is far longer than the API
- * takes and far shorter than a person waits before pressing Send again.
+ * **Timed out rather than left to hang, and the budget is thirty seconds
+ * because nobody is waiting on it.** It used to be ten, chosen when this was
+ * awaited before the response, where the number was a compromise between giving
+ * the provider room and making a person watch a form. The first message through
+ * a freshly restarted process spent all ten of them — `contact forward failed:
+ * TimeoutError`, once, on the first attempt after a deploy, with every later
+ * one completing in well under a second. Whatever a cold process is paying for
+ * on its first outbound TLS connection, ten seconds did not cover it and the
+ * copy was lost. The route answers first now, so the only thing this bound has
+ * to do is stop a silent socket holding a handle forever.
  */
 export async function forwardContactMessage(message) {
   if (!forwardingEnabled()) return false
@@ -101,7 +107,7 @@ export async function forwardContactMessage(message) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(emailFor(message)),
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(30_000),
     })
 
     if (!response.ok) {

@@ -101,32 +101,41 @@ contactRouter.post('/', async (req, res, next) => {
       receivedAt,
     )
 
-    /**
-     * Then put a copy in a mailbox somebody reads, and do not care whether it
-     * lands.
-     *
-     * **After the insert, never before, and never in place of it.** The row is
-     * the record; this is a notification on top of it. A provider that is down,
-     * rate-limiting or misconfigured must not turn somebody's erasure request
-     * into a 500 — they would be told to try again later and the request would
-     * be *lost* rather than merely undelivered.
-     *
-     * Awaited rather than left to float, which is the one thing here worth
-     * arguing about. A floating promise would answer the person a few hundred
-     * milliseconds sooner and would be a rejection nothing owns, in a process
-     * where an unhandled rejection is a crash; `forwardContactMessage` swallows
-     * its own failures and returns a boolean precisely so that awaiting it is
-     * free. The answer is ignored because there is nothing useful to tell
-     * somebody whose message is safely stored either way, and naming a mail
-     * provider in an error would be describing this service's plumbing to a
-     * stranger.
-     */
-    await forwardContactMessage({ topic, replyTo, body, receivedAt })
-
     // No id handed back, and nothing to look up with one. A reference number
     // would be a second unauthenticated read of a table full of other people's
     // data protection requests, bought for the convenience of quoting it.
     res.status(202).json({ received: true })
+
+    /**
+     * Then put a copy in a mailbox somebody reads — after answering, and
+     * without the sender waiting on it.
+     *
+     * **After the insert, never before, and never in place of it.** The row is
+     * the record; this is a notification on top of it. A provider that is down
+     * or misconfigured costs a copy, and must never turn somebody's erasure
+     * request into a 500 — they would be told to try again later and the
+     * request would be *lost* rather than merely undelivered.
+     *
+     * **After the response, which this did not used to be, and the first real
+     * message found out why.** It was awaited before the reply on the argument
+     * that a floating promise is a rejection nobody owns. The first message
+     * through a freshly restarted process then took longer than the send's own
+     * timeout — `contact forward failed: TimeoutError`, once, on the very first
+     * attempt after a deploy, with every later one landing in well under a
+     * second. Whatever that cold start is paying for, awaiting it meant the
+     * sender paid for it too, and the only ways to give the send more room were
+     * to make a person watch a form for ten seconds or to accept losing the
+     * copy. Answering first removes the trade: the send can have a generous
+     * budget because nobody is waiting on it.
+     *
+     * The rejection argument survives, and is answered rather than dropped.
+     * `forwardContactMessage` catches everything and resolves to a boolean —
+     * that is what its tests pin — and the `.catch` below is the belt to that
+     * braces, because an unhandled rejection in this process is a crash and
+     * "cannot throw" is a property somebody could edit away without noticing
+     * what depended on it.
+     */
+    void forwardContactMessage({ topic, replyTo, body, receivedAt }).catch(() => {})
   } catch (err) {
     next(err)
   }
