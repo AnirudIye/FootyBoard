@@ -148,6 +148,15 @@ export default function PrivacyPolicy() {
             if you have one, because a request to be erased has to work for somebody who has already
             deleted theirs.
           </li>
+          <li>
+            <strong className="text-ink">A copy is emailed to the person who runs this service</strong>{' '}
+            as soon as it arrives, so that a message is read rather than waiting in a database for
+            somebody to go and look. That copy is an ordinary email: it travels through an email
+            provider and sits in a mailbox, neither of which is encrypted the way the stored copy is.
+            The address you gave for a reply is used as the reply address on it, which is the whole
+            point — it is how you get an answer. If you would rather not have your message in a
+            mailbox, say so in the message itself and it will be deleted from there as well.
+          </li>
         </ul>
         <p>In your browser:</p>
         <ul className="ml-5 list-disc space-y-1.5">
@@ -388,7 +397,7 @@ export default function PrivacyPolicy() {
       <Clause heading="Who else touches any of this">
         <p>
           Your account and boards are held on hardware operated by the person who runs this
-          installation, not on a cloud platform. Three other parties are involved, each in one
+          installation, not on a cloud platform. Four other parties are involved, each in one
           narrow way, and this is the whole list:
         </p>
         <ul className="ml-5 list-disc space-y-1.5">
@@ -399,6 +408,22 @@ export default function PrivacyPolicy() {
             by us.{' '}
             <a
               href="https://www.cloudflare.com/privacypolicy/"
+              className="text-accent hover:underline"
+              rel="noreferrer"
+              target="_blank"
+            >
+              Their privacy policy
+            </a>
+            .
+          </li>
+          <li>
+            <strong className="text-ink">Resend</strong>, an email provider, and only if you use the
+            contact form: it carries the copy of your message that goes to the person who runs this
+            service, which means it handles your message and your reply address in the clear, as any
+            email provider does. Nothing else on this site sends email — there is no newsletter, no
+            notification, and no password reset by email.{' '}
+            <a
+              href="https://resend.com/legal/privacy-policy"
               className="text-accent hover:underline"
               rel="noreferrer"
               target="_blank"

@@ -4,6 +4,7 @@ import { run } from '../db.js'
 import { encrypt } from '../crypto.js'
 import { consume } from '../rateLimit.js'
 import { BadRequest, validateEmail } from '../validate.js'
+import { forwardContactMessage } from '../contactForward.js'
 
 /**
  * The contact form, which is the only way to reach anybody about this product.
@@ -89,6 +90,7 @@ contactRouter.post('/', async (req, res, next) => {
       message: 'Too many messages from this connection. Please try again later.',
     })
 
+    const receivedAt = Date.now()
     await run(
       `INSERT INTO contact_messages (id, topic, reply_to, body, created_at)
        VALUES ($1, $2, $3, $4, $5)`,
@@ -96,8 +98,30 @@ contactRouter.post('/', async (req, res, next) => {
       topic,
       encrypt(replyTo),
       encrypt(body),
-      Date.now(),
+      receivedAt,
     )
+
+    /**
+     * Then put a copy in a mailbox somebody reads, and do not care whether it
+     * lands.
+     *
+     * **After the insert, never before, and never in place of it.** The row is
+     * the record; this is a notification on top of it. A provider that is down,
+     * rate-limiting or misconfigured must not turn somebody's erasure request
+     * into a 500 — they would be told to try again later and the request would
+     * be *lost* rather than merely undelivered.
+     *
+     * Awaited rather than left to float, which is the one thing here worth
+     * arguing about. A floating promise would answer the person a few hundred
+     * milliseconds sooner and would be a rejection nothing owns, in a process
+     * where an unhandled rejection is a crash; `forwardContactMessage` swallows
+     * its own failures and returns a boolean precisely so that awaiting it is
+     * free. The answer is ignored because there is nothing useful to tell
+     * somebody whose message is safely stored either way, and naming a mail
+     * provider in an error would be describing this service's plumbing to a
+     * stranger.
+     */
+    await forwardContactMessage({ topic, replyTo, body, receivedAt })
 
     // No id handed back, and nothing to look up with one. A reference number
     // would be a second unauthenticated read of a table full of other people's
