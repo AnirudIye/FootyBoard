@@ -431,9 +431,43 @@ if (SERVES_DOCUMENTS) {
     /**
      * Anything unlisted still gets the shell, and that is deliberate. `/login`,
      * `/2fa` and the rest are real pages React draws; they have no prerendered
-     * copy because `robots.txt` asks for them not to be indexed, and giving
-     * them one would be work in service of the opposite of what that file says.
+     * copy of their own because they are not pages anybody should arrive at from
+     * a search.
+     *
+     * **Which is said here, with a header, rather than in `robots.txt` — and
+     * that swap is the fix for a real defect rather than a tidy-up.** Those ten
+     * paths used to be `Disallow:`d, on the argument that an SPA serves the same
+     * document at every path and indexing eight copies of one page teaches a
+     * search engine to distrust a small site. The argument was right and the
+     * instrument was wrong, in a way that only became visible once the prerender
+     * shipped:
+     *
+     *   - **A `Disallow` is not a `noindex`.** It asks a crawler not to *fetch*
+     *     the URL. Google may still index a blocked URL it finds linked — with
+     *     no title and no description, since it was never allowed to look — and
+     *     this site links to `/login` and `/signup` from the board and the
+     *     landing page. That is the "Indexed, though blocked by robots.txt"
+     *     report, and it is worse than the duplication it was meant to prevent.
+     *   - **Blocking is what stopped the cure working.** The shell these paths
+     *     fall back to is `index.html`, which the prerender gives a canonical of
+     *     `https://www.footyboard.me/`. That canonical already says "this is not
+     *     a separate page, fold it into the home page" — and a crawler that is
+     *     forbidden to fetch the URL never reads it.
+     *
+     * So the paths are crawlable now and answer `X-Robots-Tag: noindex`, which
+     * is the directive that actually means what was wanted: fetch it, and do not
+     * list it. A header rather than a `<meta>` because every one of these
+     * responses is the *same file* on disk, and per-response is the only place
+     * this can be said without writing a document per route.
+     *
+     * It rides on the fallback rather than on a list of paths, so it covers a
+     * URL nobody thought of — a typo, a stale link, a route added to the router
+     * and not to `PAGES`. Those all serve the home document too, and none of
+     * them is a page. A prerendered page never reaches this branch and never
+     * gets the header.
      */
+    if (!file) res.setHeader('X-Robots-Tag', 'noindex')
+
     res.sendFile(file ?? join(dist, 'index.html'))
   })
 }

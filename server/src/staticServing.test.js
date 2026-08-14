@@ -226,6 +226,42 @@ test('a file in public/ is served verbatim rather than as the shell', async (t) 
 })
 
 /**
+ * What is not a page says so with a header, and every page stays listable.
+ *
+ * Ten account paths used to be `Disallow`ed in `robots.txt`, which asks a
+ * crawler not to *fetch* a URL and does not stop it indexing one it finds
+ * linked — so the paths this site links to from its own board and landing page
+ * were reported as indexed with no title and no description, and blocking was
+ * what stopped Google reading the canonical that would have folded them into the
+ * home page. `X-Robots-Tag: noindex` is the directive that means what was
+ * wanted, and it only works on a URL a crawler is allowed to fetch.
+ *
+ * Both directions are asserted, because getting this backwards is silent in the
+ * worst way: a `noindex` that leaked onto a real page would remove it from
+ * search and nothing here would go red.
+ */
+test('a route that falls through to the shell is noindex; a real page is not', async (t) => {
+  const shell = await get(STATIC_PORT, '/login')
+  if (!shell.ok) return t.skip('dist/ is not built')
+  assert.equal(shell.headers.get('x-robots-tag'), 'noindex')
+
+  // A path nobody enumerated anywhere: a typo, a stale link, a route added to
+  // the router and not to `PAGES`. It serves the home document too, so it needs
+  // the same header, and a hand-written list in `robots.txt` never covered it.
+  const unknown = await get(STATIC_PORT, '/not-a-real-route-at-all')
+  assert.equal(unknown.headers.get('x-robots-tag'), 'noindex')
+
+  for (const page of PAGES) {
+    const res = await get(STATIC_PORT, page.path)
+    assert.equal(
+      res.headers.get('x-robots-tag'),
+      null,
+      `${page.path} is in the sitemap and is telling crawlers not to index it`,
+    )
+  }
+})
+
+/**
  * The sitemap names every page this origin actually serves, and nothing else.
  *
  * It was hand-written and had drifted: `/contact` was prerendered, indexable and

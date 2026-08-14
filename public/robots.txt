@@ -1,25 +1,37 @@
-# FootyBoard. Everything worth reading is open; the account plumbing is not.
+# FootyBoard. Everything here is open to a crawler, and what should not be
+# listed says so with a header instead.
 #
-# This is an SPA, so every path below returns the same shell HTML. That is why
-# the account pages are disallowed rather than left alone: a crawler fetching
-# /reset or /2fa gets the same page as /, and indexing eight copies of one
-# document is how a small site teaches a search engine to distrust it. None of
-# them is a page anybody could arrive at from a search and use.
+# **This file used to Disallow ten account paths, and that was the wrong
+# instrument for what it wanted.** The reasoning was sound: this is an SPA, every
+# unlisted path serves the same document, and indexing eight copies of one page
+# is how a small site teaches a search engine to distrust it. Two things made the
+# Disallow the wrong way to say it.
 #
-# Disallow is not a security control and is not being used as one. Everything
-# behind these paths is already gated by a session on the server.
+#   - A Disallow is not a noindex. It asks a crawler not to *fetch* a URL, and a
+#     URL that is linked can still be indexed without ever being fetched — with
+#     no title and no description, because nothing was allowed to look. This site
+#     links to /login and /signup from the board and the landing page, so that is
+#     not hypothetical; it is the "Indexed, though blocked by robots.txt" report.
+#   - Blocking is what stopped the cure working. Those paths fall back to
+#     index.html, which carries `<link rel="canonical" href="https://www.footy
+#     board.me/">`, and that already tells a crawler they are the home page
+#     rather than pages of their own. A crawler forbidden to fetch them never
+#     reads it.
+#
+# So `server/src/index.js` answers `X-Robots-Tag: noindex` on every path that
+# falls through to the shell, which is the directive that means what was wanted:
+# fetch it, and do not list it. It covers routes nobody thought to enumerate
+# here, which a hand-written list never did.
+#
+# Nothing about this is a security control and nothing here ever was: everything
+# behind those paths is gated by a session on the server, and this file has said
+# so since it was written.
+#
+# Note that a managed block is prepended to this file by Cloudflare before it is
+# served, adding content signals and a Disallow for nine AI crawlers. Googlebot
+# is not among them. What is served is therefore longer than what is here.
 
 User-agent: *
 Allow: /
-Disallow: /2fa
-Disallow: /claim
-Disallow: /delete-account
-Disallow: /forgot
-Disallow: /login
-Disallow: /name
-Disallow: /password
-Disallow: /reset
-Disallow: /sessions
-Disallow: /signup
 
 Sitemap: https://www.footyboard.me/sitemap.xml
