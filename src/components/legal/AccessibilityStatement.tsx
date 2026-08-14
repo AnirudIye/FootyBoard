@@ -1,4 +1,5 @@
 import LegalPage, { Clause } from './LegalPage'
+import { ledeFor } from '../../content/marketing.js'
 
 const UPDATED = '30 July 2026'
 
@@ -21,7 +22,7 @@ const UPDATED = '30 July 2026'
  */
 export default function AccessibilityStatement() {
   return (
-    <LegalPage title="Accessibility" updated={UPDATED}>
+    <LegalPage title="Accessibility" updated={UPDATED} lede={ledeFor('/accessibility')[0]}>
       <Clause heading="The short version">
         <p>
           The pages around the board are ordinary web pages and behave like them. The board itself

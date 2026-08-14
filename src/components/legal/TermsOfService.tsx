@@ -1,10 +1,11 @@
 import LegalPage, { Clause } from './LegalPage'
+import { ledeFor } from '../../content/marketing.js'
 
 const UPDATED = '3 August 2026'
 
 export default function TermsOfService() {
   return (
-    <LegalPage title="Terms of Service" updated={UPDATED}>
+    <LegalPage title="Terms of Service" updated={UPDATED} lede={ledeFor('/terms')[0]}>
       <Clause heading="Acceptance of these terms">
         <p>
           By creating an account, by entering a board with a join code, or by otherwise using

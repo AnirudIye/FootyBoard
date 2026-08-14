@@ -7,6 +7,7 @@ import { useAuthStore, selectSignedIn } from '../../store/authStore'
 import { useBoardsStore } from '../../store/boardsStore'
 import { AuthShell } from '../auth/AuthShell'
 import { Button } from '../ui/Button'
+import { ledeFor } from '../../content/marketing.js'
 
 /**
  * Joining a board by typing the code someone read out.
@@ -87,7 +88,12 @@ export default function JoinPage() {
   return (
     <AuthShell
       title="Join a board"
-      subtitle="Enter the six-letter code from whoever is running the session."
+      // From the content module rather than written here, because
+      // `scripts/prerender.mjs` writes this same sentence into the static
+      // `/join` document. It used to write a *different* sentence saying the
+      // same thing — two to maintain, one of them invisible to everybody who is
+      // not a crawler, which is the cloaking `marketing.js` forbids.
+      subtitle={ledeFor('/join')[0]}
     >
       <form onSubmit={submit} className="flex flex-col gap-4">
         <label className="flex flex-col gap-2">

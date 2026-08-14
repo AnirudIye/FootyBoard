@@ -15,14 +15,31 @@ import { Link } from 'react-router-dom'
  */
 const footerLink = 'inline-flex items-center justify-center transition-colors hover:text-accent'
 
-/** Shared shell for the policy pages: readable measure, quiet chrome. */
+/**
+ * Shared shell for the policy pages: readable measure, quiet chrome.
+ *
+ * **`lede` is the sentence the prerendered document opens with, and rendering it
+ * here is the whole reason the prop exists.** `scripts/prerender.mjs` writes a
+ * one-line summary into the static copy of `/privacy`, `/terms`,
+ * `/accessibility` and `/contact` — and until this prop, the React tree said
+ * none of them. A crawler read a sentence no visitor was ever shown, which is
+ * cloaking, and `src/content/marketing.js` forbids it in its own header.
+ *
+ * It is not merely a compliance fix. A legal page that opens with one line
+ * saying what it is, before three thousand words of clauses, is better for
+ * somebody who landed on it from a search and wants to know whether this is the
+ * page they meant. Optional, because a caller with nothing summarisable to say
+ * should say nothing rather than pad.
+ */
 export default function LegalPage({
   title,
   updated,
+  lede,
   children,
 }: {
   title: string
   updated: string
+  lede?: string
   children: ReactNode
 }) {
   return (
@@ -55,6 +72,8 @@ export default function LegalPage({
         <h1 className="font-display text-[clamp(2rem,5vw,3rem)] font-medium leading-[1.05] tracking-[-0.03em]">
           {title}
         </h1>
+        {lede && <p className="mt-4 max-w-[46rem] text-[15px] leading-relaxed text-ink-2">{lede}</p>}
+
         <p className="mt-3 font-mono text-[12px] text-ink-3">Last updated {updated}</p>
 
         <div className="legal mt-10 space-y-8">{children}</div>

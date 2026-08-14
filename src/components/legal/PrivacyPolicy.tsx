@@ -1,10 +1,11 @@
 import LegalPage, { Clause } from './LegalPage'
+import { ledeFor } from '../../content/marketing.js'
 
 const UPDATED = '3 August 2026'
 
 export default function PrivacyPolicy() {
   return (
-    <LegalPage title="Privacy Policy" updated={UPDATED}>
+    <LegalPage title="Privacy Policy" updated={UPDATED} lede={ledeFor('/privacy')[0]}>
       <Clause heading="The short version">
         <p>
           If you use FootyBoard without signing in, everything stays in your browser. If you sign

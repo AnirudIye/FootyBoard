@@ -168,7 +168,12 @@ export const PAGES = [
     title: 'Join a board: FootyBoard',
     description: 'Open a shared FootyBoard with the six-letter code somebody read out to you.',
     heading: 'Join a board',
-    body: ['Enter the six-letter code you were given to open the board it belongs to.'],
+    // The sentence `JoinPage` already showed as its subtitle, moved here rather
+    // than paraphrased. The static document used to say "Enter the six-letter
+    // code you were given to open the board it belongs to" — the same idea in
+    // different words, which is two sentences to maintain and one of them
+    // invisible to everybody who is not a crawler.
+    body: ['Enter the six-letter code from whoever is running the session.'],
   },
   {
     path: '/privacy',
@@ -206,3 +211,25 @@ export const PAGES = [
     body: ['How to reach FootyBoard about deletion, copyright, or anything else.'],
   },
 ]
+
+/**
+ * The one-line summary a page opens with, for the component that has to show it.
+ *
+ * **This exists because five pages were cloaking and nobody could see it.**
+ * `/join`, `/privacy`, `/terms`, `/accessibility` and `/contact` each had a
+ * `body` line written into their static document by `scripts/prerender.mjs`, and
+ * the React tree said none of them — so a crawler read a sentence no visitor was
+ * ever shown. That is the exact thing this file's header forbids, and it had
+ * been true since the day the prerender shipped.
+ *
+ * The fix is not to delete the sentences: a legal page opening with one line
+ * saying what it is, before three thousand words of clauses, is better for the
+ * person reading it than a wall that starts at clause one. So the pages show
+ * them now, and this is how they get them — from `PAGES`, which is the same
+ * place the prerender reads, so the two cannot say different things.
+ *
+ * Derived rather than a second list, and derived *by path*, so a page added to
+ * `PAGES` with a body and no lede on screen is the only way back into the
+ * defect — which `marketing.cloaking.test.tsx` is what closes.
+ */
+export const ledeFor = (path) => PAGES.find((page) => page.path === path)?.body ?? []

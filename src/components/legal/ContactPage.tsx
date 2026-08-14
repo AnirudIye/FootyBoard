@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from '../../lib/api'
 import { toUserMessage } from '../../lib/errors'
 import LegalPage, { Clause } from './LegalPage'
+import { ledeFor } from '../../content/marketing.js'
 
 /**
  * The only way to reach anybody about this product.
@@ -64,7 +65,7 @@ export default function ContactPage() {
   }
 
   return (
-    <LegalPage title="Contact" updated="3 August 2026">
+    <LegalPage title="Contact" updated="3 August 2026" lede={ledeFor('/contact')[0]}>
       <Clause heading="What this is for">
         <p>
           This form reaches whoever runs this installation of FootyBoard. It is the route the
