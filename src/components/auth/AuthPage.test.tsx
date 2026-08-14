@@ -7,6 +7,7 @@ import { api } from '../../lib/api'
 import { AppError } from '../../lib/errors'
 import { useAuthStore } from '../../store/authStore'
 import { useBoardsStore } from '../../store/boardsStore'
+import { PAGES } from '../../content/marketing.js'
 
 /**
  * The three doors off the auth page, and what each one does with a pending
@@ -632,5 +633,60 @@ describe('AuthPage confirming a password that is being set', () => {
 
     expect(useAuthStore.getState().signUp).toHaveBeenCalledTimes(1)
     expect(screen.queryByText(MESSAGE)).toBeNull()
+  })
+})
+
+/**
+ * `/signup` is a prerendered page now, and this is the half that keeps it
+ * honest.
+ *
+ * `scripts/prerender.mjs` writes a static copy of this page's words into
+ * `dist/signup.html` for the crawlers that never run React. Two renderers, one
+ * set of sentences — and if the tree ever stops saying what the static document
+ * says, that is not drift, it is cloaking: showing a search engine words the
+ * visitor never sees. `src/content/marketing.js` forbids it in its header, and
+ * nothing enforced it until this.
+ *
+ * Asserted against `PAGES` rather than against string literals, so the check is
+ * "whatever the prerender writes, the page shows" rather than "these particular
+ * words appear twice". Someone editing the copy has one place to edit and this
+ * test follows them there.
+ */
+describe('the sign-up page a crawler reads', () => {
+  const page = PAGES.find((p) => p.path === '/signup')!
+  // `body` is optional on a `PAGES` entry — `/board` has none, because a canvas
+  // has no honest paragraph. Defaulting rather than asserting non-null keeps the
+  // types honest, and the emptiness check below is the assertion that matters:
+  // a `/signup` entry with no copy would pass every loop in here vacuously.
+  const body: string[] = page.body ?? []
+
+  it('has copy at all, which every check below assumes', () => {
+    expect(body.length).toBeGreaterThan(0)
+  })
+
+  it('shows every sentence the prerendered document claims it does', () => {
+    at('/signup', 'signup')
+
+    expect(screen.getByRole('heading', { level: 1, name: page.heading })).toBeInTheDocument()
+    for (const line of body) {
+      expect(screen.getByText(line), `not on the page: "${line.slice(0, 48)}…"`).toBeInTheDocument()
+    }
+  })
+
+  it('says none of it on the sign-in page, which has no prerendered copy', () => {
+    // `/login` still answers `X-Robots-Tag: noindex` and has no static document,
+    // so this copy there would be marketing on a page nobody arrives at from a
+    // search, in front of somebody who has already decided.
+    at('/login')
+    for (const line of body) expect(screen.queryByText(line)).toBeNull()
+  })
+
+  it('is in the sitemap, and is therefore not one of the noindex routes', () => {
+    // The two follow from the same fact — being in `PAGES` is what gives it a
+    // prerendered document, keeps the fallback's `noindex` header off it, and
+    // puts it in the generated sitemap. Asserted here so the reason is written
+    // down next to the copy rather than only in a server test.
+    expect(PAGES.map((p) => p.path)).toContain('/signup')
+    expect(page.file).toBe('signup.html')
   })
 })

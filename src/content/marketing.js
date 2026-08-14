@@ -37,6 +37,38 @@ export const HERO = {
 }
 
 /**
+ * The sign-up page, which is a page now rather than a form on its own.
+ *
+ * It used to answer `noindex`, along with every other route with no prerendered
+ * copy, and that was right while it *had* no copy: it served the home page's
+ * document, so indexing it would have been indexing a duplicate. A page with its
+ * own words is a different question, and this is the answer to it.
+ *
+ * **`sub` and `gives` are rendered by `AuthPage` as well as by the prerender**,
+ * which is the whole point and is not optional. This file's header says a
+ * sentence the page does not also show is cloaking rather than marketing, and
+ * five of the seven existing pages currently put a summary line in the static
+ * body that the React tree never says — see `handoff.md`. This one does not join
+ * them: every sentence below is on the page a person sees, in these words.
+ *
+ * The three in `gives` are what an account actually changes, checked against the
+ * code rather than written as benefits. Boards save (a signed-out visitor's
+ * board is never written anywhere), the payload is encrypted before it is
+ * stored, and sharing is a link or a six-letter code into a live room. Nothing
+ * about verification or recovery is here: that belongs beside the fields it is
+ * about, and the form already says it.
+ */
+export const SIGNUP = {
+  heading: 'Create an account',
+  sub: 'An account is what keeps your boards. Save as many as you like, open them from any machine, and hand one to somebody else with a link.',
+  gives: [
+    'Your boards save as you work, and are encrypted before they are stored.',
+    'Share a board by link or by a six-letter code, and everyone in the room moves the same players at the same time.',
+    'It is free, there is nothing to install, and a board opens in a browser.',
+  ],
+}
+
+/**
  * The first band: putting a shape down.
  *
  * Shape is `{ diagram, title, body }` and matches what `LandingPage.tsx`
@@ -120,6 +152,15 @@ export const PAGES = [
     title: 'The board: FootyBoard',
     description:
       'An animated soccer tactics board. Pick a formation, drag players, draw the movement, and share the board with a link.',
+  },
+  {
+    path: '/signup',
+    file: 'signup.html',
+    title: 'Create a free account: FootyBoard',
+    description:
+      'Create a free FootyBoard account to save your soccer tactics boards, open them from any machine, and share one with a link or a six-letter code.',
+    heading: SIGNUP.heading,
+    body: [SIGNUP.sub, ...SIGNUP.gives],
   },
   {
     path: '/join',

@@ -11,6 +11,11 @@ import { shareTokenInNext } from '../../lib/shareLink'
 import { AuthShell, field, submitBtn, FormError } from './AuthShell'
 import { PasswordField } from './PasswordField'
 import SecurityQuestionFields, { useSecurityQuestions } from './SecurityQuestionFields'
+// The one copy of the sign-up page's words. `scripts/prerender.mjs` writes the
+// same three strings into the static document a crawler reads, so this import
+// is what stops the two halves saying different things — which this file's own
+// content module calls cloaking rather than drift.
+import { SIGNUP } from '../../content/marketing.js'
 
 type Mode = 'signup' | 'login'
 
@@ -270,13 +275,23 @@ export default function AuthPage({ mode }: { mode: Mode }) {
   }
 
   return (
-    <AuthShell title={isSignup ? 'Create an account' : 'Welcome back'}>
+    <AuthShell title={isSignup ? SIGNUP.heading : 'Welcome back'}>
       {/* Not the shell's `subtitle`, which is the quieter 13px grey the join
-          and password pages want. This one is doing more explaining. */}
+          and password pages want. This one is doing more explaining.
+
+          **The signup sentence comes from `content/marketing.js` now, and that
+          import is the feature rather than a tidy-up.** `/signup` is a
+          prerendered page, so a crawler reads a static copy of this paragraph
+          written at build time by `scripts/prerender.mjs`. Two hand-maintained
+          copies of one sentence is the drift that file exists to prevent, and
+          worse than drift: a static body saying something this tree does not say
+          is cloaking, which its header forbids in as many words. One string,
+          both renderers.
+
+          The sign-in sentence stays written here, because `/login` has no
+          prerendered page and nothing else ever reads it. */}
       <p className="mt-2 text-[14px] leading-relaxed text-ink-2">
-        {isSignup
-          ? 'An account is what makes a board stick around. Without one everything still works, it just is not kept.'
-          : 'Sign in to pick up where you left off.'}
+        {isSignup ? SIGNUP.sub : 'Sign in to pick up where you left off.'}
       </p>
 
       <form onSubmit={onSubmit} className="mt-7 space-y-4">
@@ -414,6 +429,28 @@ export default function AuthPage({ mode }: { mode: Mode }) {
           {isSignup ? 'Sign in' : 'Create one'}
         </Link>
       </p>
+
+      {/**
+       * What an account actually changes, on the page that asks for one.
+       *
+       * Below the form rather than above it, because somebody who arrived
+       * intending to sign up should meet the fields first and not a pitch. It is
+       * the same list `scripts/prerender.mjs` writes into the static `/signup`
+       * document, from the same constant, so what a crawler reads and what a
+       * person reads are the same three sentences — see the import.
+       *
+       * Signup only. `/login` is for somebody who has already decided.
+       */}
+      {isSignup && (
+        <ul className="mt-8 space-y-2 border-t border-rule pt-4 text-[13px] leading-relaxed text-ink-2">
+          {SIGNUP.gives.map((line) => (
+            <li key={line} className="flex gap-2">
+              <span aria-hidden className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-accent" />
+              <span>{line}</span>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <p className="mt-8 border-t border-rule pt-4 text-[12px] leading-relaxed text-ink-3">
         Your password is hashed before it is stored, and never kept in readable form. So is the
