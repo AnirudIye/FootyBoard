@@ -435,15 +435,31 @@ export default function AuthPage({ mode }: { mode: Mode }) {
       </p>
 
       {/**
-       * What an account actually changes, on the page that asks for one.
+       * The sentences under the form: what an account changes on `/signup`, and
+       * what somebody who cannot get in needs told on `/login`.
        *
        * Below the form rather than above it, because somebody who arrived
        * intending to sign up should meet the fields first and not a pitch. It is
-       * the same list `scripts/prerender.mjs` writes into the static `/signup`
-       * document, from the same constant, so what a crawler reads and what a
-       * person reads are the same three sentences — see the import.
+       * the same list `scripts/prerender.mjs` writes into the static document,
+       * from the same constant, so what a crawler reads and what a person reads
+       * are the same sentences — see the import.
        *
-       * Signup only. `/login` is for somebody who has already decided.
+       * **This used to say "signup only", and it stopped being true on
+       * 2026-08-14 without the sentence moving.** `/login` became a prerendered
+       * page that day, which meant it needed copy of its own, which meant this
+       * list had to render in both modes; the code changed three lines below and
+       * the comment did not. It is called out rather than quietly corrected
+       * because it is the third instance of one failure in this repo — see the
+       * `FeatureDiagram.tsx` cursor and `check-crawler-access.mjs` — and the
+       * rule they add up to is that **a sentence a change makes false is part of
+       * that change.**
+       *
+       * The two lists are not the same argument. `SIGNUP.gives` is what an
+       * account buys, for somebody deciding; `LOGIN.notes` is where the boards
+       * live and that there is no reset email, for somebody who has already
+       * decided and is stuck. Neither is empty today, and the length guard is
+       * still worth its line: an empty list would otherwise draw its top rule
+       * and its margin around nothing.
        */}
       {(isSignup ? SIGNUP.gives : LOGIN.notes).length > 0 && (
         <ul className="mt-8 space-y-2 border-t border-rule pt-4 text-[13px] leading-relaxed text-ink-2">
