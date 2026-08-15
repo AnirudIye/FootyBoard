@@ -181,15 +181,31 @@ for (const tier of ['search', 'ai']) {
  * from the repo, invisible from the deploy, and changes what every crawler is
  * told.
  *
- * Two distinct things go wrong, and only the second is unambiguously a bug:
+ * Two distinct things go wrong, and neither is unconditionally a bug:
  *
  *   - The managed block adds `Disallow: /` for a list of AI agents and a
  *     `Content-Signal` reserving training rights. Whether that is wanted is a
  *     policy question, so it is reported and not failed.
  *   - It opens with its own `User-agent: *` group. The file then has **two**,
  *     and robots.txt has no merge semantics for that — a crawler picks one
- *     group and ignores the other. Whichever it picks, one author's rules are
- *     silently dropped, and the ones this repo wrote are the account paths.
+ *     group and ignores the other, so one author's rules are silently dropped.
+ *
+ * **The second check reads the repo's group rather than asserting what is in
+ * it, and that is a correction rather than a refinement.** It used to fail with
+ * "the repo's group carries the Disallow rules for /login, /reset, /2fa and the
+ * rest of the account paths". Those rules were deleted on 2026-08-13, when
+ * `X-Robots-Tag: noindex` replaced them — a `Disallow` asks a crawler not to
+ * *fetch*, which is not what anybody wanted — and this script went on naming
+ * them for two days. So it printed a red `FAIL`, and exited 1, over the loss of
+ * a group that now holds a no-op `Allow: /` and a `Sitemap:` line that no
+ * precedence rule can touch, because `Sitemap` is not group-scoped.
+ *
+ * A check that cannot pass is worse than no check: it is the one people learn
+ * to scroll past, and the next real failure scrolls past with it. So the
+ * structural oddity is still reported every time, and the severity now depends
+ * on whether the dropped group would actually cost anything — which means this
+ * becomes a `FAIL` again by itself, without an edit, the day somebody puts a
+ * real rule back in `public/robots.txt`.
  */
 const servedRobots = await (async () => {
   try {
@@ -254,14 +270,62 @@ if (servedRobots) {
 
   const wildcardGroups = servedRobots.match(/^User-agent:\s*\*\s*$/gim)?.length ?? 0
 
-  if (wildcardGroups > 1) {
+  /**
+   * What the repo's own `User-agent: *` group would cost if a crawler dropped it.
+   *
+   * `Sitemap` is deliberately not read here. It is a non-group directive —
+   * file-scoped, not attached to any `User-agent` — so group precedence cannot
+   * lose it, and counting it would resurrect exactly the false alarm this
+   * replaced.
+   */
+  const groupRules = (text) => {
+    const rules = []
+    let inWildcard = false
+
+    for (const line of text.split('\n')) {
+      const agent = line.match(/^\s*User-agent:\s*(\S+)/i)
+      if (agent) {
+        inWildcard = agent[1] === '*'
+        continue
+      }
+      if (!inWildcard) continue
+
+      const rule = line.match(/^\s*(Disallow|Allow|Crawl-delay|Noindex):\s*(.*)$/i)
+      if (rule) rules.push(`${rule[1]}: ${rule[2].trim()}`.trim())
+    }
+
+    return rules
+  }
+
+  // The managed block cut out first, so this reads the group this repository
+  // actually wrote rather than Cloudflare's identically-named one.
+  const repoGroup = groupRules(managedBlock ? servedRobots.replace(managed, '') : servedRobots)
+
+  /**
+   * The two that change nothing when they go missing: `Allow: /` restates the
+   * default, and a `Disallow:` with an empty value means the same thing.
+   */
+  const consequential = repoGroup.filter((rule) => !/^(Allow:\s*\/|Disallow:)$/i.test(rule))
+
+  if (wildcardGroups > 1 && consequential.length > 0) {
     robotsIsBroken = true
     console.error(
-      `  FAIL  ${wildcardGroups} separate "User-agent: *" groups in one file.\n` +
+      `  FAIL  ${wildcardGroups} separate "User-agent: *" groups in one file, and the\n` +
+        "        repo's group carries rules that would be lost with it:\n" +
+        `        ${consequential.join(', ')}\n` +
         '        robots.txt has no rule for merging them; a crawler takes one group\n' +
-        "        and drops the other. The repo's group is the one carrying the\n" +
-        '        Disallow rules for /login, /reset, /2fa and the rest of the account\n' +
-        '        paths, and it is second, so it is the one likely dropped.',
+        '        and drops the other, and the repo\'s is second.',
+    )
+  } else if (wildcardGroups > 1) {
+    console.log(
+      `  WARN  ${wildcardGroups} separate "User-agent: *" groups in one file, which\n` +
+        '        costs nothing today and is worth knowing anyway. A crawler takes one\n' +
+        "        group and drops the other; the repo's is second, and it holds only\n" +
+        `        ${repoGroup.join(', ') || 'no rules at all'} — the default said out loud.\n` +
+        '        The Sitemap: line is not group-scoped and survives either way.\n' +
+        '        Put a real rule in public/robots.txt and this becomes a FAIL by\n' +
+        '        itself, which is the point of reading the group rather than\n' +
+        '        asserting what is in it.',
     )
   } else {
     console.log('  OK    one "User-agent: *" group, so no precedence ambiguity.')
