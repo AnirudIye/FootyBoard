@@ -52,6 +52,7 @@ vi.mock('../lib/api', () => ({
 /** Each renderable page, by the path its `PAGES` entry uses. */
 const RENDERERS: Record<string, ReactElement> = {
   '/signup': <AuthPage mode="signup" />,
+  '/login': <AuthPage mode="login" />,
   '/join': <JoinPage />,
   '/privacy': <PrivacyPolicy />,
   '/terms': <TermsOfService />,

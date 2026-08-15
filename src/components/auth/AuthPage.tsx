@@ -15,7 +15,7 @@ import SecurityQuestionFields, { useSecurityQuestions } from './SecurityQuestion
 // same three strings into the static document a crawler reads, so this import
 // is what stops the two halves saying different things — which this file's own
 // content module calls cloaking rather than drift.
-import { SIGNUP } from '../../content/marketing.js'
+import { SIGNUP, LOGIN } from '../../content/marketing.js'
 
 type Mode = 'signup' | 'login'
 
@@ -275,7 +275,7 @@ export default function AuthPage({ mode }: { mode: Mode }) {
   }
 
   return (
-    <AuthShell title={isSignup ? SIGNUP.heading : 'Welcome back'}>
+    <AuthShell title={isSignup ? SIGNUP.heading : LOGIN.heading}>
       {/* Not the shell's `subtitle`, which is the quieter 13px grey the join
           and password pages want. This one is doing more explaining.
 
@@ -288,10 +288,14 @@ export default function AuthPage({ mode }: { mode: Mode }) {
           is cloaking, which its header forbids in as many words. One string,
           both renderers.
 
-          The sign-in sentence stays written here, because `/login` has no
-          prerendered page and nothing else ever reads it. */}
+          **The sign-in sentence joined it on 2026-08-14**, when `/login`
+          became a prerendered page too. Its comment used to say this string
+          stayed here "because `/login` has no prerendered page and nothing else
+          ever reads it", which was true and stopped being true the moment
+          Search Console reported the route as excluded and the answer turned out
+          to be giving it a document of its own. */}
       <p className="mt-2 text-[14px] leading-relaxed text-ink-2">
-        {isSignup ? SIGNUP.sub : 'Sign in to pick up where you left off.'}
+        {isSignup ? SIGNUP.sub : LOGIN.sub}
       </p>
 
       <form onSubmit={onSubmit} className="mt-7 space-y-4">
@@ -441,9 +445,9 @@ export default function AuthPage({ mode }: { mode: Mode }) {
        *
        * Signup only. `/login` is for somebody who has already decided.
        */}
-      {isSignup && (
+      {(isSignup ? SIGNUP.gives : LOGIN.notes).length > 0 && (
         <ul className="mt-8 space-y-2 border-t border-rule pt-4 text-[13px] leading-relaxed text-ink-2">
-          {SIGNUP.gives.map((line) => (
+          {(isSignup ? SIGNUP.gives : LOGIN.notes).map((line) => (
             <li key={line} className="flex gap-2">
               <span aria-hidden className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-accent" />
               <span>{line}</span>

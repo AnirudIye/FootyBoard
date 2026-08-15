@@ -241,9 +241,26 @@ test('a file in public/ is served verbatim rather than as the shell', async (t) 
  * search and nothing here would go red.
  */
 test('a route that falls through to the shell is noindex; a real page is not', async (t) => {
-  const shell = await get(STATIC_PORT, '/login')
+  /**
+   * `/2fa`, and it used to be `/login`.
+   *
+   * That is this test earning its place rather than a fixture being tidied.
+   * `/login` became a prerendered page on 2026-08-14 — Search Console reported
+   * it as excluded by this very header, and the answer was to give it a document
+   * of its own rather than to take the header off — so it stopped being an
+   * example of a fallback route and this went red on the same commit. It is
+   * pinned to a route that cannot become a page: `/2fa` is a setting behind a
+   * session, and giving it copy to make it indexable would be inventing a page
+   * for a crawler.
+   */
+  const shell = await get(STATIC_PORT, '/2fa')
   if (!shell.ok) return t.skip('dist/ is not built')
   assert.equal(shell.headers.get('x-robots-tag'), 'noindex')
+
+  // And the route that changed sides is asserted on the other side now, so the
+  // pair reads as one fact rather than two.
+  const nowAPage = await get(STATIC_PORT, '/login')
+  assert.equal(nowAPage.headers.get('x-robots-tag'), null, '/login is a page and must be indexable')
 
   // A path nobody enumerated anywhere: a typo, a stale link, a route added to
   // the router and not to `PAGES`. It serves the home document too, so it needs

@@ -69,6 +69,40 @@ export const SIGNUP = {
 }
 
 /**
+ * The sign-in page.
+ *
+ * **A page rather than a form for one reason, and it is not the obvious one.**
+ * Search Console reported `/login` as excluded by `noindex`, which was this
+ * repo's own header doing exactly what item 25 asked of it. Removing that header
+ * on its own would have changed nothing anybody wants: `/login` served the home
+ * page's document, canonical and all, so a crawler allowed to fetch it would
+ * have read `<link rel="canonical" href="https://www.footyboard.me/">` and
+ * folded it into the home page. A page is indexable when it is a page. So this
+ * is the `/signup` treatment applied to the one other auth route that somebody
+ * might reasonably search for by name.
+ *
+ * **The other nine stay `noindex`, and the distinction is not squeamishness.**
+ * `/reset` and `/claim` are reached by following a one-time credential;
+ * `/2fa`, `/password`, `/sessions`, `/delete-account` and `/name` are settings
+ * behind a session and mean nothing to somebody who is not signed in; `/forgot`
+ * is a step in a flow rather than a destination. None of them is a page a search
+ * result should ever land on, and giving them copy to make them indexable would
+ * be inventing pages for a crawler — which is the thing this file's header
+ * forbids, one step further along.
+ *
+ * `sub` is what the page already said. It is here so that both renderers read
+ * one string; see `SIGNUP` for the same rule and the reason it exists.
+ */
+export const LOGIN = {
+  heading: 'Welcome back',
+  sub: 'Sign in to pick up where you left off.',
+  notes: [
+    'Your boards are kept on the server rather than in this browser, so they are all there whichever machine you sign in from.',
+    'There is no reset email. If the password is gone, the security question you set is what proves the account is yours.',
+  ],
+}
+
+/**
  * The first band: putting a shape down.
  *
  * Shape is `{ diagram, title, body }` and matches what `LandingPage.tsx`
@@ -161,6 +195,15 @@ export const PAGES = [
       'Create a free FootyBoard account to save your soccer tactics boards, open them from any machine, and share one with a link or a six-letter code.',
     heading: SIGNUP.heading,
     body: [SIGNUP.sub, ...SIGNUP.gives],
+  },
+  {
+    path: '/login',
+    file: 'login.html',
+    title: 'Sign in: FootyBoard',
+    description:
+      'Sign in to FootyBoard to open the soccer tactics boards you have saved, from any machine.',
+    heading: LOGIN.heading,
+    body: [LOGIN.sub, ...LOGIN.notes],
   },
   {
     path: '/join',
