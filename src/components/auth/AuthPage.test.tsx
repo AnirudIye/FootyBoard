@@ -517,6 +517,46 @@ describe('AuthPage and an off-site next', () => {
     expect(guestDoor()).toHaveAttribute('href', '/board')
     expect(screen.getByRole('link', { name: 'Create one' })).toHaveAttribute('href', '/signup')
   })
+
+  /**
+   * The ones a first-character check waves through, and a URL parser does not.
+   *
+   * `startsWith('/') && !startsWith('//')` is not the test a browser runs. A
+   * browser reads a backslash as a slash, and the WHATWG URL parser strips a
+   * tab, a newline or a carriage return wherever it sits — so each value below
+   * looks like a rooted local path to the string check and resolves to a
+   * different origin. Proven against the parser this environment ships:
+   * `new URL('/\\evil.example', ourOrigin).origin` is `evil.example`, not ours.
+   *
+   * The property asserted is the one that matters after sign-in: a hostile
+   * `next` must not become the place `navigate` sends the person, and must not
+   * be carried forward on the link to the other form. Both fall back to the
+   * default instead.
+   */
+  const disguised = [
+    ['a backslash standing in for the slash', '/\\evil.example'],
+    ['a backslash then a slash', '/\\/evil.example'],
+    ['a tab smuggled into the path', '/\t/evil.example'],
+    ['a newline smuggled into the path', '/\n/evil.example'],
+    ['a carriage return before a double slash', '/\r//evil.example'],
+  ] as const
+
+  for (const [label, value] of disguised) {
+    it(`refuses ${label} after signing in`, async () => {
+      at(`/login?next=${encodeURIComponent(value)}`)
+      fill()
+      await submit()
+      // Lands on the default post-login page, not the disguised origin.
+      expect(screen.getByTestId('where')).toHaveTextContent('/board')
+      expect(screen.getByTestId('where')).not.toHaveTextContent('evil.example')
+    })
+
+    it(`keeps ${label} off the switch link`, () => {
+      at(`/login?next=${encodeURIComponent(value)}`)
+      // A rejected `next` is dropped, so the link to the other form is bare.
+      expect(screen.getByRole('link', { name: 'Create one' })).toHaveAttribute('href', '/signup')
+    })
+  }
 })
 
 /**

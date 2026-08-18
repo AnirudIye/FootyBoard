@@ -25,12 +25,40 @@ type Mode = 'signup' | 'login'
  * Only same-origin paths are honoured. `next` arrives in the URL, so anyone can
  * put anything in it, and sending someone to an absolute URL after they sign in
  * is an open redirect: a link to our own login page could land them on a
- * convincing copy of it. A value that does not start with a single `/` is
- * ignored rather than corrected, and `//host` is rejected too because the
- * browser reads it as protocol-relative and would leave the site.
+ * convincing copy of it. So a hostile value is ignored and the person goes to
+ * the default post-login page instead.
+ *
+ * **The destination is decided by resolving it, not by reading its first
+ * characters, and that distinction is the whole guard.** The obvious check —
+ * `startsWith('/') && !startsWith('//')` — is not the test a browser runs, and
+ * it was this function's own check until it was found to wave three families of
+ * value through:
+ *
+ *   - **A backslash is a slash to a browser.** `/\evil.example` starts with a
+ *     single `/` and no `//`, and resolves to `https://evil.example/`.
+ *   - **The URL parser strips a tab, a newline or a carriage return** wherever
+ *     it sits, so `/⇥/evil.example` collapses to `//evil.example` after the
+ *     string check has already passed it.
+ *   - Any future sibling of those, which is the real point: enumerating the
+ *     tricks is a losing game, so this asks the parser instead of guessing.
+ *
+ * `new URL(raw, origin)` resolves the value exactly as the browser will, and a
+ * result whose origin is not ours is refused. A rooted `/` is still required
+ * first, so an absolute URL — even a same-origin one — is turned away rather
+ * than handed to the router, which wants a path. What survives is returned
+ * byte-for-byte, so a share token or a join code riding in `next` reaches
+ * `codeInNext` and `shareTokenInNext` exactly as it was written.
  */
-const safeNext = (raw: string | null): string | null =>
-  raw && raw.startsWith('/') && !raw.startsWith('//') ? raw : null
+const safeNext = (raw: string | null): string | null => {
+  if (!raw || !raw.startsWith('/')) return null
+  try {
+    if (new URL(raw, window.location.origin).origin !== window.location.origin) return null
+  } catch {
+    // A value the parser refuses outright is not a path we can safely honour.
+    return null
+  }
+  return raw
+}
 
 const guestLink = 'underline underline-offset-2 transition-colors hover:text-accent'
 
