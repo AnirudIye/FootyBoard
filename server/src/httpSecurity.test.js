@@ -69,7 +69,7 @@ async function waitForHealth(port, timeoutMs = 20_000) {
     } catch {
       // Not listening yet.
     }
-    await new Promise((r) => setTimeout(r, 150))
+    await new Promise((r) => { setTimeout(r, 150) })
   }
   throw new Error(
     `instance on :${port} never became healthy. Its stderr was:\n${stderrFor.get(port)}`,
@@ -138,7 +138,7 @@ test('a cookie that cannot be decoded is not a server error', async () => {
   assert.deepEqual(body, { error: 'Not signed in.' }, 'the reply says only what it should')
 
   // Give the child a moment to have written anything it was going to write.
-  await new Promise((r) => setTimeout(r, 200))
+  await new Promise((r) => { setTimeout(r, 200) })
   const logged = stderrFor.get(DEV_PORT).slice(before)
   assert.ok(!logged.includes('Unhandled:'), `a stranger's cookie reached the error log:\n${logged}`)
   assert.ok(!logged.includes('URIError'), `a stack trace was printed:\n${logged}`)

@@ -486,7 +486,7 @@ test('an instance boots and serves as the runtime role when the migration is ski
         status = (await fetch(`http://127.0.0.1:${SKIPPED_MIGRATION_PORT}/api/health`)).status
         break
       } catch {
-        await new Promise((resolve) => setTimeout(resolve, 200))
+        await new Promise((resolve) => { setTimeout(resolve, 200) })
       }
     }
     assert.equal(

@@ -69,7 +69,7 @@ async function waitForHealth(timeoutMs = 20_000) {
     } catch {
       // Not listening yet.
     }
-    await new Promise((r) => setTimeout(r, 150))
+    await new Promise((r) => { setTimeout(r, 150) })
   }
   throw new Error(`instance on :${PORT} never became healthy`)
 }
@@ -477,7 +477,7 @@ async function holder(sql, ...params) {
   }
 }
 
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const wait = (ms) => new Promise((resolve) => { setTimeout(resolve, ms) })
 
 /**
  * The deadlock, made deterministic.

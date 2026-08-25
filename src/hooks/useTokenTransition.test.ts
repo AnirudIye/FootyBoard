@@ -37,7 +37,7 @@ function probe(x: number, epoch = 0) {
  * `act` in one render, so watching the travel means letting go and taking it
  * back repeatedly rather than waiting out the whole 0.42s in one call.
  */
-const tick = () => act(async () => void (await new Promise((r) => setTimeout(r, 40))))
+const tick = () => act(async () => void (await new Promise((r) => { setTimeout(r, 40) })))
 
 /** Run the glide out past its end, sampling it on the way. */
 async function settle() {

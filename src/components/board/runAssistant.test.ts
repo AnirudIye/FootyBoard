@@ -22,7 +22,7 @@ const lastReply = () => lastMessage().text
 const homePlayer = (number: number) =>
   useBoardStore.getState().tokens.find((t) => t.type === 'player' && t.teamId === 'home' && t.number === number)
 
-const settle = () => new Promise((r) => setTimeout(r, 0))
+const settle = () => new Promise((r) => { setTimeout(r, 0) })
 
 beforeEach(() => {
   askAssistant.mockReset()

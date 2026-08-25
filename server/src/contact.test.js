@@ -18,7 +18,10 @@ import { decrypt, initEncryption } from './crypto.js'
  * encrypted at rest.
  */
 
-const PORT = 8804
+// 8829 rather than 8804: passwordRecovery.test.js already binds that one, and
+// `node --test` runs files in parallel, so whichever lost the race got
+// EADDRINUSE and every test in it failed with ECONNREFUSED.
+const PORT = 8829
 const ENTRY = fileURLToPath(new URL('./index.js', import.meta.url))
 
 let child
@@ -31,7 +34,7 @@ async function waitForHealth(timeoutMs = 20_000) {
     } catch {
       // Not listening yet.
     }
-    await new Promise((r) => setTimeout(r, 150))
+    await new Promise((r) => { setTimeout(r, 150) })
   }
   throw new Error(`instance on :${PORT} never became healthy`)
 }

@@ -76,7 +76,7 @@ async function waitForHealth(port, timeoutMs = 20_000) {
     } catch {
       // Not listening yet.
     }
-    await new Promise((r) => setTimeout(r, 150))
+    await new Promise((r) => { setTimeout(r, 150) })
   }
   throw new Error(`instance on :${port} never became healthy`)
 }
@@ -106,7 +106,7 @@ const call = (port, path, cookie, init = {}) =>
 
 const json = async (res) => ({ status: res.status, body: await res.json().catch(() => null) })
 
-const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+const wait = (ms) => new Promise((r) => { setTimeout(r, ms) })
 
 /** A fresh board with `guest` on it, so no instance has ever opened a room for it. */
 async function makeBoard(name) {

@@ -320,7 +320,7 @@ function watermark(ctx: CanvasRenderingContext2D, w: number, h: number) {
  * it. A worker could only ever take the encoding, which after this change is
  * around four of the twenty-eight milliseconds.
  */
-const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+const settle = (): Promise<void> => new Promise((resolve) => { setTimeout(resolve, 0) })
 
 /** Render the interpolated frame at `pos` onto `ctx`. */
 async function paintFrame(

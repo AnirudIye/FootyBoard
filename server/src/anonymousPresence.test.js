@@ -58,7 +58,7 @@ async function waitForHealth(port, timeoutMs = 20_000) {
     } catch {
       // Not listening yet.
     }
-    await new Promise((r) => setTimeout(r, 150))
+    await new Promise((r) => { setTimeout(r, 150) })
   }
   throw new Error(`instance on :${port} never became healthy`)
 }
@@ -351,7 +351,7 @@ test('the setting reaches an instance holding a room it was not set on', async (
     )
     if (ANONYMOUS_NAME.test(message.displayName)) joined = message
     await closed(b)
-    if (joined === null) await new Promise((r) => setTimeout(r, 150))
+    if (joined === null) await new Promise((r) => { setTimeout(r, 150) })
   }
 
   assert.ok(joined, 'the instance holding the room never heard about the change')

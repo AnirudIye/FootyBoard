@@ -71,7 +71,7 @@ async function waitForHealth(port, timeoutMs = 20_000) {
     } catch {
       // Not listening yet.
     }
-    await new Promise((r) => setTimeout(r, 150))
+    await new Promise((r) => { setTimeout(r, 150) })
   }
   throw new Error(
     `instance on :${port} never became healthy. Its stderr was:\n${stderrFor.get(port)}`,

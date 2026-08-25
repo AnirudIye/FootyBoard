@@ -58,7 +58,7 @@ async function waitForHealth(timeoutMs = 20_000) {
     } catch {
       // Not listening yet.
     }
-    await new Promise((r) => setTimeout(r, 150))
+    await new Promise((r) => { setTimeout(r, 150) })
   }
   throw new Error(`instance on :${PORT} never became healthy`)
 }

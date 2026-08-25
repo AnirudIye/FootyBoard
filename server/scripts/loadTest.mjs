@@ -135,7 +135,7 @@ const summarise = (values) => {
     : `n=${s.length} p50=${pct(s, 50)}ms p95=${pct(s, 95)}ms max=${s.at(-1)}ms`
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const sleep = (ms) => new Promise((r) => { setTimeout(r, ms) })
 
 /** REST, with the Origin the CORS check wants and the cookie the session is. */
 async function api(cfg, path, { method = 'GET', body, cookie } = {}) {

@@ -73,7 +73,7 @@ async function waitForHealth(port, timeoutMs = 20_000) {
     } catch {
       // Not listening yet.
     }
-    await new Promise((r) => setTimeout(r, 150))
+    await new Promise((r) => { setTimeout(r, 150) })
   }
   throw new Error(`instance on :${port} never became healthy`)
 }
@@ -232,7 +232,7 @@ function waitForClose(socket, timeoutMs = 5000) {
  * measure in the positive direction.
  */
 async function nothingMatching(socket, match, ms = 500) {
-  await new Promise((r) => setTimeout(r, ms))
+  await new Promise((r) => { setTimeout(r, ms) })
   assert.deepEqual(socket.received.filter(match), [], 'a message arrived that should not have')
 }
 
