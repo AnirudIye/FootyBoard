@@ -15,7 +15,7 @@ import { sharesRouter, redeemRouter } from './routes/shares.js'
 import { assistantRouter } from './routes/assistant.js'
 import { contactRouter } from './routes/contact.js'
 import { TooManyRequests, limiterIp } from './rateLimit.js'
-import { ORIGINS, APP_ENV, isProduction, isAllowedOrigin } from './env.js'
+import { ORIGINS, APP_ENV, isProduction, isAllowedOrigin, trustProxySetting } from './env.js'
 
 // The second import that crosses into the frontend tree, after `boardSchema.js`
 // in `validate.js` and for the same reason: this process serves the document
@@ -110,7 +110,7 @@ if (process.env.RUN_MIGRATIONS !== 'false') {
 
 const app = express()
 
-if (TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(TRUST_PROXY) ? Number(TRUST_PROXY) : TRUST_PROXY)
+if (TRUST_PROXY) app.set('trust proxy', trustProxySetting(TRUST_PROXY, { production: isProduction }))
 app.disable('x-powered-by')
 
 /**

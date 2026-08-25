@@ -164,3 +164,66 @@ describe('Inspector edits', () => {
     expect(tokenNow(player.id).label).toBeUndefined()
   })
 })
+
+/**
+ * Deleting the digits, which the field used to refuse.
+ *
+ * The number box is controlled from `token.number`, and the guard above keeps
+ * an empty box from writing a 0 — correctly. But returning early also meant no
+ * state changed, so React put the old value straight back into the DOM and the
+ * digits could not be deleted at all. Select-all-and-type still worked, which
+ * is why it went unnoticed: the field was editable, just not clearable.
+ *
+ * So both halves are asserted: the box shows empty while it is empty, and the
+ * number underneath is still the old one until a real one replaces it.
+ */
+describe('Inspector clearing the number field', () => {
+  beforeEach(() => {
+    useBoardStore.getState().initDefaultBoard()
+  })
+
+  const openPanel = () => {
+    const player = useBoardStore.getState().tokens.find((t) => t.type === 'player')!
+    useBoardStore.getState().openInspector(player.id, 400, 100)
+    render(<Inspector />)
+    return player
+  }
+
+  const tokenNow = (id: string) => useBoardStore.getState().tokens.find((t) => t.id === id)!
+
+  it('lets the digits be deleted, without writing a number', () => {
+    const player = openPanel()
+    const number = screen.getByLabelText('Number') as HTMLInputElement
+
+    fireEvent.change(number, { target: { value: '7' } })
+    expect(number.value).toBe('7')
+
+    fireEvent.change(number, { target: { value: '' } })
+    expect(number.value).toBe('')
+    expect(tokenNow(player.id).number).toBe(7)
+  })
+
+  it('puts the real number back when the field is abandoned', () => {
+    const player = openPanel()
+    const number = screen.getByLabelText('Number') as HTMLInputElement
+
+    fireEvent.change(number, { target: { value: '7' } })
+    fireEvent.change(number, { target: { value: '' } })
+    fireEvent.blur(number)
+
+    expect(number.value).toBe('7')
+    expect(tokenNow(player.id).number).toBe(7)
+  })
+
+  it('takes a new number typed after clearing', () => {
+    const player = openPanel()
+    const number = screen.getByLabelText('Number') as HTMLInputElement
+
+    fireEvent.change(number, { target: { value: '7' } })
+    fireEvent.change(number, { target: { value: '' } })
+    fireEvent.change(number, { target: { value: '9' } })
+
+    expect(number.value).toBe('9')
+    expect(tokenNow(player.id).number).toBe(9)
+  })
+})

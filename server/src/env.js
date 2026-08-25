@@ -257,6 +257,49 @@ for (const origin of ORIGINS) {
  * is no session worth stealing from a laptop, and this widening is impossible
  * to reach in production, where APP_ENV says so.
  */
+/**
+ * What Express is actually told, from what the environment actually says.
+ *
+ * **A hop count and `true` are not two spellings of the same thing.** Given a
+ * number, Express counts that many entries in from the *right* of
+ * `X-Forwarded-For` — the end a client cannot reach past, because every proxy
+ * appends. Given `true` it takes the *leftmost* entry, which is whatever the
+ * caller wrote. Behind this tunnel that is not a weaker setting, it is no
+ * setting: `req.ip` becomes a request field, and every per-IP allowance —
+ * login, signup, the join code — is chosen by the person being limited.
+ *
+ * So `true` is refused in production rather than honoured, on the same
+ * reasoning `env.js` refuses a placeholder secret and a non-https origin: the
+ * failure is silent, the only evidence is a limiter that never fires, and
+ * nobody goes looking for a boolean they wrote on purpose. One is the right
+ * answer here, because cloudflared is the one hop.
+ *
+ * Parsed rather than passed straight through, because Express hands a string it
+ * does not recognise to `proxy-addr`, which compiles it as an IP list — so the
+ * literal `'true'` throws `invalid IP address: true` from a place that names
+ * neither this variable nor the file that set it.
+ */
+export function trustProxySetting(value, { production } = {}) {
+  if (value === 'true') {
+    if (production)
+      throw new Error(
+        'TRUST_PROXY=true takes the left-most X-Forwarded-For entry, which any caller can set, so ' +
+          'every per-IP rate limit becomes a bucket the caller chooses. Behind the Cloudflare ' +
+          'Tunnel there is exactly one hop: set TRUST_PROXY=1.',
+      )
+    return true
+  }
+  if (value === 'false') return false
+
+  // A hop count. Whole and not negative, or it is not one.
+  const hops = Number(value)
+  if (Number.isInteger(hops) && hops >= 0) return hops
+
+  // Anything else is left for Express to compile: 'loopback', an address, a
+  // CIDR, or a comma-separated list of them.
+  return value
+}
+
 export function isAllowedOrigin(origin) {
   if (!origin) return true
   if (ORIGINS.includes(origin)) return true

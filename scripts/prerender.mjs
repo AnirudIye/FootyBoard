@@ -79,9 +79,9 @@ function setMeta(html, attr, key, value) {
     // The multi-line form Prettier produces for the long ones.
     const spread = new RegExp(`(<meta\\s*\\n\\s*${attr}="${key}"\\s*\\n\\s*content=")[^"]*(")`, 'i')
     if (!spread.test(html)) return { html, ok: false }
-    return { html: html.replace(spread, `$1${escape(value)}$2`), ok: true }
+    return { html: html.replace(spread, (_, open, close) => `${open}${escape(value)}${close}`), ok: true }
   }
-  return { html: html.replace(pattern, `$1${escape(value)}$2`), ok: true }
+  return { html: html.replace(pattern, (_, open, close) => `${open}${escape(value)}${close}`), ok: true }
 }
 
 /**
@@ -140,7 +140,7 @@ let failed = false
 for (const page of PAGES) {
   let html = shell
 
-  html = html.replace(/<title>[^<]*<\/title>/i, `<title>${escape(page.title)}</title>`)
+  html = html.replace(/<title>[^<]*<\/title>/i, () => `<title>${escape(page.title)}</title>`)
 
   for (const [attr, key, value] of [
     ['name', 'description', page.description],
@@ -167,11 +167,11 @@ for (const page of PAGES) {
    */
   html = html.replace(
     '</head>',
-    `  <link rel="canonical" href="${ORIGIN}${page.path}" />\n  </head>`,
+    () => `  <link rel="canonical" href="${ORIGIN}${page.path}" />\n  </head>`,
   )
 
   const body = staticBody(page)
-  if (body) html = html.replace('<div id="root"></div>', `<div id="root">${body}</div>`)
+  if (body) html = html.replace('<div id="root"></div>', () => `<div id="root">${body}</div>`)
 
   await writeFile(join(dist, page.file), html, 'utf8')
 

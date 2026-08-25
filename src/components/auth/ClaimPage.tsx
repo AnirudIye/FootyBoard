@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { toUserMessage } from '../../lib/errors'
@@ -62,8 +62,23 @@ export default function ClaimPage() {
    * people who are, and redirecting on that would bounce every guest who
    * followed this link straight back out again.
    */
+  /**
+   * Set for the moment between asking to be claimed and arriving at the board.
+   *
+   * The guard below exists to keep somebody who already has a password off this
+   * form, and it reads `isGuest` to decide. Finishing the form is precisely the
+   * event that makes `isGuest` false, so without this the guard fires on its own
+   * success and sends the person to `/password` — a page telling them to change
+   * the password they set one second ago. A ref rather than state because
+   * nothing renders differently for it, and set before the await rather than
+   * after, so there is no window where the store has updated and the flag has
+   * not.
+   */
+  const claiming = useRef(false)
+
   useEffect(() => {
     if (!ready) return
+    if (claiming.current) return
     if (!signedIn) navigate('/signup', { replace: true })
     else if (!isGuest) navigate('/password', { replace: true })
   }, [ready, signedIn, isGuest, navigate])
@@ -99,12 +114,16 @@ export default function ClaimPage() {
     if (password !== confirm) return setError('Those two passwords do not match.')
     setError(null)
     setBusy(true)
+    claiming.current = true
     try {
       await claim(email, password, accepted, questionId, answer, displayName)
       // Straight back to the board. Nothing moved, nothing reloaded: it is the
       // same account and the same boards, now with a way back into them.
       navigate('/board', { replace: true })
     } catch (err) {
+      // Still a guest, so the guard is wanted again — and would not have fired
+      // anyway, which is why this is hygiene rather than the fix.
+      claiming.current = false
       setError(toUserMessage(err, 'That did not work. Check the details and try again.'))
     } finally {
       setBusy(false)

@@ -62,6 +62,28 @@ export default function Inspector() {
   // because the entrance animation scales the panel to 0.97 and a rect taken
   // during it reads 368 for a panel that is really 380.
   const [panel, setPanel] = useState({ w: 236, h: 0 })
+
+  /**
+   * Whether the number field is currently showing empty on purpose.
+   *
+   * The field is controlled from `token.number`, and an empty box is not a
+   * number, so there was nothing for it to be controlled *to*: clearing it
+   * changed no state, React re-rendered the old value straight back into the
+   * DOM, and the digits could not be deleted. Select-all-and-type still worked,
+   * which is why this survived — the field was editable, just not clearable.
+   *
+   * Kept as a flag rather than as a copy of the text so the token stays the
+   * single source of the number. A peer renumbering the player still shows
+   * through immediately, which a local mirror of the string would have
+   * swallowed. Blur ends the override, so an abandoned edit puts the real
+   * number back rather than leaving a box that looks unset.
+   */
+  const [clearedNumber, setClearedNumber] = useState(false)
+
+  // A different player is a different number, so an override left over from
+  // the last one would open the panel on an empty box.
+  useEffect(() => setClearedNumber(false), [token?.id])
+
   useLayoutEffect(() => {
     const el = ref.current
     if (el) setPanel({ w: el.offsetWidth, h: el.offsetHeight })
@@ -115,18 +137,26 @@ export default function Inspector() {
                     type="number"
                     min={1}
                     max={99}
-                    value={token.number ?? ''}
+                    value={clearedNumber ? '' : (token.number ?? '')}
                     // An empty field is somebody part-way through retyping a
                     // number, not the number nought. `Number('')` is 0, so
                     // clearing it put a 0 on the chip, sent that to the room
                     // and saved it. `min`/`max` are hints to the browser's own
                     // stepper and React enforces neither, so the clamp is here.
                     onChange={(e) => {
+                      // Empty is somebody part-way through retyping, so it is
+                      // shown but never written: `Number('')` is 0, and a 0 here
+                      // used to reach the chip, the room and the save.
+                      if (e.target.value === '') return setClearedNumber(true)
                       const n = Number(e.target.value)
-                      if (e.target.value === '' || !Number.isFinite(n)) return
+                      if (!Number.isFinite(n)) return
+                      setClearedNumber(false)
                       updateToken(token.id, { number: clamp(Math.round(n), 1, 99) }, true)
                     }}
-                    onBlur={commit}
+                    onBlur={() => {
+                      setClearedNumber(false)
+                      commit()
+                    }}
                     className="w-full rounded border border-rule bg-paper px-2 py-1 font-mono text-[13px]
                       focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                   />

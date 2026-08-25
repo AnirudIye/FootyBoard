@@ -184,3 +184,35 @@ describe('ClaimPage confirming the password', () => {
     expect((screen.getByLabelText('Confirm') as HTMLInputElement).value).toBe(PASSWORD)
   })
 })
+
+/**
+ * Where a successful claim actually leaves you.
+ *
+ * The test above this one asserts `/board`, and it passes, but it proves less
+ * than it looks: its `claim` is a bare `vi.fn()` that resolves and touches
+ * nothing, so `isGuest` is still `true` when the assertion runs. The real store
+ * action ends `set({ user, ready: true })` with a user whose `isGuest` is now
+ * `false` — and this page has an effect that sends a non-guest to `/password`.
+ *
+ * So the redirect that exists to keep people who already have a password off
+ * this form also fires at the instant somebody finishes setting one, which is
+ * the one moment it is wrong. Mocked faithfully, that is what this checks.
+ */
+describe('ClaimPage after the account is really claimed', () => {
+  const CLAIMED = { ...GUEST, email: 'coach@example.com', displayName: 'Ade', isGuest: false }
+
+  it('lands on the board, not on the change-password page', async () => {
+    useAuthStore.setState({
+      claim: vi.fn().mockImplementation(async () => {
+        // What the real action does: the same person, no longer a guest.
+        useAuthStore.setState({ user: CLAIMED, ready: true })
+      }),
+    })
+
+    at()
+    fill()
+    await submit()
+
+    expect(screen.getByTestId('where')).toHaveTextContent('/board')
+  })
+})
