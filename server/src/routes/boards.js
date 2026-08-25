@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { randomUUID } from 'node:crypto'
 import { get, all, run } from '../db.js'
 import { accessFor } from '../access.js'
+import { consume } from '../rateLimit.js'
 import { publish } from '../realtime.js'
 import {
   validateBoardName,
@@ -147,7 +148,33 @@ boardsRouter.get('/:id', async (req, res) => {
   })
 })
 
+/**
+ * How many boards one account may create in an hour.
+ *
+ * **Keyed on the account rather than the network, because the account is the
+ * thing that is cheap to get.** Signup needs no verified address, and
+ * `shares.js` mints up to two hundred guest accounts per share link, so an IP
+ * bucket is the wrong axis entirely: the same person arrives as many callers.
+ *
+ * A board is capped at 512 KB by `validateBoardData`, and this endpoint was the
+ * only write with no allowance at all, which made "512 KB times as fast as you
+ * can POST" the actual bound on disk. Sixty an hour is far above a person
+ * experimenting — the boards list pages at twenty — and far below a script.
+ *
+ * This bounds the *rate*, not the total. An account that spends its allowance
+ * every hour still grows without limit, just slowly enough to notice. A hard
+ * per-account ceiling is the other half and is a product decision rather than a
+ * security one, so it is not made here.
+ */
+const BOARDS_PER_HOUR = 60
+
 boardsRouter.post('/', async (req, res) => {
+  await consume(`boards:${req.user.id}`, {
+    max: BOARDS_PER_HOUR,
+    windowMs: 60 * 60 * 1000,
+    message: 'You have created a lot of boards just now. Try again shortly.',
+  })
+
   // The one caller that wants a fallback title supplies it. `validateBoardName`
   // used to, which meant every other caller got one too, including the rename
   // endpoint where a missing name can only be a mistake.

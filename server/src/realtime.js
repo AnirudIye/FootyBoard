@@ -27,6 +27,55 @@ const INSTANCE_ID = randomUUID()
 const MAX_PAYLOAD = 6000
 
 /**
+ * How fast one socket may send, as a token bucket.
+ *
+ * `maxPayload` bounds how big a message is; nothing bounded how many. Every op
+ * that gets past the guards below is broadcast, and a broadcast is a
+ * `pg_notify` fanned out to every instance — so an authenticated member with a
+ * board open could turn one socket into an unbounded write loop on the database
+ * the whole site shares. Any board member can do it, and guest accounts are
+ * mintable two hundred at a time from a share link.
+ *
+ * The numbers come from what the client actually does. `connection.ts`
+ * coalesces to one message per throttle key per `THROTTLE_MS` (50 ms), so a
+ * key sustains twenty a second; a drag moves one token and a cursor, so two or
+ * three live keys is the realistic shape. Unkeyed ops bypass the throttle and
+ * arrive in clumps — applying a formation moves a full side at once.
+ *
+ * **The refill is deliberately far above that, because the two failure
+ * directions are not comparable.** Too loose and a flooder is capped at a rate
+ * Postgres does not notice; too tight and a real drag silently loses ops, which
+ * looks like a sync bug and would be miserable to trace back to here. An
+ * earlier draft refilled at sixty and `socketRate.test.js` caught it: a client
+ * sustaining eighty a second — inside what the throttle permits — drained the
+ * bucket in six seconds and then dropped a fifth of everything after.
+ *
+ * Over budget is a drop, not a disconnect, matching the payload guard above it:
+ * the ops that supersede one another are exactly the ones the client already
+ * treats as droppable, and closing the socket would turn a burst of enthusiasm
+ * into a lost session.
+ */
+const RATE_BURST = 240
+const RATE_PER_SECOND = 120
+
+/**
+ * Take one token, refilling for the time since the last take. Kept on the
+ * socket rather than in a map so it is collected with the socket and cannot
+ * become the leak it was meant to prevent.
+ */
+export function withinRate(socket, now = Date.now()) {
+  const since = now - (socket.rateCheckedAt ?? now)
+  socket.rateCheckedAt = now
+  socket.rateTokens = Math.min(
+    RATE_BURST,
+    (socket.rateTokens ?? RATE_BURST) + (since * RATE_PER_SECOND) / 1000,
+  )
+  if (socket.rateTokens < 1) return false
+  socket.rateTokens -= 1
+  return true
+}
+
+/**
  * How long to wait before trying the notification bus again after it drops.
  *
  * Exported because it is also the window a missed eviction survives in, so
@@ -990,6 +1039,7 @@ export async function attachRealtime(httpServer) {
 
       onMessage = (raw) => {
         if (raw.length > MAX_PAYLOAD) return
+        if (!withinRate(socket)) return
         let op
         try {
           op = JSON.parse(raw)

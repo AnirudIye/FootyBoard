@@ -141,6 +141,45 @@ const bump = (key, { now, staleAfterMs, max, lockoutMs, hold }) =>
 const secondsUntil = (timestamp) => Math.max(1, Math.ceil((timestamp - Date.now()) / 1000))
 
 /**
+ * The address a per-IP allowance counts against.
+ *
+ * **A single IPv6 address is not a single caller.** Residential and hosting
+ * allocations hand out a /64 at minimum — eighteen quintillion addresses — and
+ * a client may pick a fresh source address per request out of its own prefix
+ * for free. Keyed on the full address, every per-IP limiter here becomes a
+ * counter that never reaches two: the login lockout, the join-code allowance
+ * that `shares.js` calls the join code's entire defence, and the signup cap
+ * all fall over to one host with an IPv6 line. The same trick is what defeated
+ * Google's phone-number rate limit, and why express-rate-limit began masking to
+ * a subnet in v8.
+ *
+ * So IPv6 counts by /64, which is the smallest block anyone is reliably
+ * *given* rather than one they chose. IPv4 is returned unchanged: a v4 address
+ * is already about as close to one caller as the internet offers.
+ *
+ * IPv4-mapped addresses (`::ffff:1.2.3.4`) are unwrapped rather than masked,
+ * or a dual-stack listener would file v4 callers under a v6 prefix and count
+ * every one of them together.
+ */
+export function limiterIp(ip) {
+  if (!ip) return 'unknown'
+  const bare = ip.split('%')[0]
+  if (!bare.includes(':')) return bare
+
+  const mapped = bare.toLowerCase().startsWith('::ffff:') ? bare.slice(7) : null
+  if (mapped && mapped.includes('.')) return mapped
+
+  const [head, tail] = bare.split('::')
+  const left = head ? head.split(':') : []
+  const right = tail ? tail.split(':') : []
+  const groups = bare.includes('::')
+    ? [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right]
+    : bare.split(':')
+
+  return `${groups.slice(0, 4).map((g) => g || '0').join(':')}::/64`
+}
+
+/**
  * Per-address allowances are keyed on a digest of the address, never on the
  * address itself.
  *

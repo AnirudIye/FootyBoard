@@ -84,7 +84,7 @@ contactRouter.post('/', async (req, res, next) => {
       windowMs: 60 * 60 * 1000,
       message: 'That is a lot of messages. Please wait an hour before sending another.',
     })
-    await consume(`contact:ip:${req.ip}`, {
+    await consume(`contact:ip:${req.clientIp}`, {
       max: 21,
       windowMs: 60 * 60 * 1000,
       message: 'Too many messages from this connection. Please try again later.',

@@ -105,7 +105,7 @@ proxy.on('upgrade', (req, socket, head) => {
   socket.on('error', () => upstream.destroy())
 })
 
-proxy.listen(PUBLIC_PORT, () => {
+proxy.listen(PUBLIC_PORT, process.env.HOST ?? '127.0.0.1', () => {
   console.log(
     `Balancer on :${PUBLIC_PORT} → ${COUNT} instances (${ports.join(', ')}), round robin, WS included.`,
   )

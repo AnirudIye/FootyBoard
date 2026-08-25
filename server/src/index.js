@@ -14,7 +14,7 @@ import { boardsRouter } from './routes/boards.js'
 import { sharesRouter, redeemRouter } from './routes/shares.js'
 import { assistantRouter } from './routes/assistant.js'
 import { contactRouter } from './routes/contact.js'
-import { TooManyRequests } from './rateLimit.js'
+import { TooManyRequests, limiterIp } from './rateLimit.js'
 import { ORIGINS, APP_ENV, isProduction, isAllowedOrigin } from './env.js'
 
 // The second import that crosses into the frontend tree, after `boardSchema.js`
@@ -31,6 +31,24 @@ import { DOCUMENT_CSP } from '../../src/lib/csp.js'
 import { PAGES } from '../../src/content/marketing.js'
 
 const PORT = Number(process.env.PORT ?? 8787)
+
+/**
+ * Which interfaces to accept connections on.
+ *
+ * Loopback, because the only thing that should ever reach this process is
+ * `cloudflared` running on this machine. Node binds `::` when the host is
+ * omitted, and a dual-stack wildcard answers every device on the network —
+ * which quietly undoes the tunnel. A caller on the LAN reaches the app without
+ * passing the edge, so the WAF rules, the rate limiting rule and the apex
+ * redirect never run. Worse, `TRUST_PROXY` is set in production, so that
+ * caller also picks their own `X-Forwarded-For`, and therefore their own
+ * per-IP limiter bucket, which is the join code's entire defence.
+ *
+ * The tunnel's ingress has to name `127.0.0.1` and not `localhost` to match.
+ * `localhost` resolves to `::1` first on Windows and nothing is listening
+ * there any more, so the two have to change together or the site 502s.
+ */
+const HOST = process.env.HOST ?? '127.0.0.1'
 const INSTANCE_LABEL = process.env.INSTANCE_LABEL ?? `pid-${process.pid}`
 
 /**
@@ -333,7 +351,7 @@ app.use(express.json({ limit: '1mb' }))
 let warnedAboutProxy = false
 
 app.use(async (req, _res, next) => {
-  req.clientIp = req.ip ?? 'unknown'
+  req.clientIp = limiterIp(req.ip)
 
   if (!TRUST_PROXY && !warnedAboutProxy && req.headers['x-forwarded-for']) {
     warnedAboutProxy = true
@@ -349,9 +367,29 @@ app.use(async (req, _res, next) => {
   next()
 })
 
-// Reporting which instance answered makes it visible that requests are really
-// spread across processes rather than all landing on one.
-app.get('/api/health', (_req, res) => res.json({ ok: true, instance: INSTANCE_LABEL, pid: process.pid }))
+/**
+ * Liveness, and — off production — which instance answered.
+ *
+ * Reporting the instance makes it visible that requests are really spread
+ * across processes rather than all landing on one, which is the whole point of
+ * the cluster. But the default label is `pid-<pid>`, so answering it to the
+ * internet hands every visitor the process id and turns a restart into a
+ * publicly observable event. Neither is worth much to an attacker on its own;
+ * neither is worth anything to a visitor either.
+ *
+ * The compromise keeps the cluster story: in production the instance is named
+ * only when an operator set `INSTANCE_LABEL` themselves, because a label they
+ * chose is one they meant to publish. Unset, production answers `{ok:true}`
+ * and nothing else.
+ */
+const LABELLED = Boolean(process.env.INSTANCE_LABEL?.trim())
+app.get('/api/health', (_req, res) =>
+  res.json(
+    isProduction
+      ? { ok: true, ...(LABELLED ? { instance: INSTANCE_LABEL } : {}) }
+      : { ok: true, instance: INSTANCE_LABEL, pid: process.pid },
+  ),
+)
 
 app.use('/api/auth', authRouter)
 // Sharing sits in front of the board routes: `/:id/share` and `/:id/lock` are
@@ -558,12 +596,12 @@ if (process.env.RUN_MAINTENANCE !== 'false') {
   purge.unref?.()
 }
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   console.log(
     // Every allowed origin, not the first one. This line is the only place a
     // deployment states its origin policy out loud, and a log that named one of
     // three would be the reassuring half of a mistake rather than a record of it.
-    `API instance ${INSTANCE_LABEL} on :${PORT} (ws /ws, ${APP_ENV}, allowing ${ORIGINS.join(', ')})`,
+    `API instance ${INSTANCE_LABEL} on ${HOST}:${PORT} (ws /ws, ${APP_ENV}, allowing ${ORIGINS.join(', ')})`,
   )
 })
 

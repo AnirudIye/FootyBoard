@@ -1,0 +1,56 @@
+# The tunnel's ingress, under version control.
+#
+# The running copy is NOT this file. `cloudflared` installs as a Windows service
+# under LOCAL SYSTEM, and its ImagePath names
+# `C:\Windows\System32\config\systemprofile\.cloudflared\config.yml`, so this is
+# the source and that is the deployment. `deploy/cloudflared/README.md` has the
+# copy command. Before this file existed the config lived only on the host and
+# in a Markdown snippet in `plans/008-tier-b-hosting.md`, which meant a host
+# rebuild was a re-derivation from prose and nothing could tell you it had
+# drifted.
+
+tunnel: c8e8e09a-8cde-4d6a-85f4-4c5680ed800d
+credentials-file: C:\Windows\System32\config\systemprofile\.cloudflared\c8e8e09a-8cde-4d6a-85f4-4c5680ed800d.json
+
+ingress:
+  # Staging, and the way to reach the box while www is being changed. It serves
+  # the same production process as www does, so left open it is a second front
+  # door that skips every WAF rule and rate limit scoped to the www hostname.
+  # Cloudflare Access in front of the hostname is what closes it.
+  #
+  # Uncomment the `access:` block once the Access application exists and you
+  # have its AUD tag, so the connector rejects an unauthenticated request itself
+  # rather than trusting the edge to have done it. Leave it commented until
+  # then: `required: true` with a placeholder audTag rejects everything.
+  #
+  # It has to sit INSIDE this rule. A top-level `originRequest.access` is parsed,
+  # validated, and then silently ignored — `validateIngress` attaches the JWT
+  # middleware from the per-rule block and never consults the merged value
+  # (cloudflare/cloudflared issue #784, still open on master).
+  - hostname: tunnel.footyboard.me
+    service: http://127.0.0.1:8787
+    # originRequest:
+    #   access:
+    #     required: true
+    #     teamName: <your Zero Trust team name>
+    #     audTag:
+    #       - <the Application Audience tag from the Access app>
+
+  # The live origin.
+  - hostname: www.footyboard.me
+    service: http://127.0.0.1:8787
+
+  # 127.0.0.1 and not localhost, and this is load-bearing. The API binds
+  # loopback only (`HOST` in `server/src/index.js`); on Windows `localhost`
+  # resolves to `::1` first, where nothing is listening any more.
+  #
+  # `http://` and not `https://` is also deliberate: the hop from Cloudflare to
+  # this machine is already encrypted by the tunnel, and the origin runs no TLS.
+  # Never reach for `noTLSVerify` here — there is no TLS to not-verify.
+
+  # Required. cloudflared refuses to start without a final rule matching
+  # everything, and the error names the config rather than the missing rule.
+  # 404 rather than the app: anything that reaches here asked for a hostname
+  # this tunnel does not serve, and answering it with the site would publish
+  # the site under every name that ever pointed at the tunnel.
+  - service: http_status:404

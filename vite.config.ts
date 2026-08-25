@@ -34,6 +34,17 @@ const contentSecurityPolicy = (): Plugin => ({
 })
 
 /**
+ * 127.0.0.1 rather than localhost, and it has to stay that way.
+ *
+ * The API binds loopback only (`HOST` in `server/src/index.js`), and on
+ * Windows `localhost` resolves to `::1` before `127.0.0.1`. A proxy that
+ * dials the name gets a connection refused on the first address and every dev
+ * request pays for the fallback — when it falls back at all. The tunnel's
+ * ingress names the literal for the same reason.
+ */
+const API_TARGET = process.env.API_URL ?? 'http://127.0.0.1:8787'
+
+/**
  * Proxying the API makes it same-origin, so the session cookie is sent without
  * any CORS or SameSite special-casing.
  *
@@ -43,7 +54,7 @@ const contentSecurityPolicy = (): Plugin => ({
  */
 const apiProxy = {
   '/api': {
-    target: process.env.API_URL ?? 'http://localhost:8787',
+    target: API_TARGET,
     changeOrigin: true,
   },
   // Rooms, same reasoning: same-origin means the session cookie is sent on the
@@ -51,7 +62,7 @@ const apiProxy = {
   // makes Vite forward the upgrade rather than answering it with its own HMR
   // socket.
   '/ws': {
-    target: process.env.API_URL ?? 'http://localhost:8787',
+    target: API_TARGET,
     ws: true,
     changeOrigin: true,
   },
