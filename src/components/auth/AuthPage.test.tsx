@@ -656,7 +656,11 @@ describe('AuthPage confirming a password that is being set', () => {
     await submit()
 
     const call = (useAuthStore.getState().signUp as Mock).mock.calls[0]
-    expect(call).toEqual(['coach@example.com', PASSWORD, false, '', '', ''])
+    // The trailing `null` is the Turnstile token, and null is the right value
+    // here: with no sitekey the widget renders nothing, so there is nothing to
+    // have collected. `withToken` in `api.ts` drops the key entirely when it is
+    // falsy, so the request body is byte-for-byte the one it always was.
+    expect(call).toEqual(['coach@example.com', PASSWORD, false, '', '', '', null])
   })
 
   it('lets a corrected mismatch through', async () => {

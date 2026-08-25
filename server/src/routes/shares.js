@@ -4,6 +4,7 @@ import { get, all, run, transaction, DB_NOW_MS } from '../db.js'
 import { accessFor } from '../access.js'
 import { publish, anonymousNameFor } from '../realtime.js'
 import { consume } from '../rateLimit.js'
+import { assertHuman, TOKEN_FIELD } from '../turnstile.js'
 import { createSession, signIn } from '../auth.js'
 import { REVOCATION_RETENTION_MS } from '../sessions.js'
 import { normalizeCode, codeExpiryFrom, withFreshCode, CODE_TTL_MS } from '../joinCode.js'
@@ -657,6 +658,10 @@ redeemRouter.post('/join', async (req, res) => {
     return res.status(404).json({ error: 'That code is not valid. Check it and try again.' })
   }
   if (!code) return await wrong()
+
+  // After the guess allowance, and before the code is looked up: a wrong code
+  // is cheap to answer, and this is a round trip. Inert unless a secret is set.
+  await assertHuman(req.body?.[TOKEN_FIELD])
 
   const share = await get(
     `SELECT s.id, s.board_id, s.code_expires_at, s.code_issued_at, b.name

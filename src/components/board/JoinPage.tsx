@@ -7,6 +7,8 @@ import { useAuthStore, selectSignedIn } from '../../store/authStore'
 import { useBoardsStore } from '../../store/boardsStore'
 import { AuthShell } from '../auth/AuthShell'
 import { Button } from '../ui/Button'
+import { Turnstile } from '../ui/Turnstile'
+import { turnstileSitekey } from '../../lib/turnstile'
 import { ledeFor } from '../../content/marketing.js'
 
 /**
@@ -29,18 +31,52 @@ export default function JoinPage() {
   const [error, setError] = useState<string | null>(null)
   const redeemed = useRef(false)
 
+  /**
+   * The token lives in a ref, and "may we go yet" is the state.
+   *
+   * `redeem` is a `useCallback` that an effect depends on, so a token in state
+   * would change its identity on every widget callback and churn that effect.
+   * The ref keeps the value out of the dependency list; `canRedeem` carries the
+   * one bit the effect actually needs.
+   *
+   * **The auto-redeem below is why this bit has to exist at all.** A code that
+   * arrives in the URL submits itself, with nobody to press anything — so it
+   * can outrun the widget and be refused for a token that was a second away.
+   * It waits instead. With Turnstile switched off the wait is over before it
+   * starts, which is the state every test and every keyless deployment is in.
+   */
+  const token = useRef<string | null>(null)
+  const [canRedeem, setCanRedeem] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    void turnstileSitekey().then((key) => {
+      if (live && !key) setCanRedeem(true)
+    })
+    return () => {
+      live = false
+    }
+  }, [])
+
+  const onToken = useCallback((value: string | null) => {
+    token.current = value
+    setCanRedeem(Boolean(value))
+  }, [])
+
   const redeem = useCallback(
     async (value: string) => {
       setBusy(true)
       setError(null)
       try {
-        const { board } = await api.joinWithCode(value)
+        const { board } = await api.joinWithCode(value, token.current)
         // The board was not ours a moment ago, so the picker has not heard of it.
         await useBoardsStore.getState().load()
         useBoardsStore.getState().select(board.id)
         navigate('/board', { replace: true })
       } catch (err) {
         setError(toUserMessage(err, 'That code is not valid. Check it and try again.'))
+        // Spent, whatever happened to it. The widget issues another.
+        token.current = null
         setBusy(false)
       }
     },
@@ -62,10 +98,10 @@ export default function JoinPage() {
    */
   useEffect(() => {
     const fromUrl = clean(params.get('code') ?? '')
-    if (!signedIn || redeemed.current || fromUrl.length !== CODE_LENGTH) return
+    if (!signedIn || !canRedeem || redeemed.current || fromUrl.length !== CODE_LENGTH) return
     redeemed.current = true
     void redeem(fromUrl)
-  }, [signedIn, params, redeem])
+  }, [signedIn, canRedeem, params, redeem])
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -128,6 +164,8 @@ export default function JoinPage() {
             need to type it again.
           </p>
         )}
+
+        <Turnstile onToken={onToken} action="join" />
 
         <Button
           type="submit"

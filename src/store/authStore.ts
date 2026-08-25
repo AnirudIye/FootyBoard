@@ -29,6 +29,7 @@ interface AuthState {
     securityQuestionId: string,
     securityAnswer: string,
     displayName: string,
+    turnstileToken?: string | null,
   ) => Promise<void>
   /**
    * A correct password, and then either a signed-in account or the second step.
@@ -146,6 +147,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     securityQuestionId,
     securityAnswer,
     displayName,
+    turnstileToken,
   ) => {
     const { user } = await api.signUp(
       email,
@@ -154,6 +156,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       securityQuestionId,
       securityAnswer,
       displayName,
+      turnstileToken,
     )
     set({ user, ready: true })
   },

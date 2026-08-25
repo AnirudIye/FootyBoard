@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from '../../lib/api'
 import { toUserMessage } from '../../lib/errors'
 import LegalPage, { Clause } from './LegalPage'
+import { Turnstile } from '../ui/Turnstile'
 import { ledeFor } from '../../content/marketing.js'
 
 /**
@@ -49,17 +50,21 @@ export default function ContactPage() {
   const [busy, setBusy] = useState(false)
   const [sent, setSent] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
     setBusy(true)
     try {
-      await api.contact(topic, replyTo.trim(), body.trim())
+      await api.contact(topic, replyTo.trim(), body.trim(), turnstileToken)
       setSent(true)
     } catch (err) {
       setError(toUserMessage(err, 'That did not send. Please try again in a moment.'))
     } finally {
+      // Spent either way. Cloudflare refuses a token twice, so keeping it would
+      // turn a retry into a guaranteed failure that reads as a broken form.
+      setTurnstileToken(null)
       setBusy(false)
     }
   }
@@ -154,6 +159,8 @@ export default function ContactPage() {
                 {error}
               </p>
             )}
+
+            <Turnstile onToken={setTurnstileToken} action="contact" />
 
             <button
               type="submit"

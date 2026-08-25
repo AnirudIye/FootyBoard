@@ -10,6 +10,7 @@ import { codeInNext } from '../../lib/joinCode'
 import { shareTokenInNext } from '../../lib/shareLink'
 import { AuthShell, field, submitBtn, FormError } from './AuthShell'
 import { PasswordField } from './PasswordField'
+import { Turnstile } from '../ui/Turnstile'
 import SecurityQuestionFields, { useSecurityQuestions } from './SecurityQuestionFields'
 // The one copy of the sign-up page's words. `scripts/prerender.mjs` writes the
 // same three strings into the static document a crawler reads, so this import
@@ -87,6 +88,7 @@ export default function AuthPage({ mode }: { mode: Mode }) {
   const [answer, setAnswer] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
   /**
    * The half-finished sign-in, when there is one.
    *
@@ -174,7 +176,7 @@ export default function AuthPage({ mode }: { mode: Mode }) {
     setBusy(true)
     try {
       if (isSignup) {
-        await signUp(email, password, accepted, questionId, answer, displayName)
+        await signUp(email, password, accepted, questionId, answer, displayName, turnstileToken)
       } else {
         const pending = await logIn(email, password)
         // A correct password on an account with a second factor buys this and
@@ -190,6 +192,11 @@ export default function AuthPage({ mode }: { mode: Mode }) {
     } catch (err) {
       setError(toUserMessage(err, 'That did not work. Check the details and try again.'))
     } finally {
+      // Spent either way, and dropped either way. Cloudflare refuses a token
+      // twice, so holding on to it would turn the retry after a mistyped
+      // password into a second failure with a different cause and the same
+      // sentence. The widget issues a fresh one on its own.
+      setTurnstileToken(null)
       setBusy(false)
     }
   }
@@ -435,6 +442,14 @@ export default function AuthPage({ mode }: { mode: Mode }) {
         )}
 
         {error && <FormError>{error}</FormError>}
+
+        {/*
+          Signup only. Sign-in is guarded by the per-account lockout and the
+          per-network allowance in `rateLimit.js`, which are the right shape for
+          a password guess; what Turnstile answers is "is this one caller or a
+          thousand cheap ones", and that is the question signup asks.
+        */}
+        {isSignup && <Turnstile onToken={setTurnstileToken} action="signup" />}
 
         <motion.button type="submit" whileTap={{ scale: 0.98 }} disabled={busy} className={submitBtn}>
           {busy ? 'Working…' : isSignup ? 'Create account' : 'Sign in'}

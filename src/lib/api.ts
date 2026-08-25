@@ -1,4 +1,5 @@
 import { AppError, ConflictError } from './errors'
+import { TOKEN_FIELD } from './turnstile'
 
 /**
  * Thin wrapper over the API.
@@ -174,6 +175,18 @@ export interface BoardMember {
   joinedAt: string
 }
 
+/**
+ * The Turnstile token rides in the body under Cloudflare's own field name.
+ *
+ * Spelled the same on both sides — `server/src/turnstile.js` exports the same
+ * constant — because the value is produced by Cloudflare's script, not by us,
+ * and renaming it in transit would only add a place for the two to disagree.
+ * Undefined when the feature is off, and `JSON.stringify` drops the key
+ * entirely, so an unconfigured deployment sends exactly the body it always did.
+ */
+const withToken = (body: Record<string, unknown>, token?: string | null) =>
+  JSON.stringify(token ? { ...body, [TOKEN_FIELD]: token } : body)
+
 export const api = {
   /**
    * A message to whoever runs this instance, and the only route to them.
@@ -184,10 +197,10 @@ export const api = {
    * first is somebody who has already deleted their account. See
    * `server/src/routes/contact.js`.
    */
-  contact: (topic: string, replyTo: string, body: string) =>
+  contact: (topic: string, replyTo: string, body: string, turnstileToken?: string | null) =>
     request<{ received: boolean }>('/contact', {
       method: 'POST',
-      body: JSON.stringify({ topic, replyTo, body }),
+      body: withToken({ topic, replyTo, body }, turnstileToken),
     }),
 
   /** The question list the signup and recovery dropdowns are built from. */
@@ -208,17 +221,14 @@ export const api = {
     securityQuestionId: string,
     securityAnswer: string,
     displayName: string,
+    turnstileToken?: string | null,
   ) =>
     request<{ user: ApiUser }>('/auth/signup', {
       method: 'POST',
-      body: JSON.stringify({
-        email,
-        password,
-        acceptedTerms,
-        securityQuestionId,
-        securityAnswer,
-        displayName,
-      }),
+      body: withToken(
+        { email, password, acceptedTerms, securityQuestionId, securityAnswer, displayName },
+        turnstileToken,
+      ),
     }),
 
   /**
@@ -664,10 +674,10 @@ export const api = {
     ),
 
   /** Join by typing the short code rather than following a link. */
-  joinWithCode: (code: string) =>
+  joinWithCode: (code: string, turnstileToken?: string | null) =>
     request<{ board: { id: string; name: string } }>('/shares/join', {
       method: 'POST',
-      body: JSON.stringify({ code }),
+      body: withToken({ code }, turnstileToken),
     }),
 
   /**
@@ -679,9 +689,9 @@ export const api = {
    * would walk them away from their own boards without a word. Only the guest
    * door on the auth page calls this.
    */
-  joinAsGuest: (code: string) =>
+  joinAsGuest: (code: string, turnstileToken?: string | null) =>
     request<{ board: { id: string; name: string } }>('/shares/join', {
       method: 'POST',
-      body: JSON.stringify({ code, asGuest: true }),
+      body: withToken({ code, asGuest: true }, turnstileToken),
     }),
 }

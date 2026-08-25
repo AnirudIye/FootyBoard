@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { run } from '../db.js'
 import { encrypt } from '../crypto.js'
 import { consume } from '../rateLimit.js'
+import { assertHuman, TOKEN_FIELD } from '../turnstile.js'
 import { BadRequest, validateEmail } from '../validate.js'
 import { forwardContactMessage } from '../contactForward.js'
 
@@ -89,6 +90,11 @@ contactRouter.post('/', async (req, res, next) => {
       windowMs: 60 * 60 * 1000,
       message: 'Too many messages from this connection. Please try again later.',
     })
+
+    // After the allowance, not before it: the limiter is a local counter and
+    // this is a round trip to Cloudflare, so an abusive caller should be
+    // turned away by the cheap one. Does nothing unless a secret is set.
+    await assertHuman(req.body?.[TOKEN_FIELD])
 
     const receivedAt = Date.now()
     await run(

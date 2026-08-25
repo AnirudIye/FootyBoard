@@ -15,6 +15,7 @@ import { sharesRouter, redeemRouter } from './routes/shares.js'
 import { assistantRouter } from './routes/assistant.js'
 import { contactRouter } from './routes/contact.js'
 import { TooManyRequests, limiterIp } from './rateLimit.js'
+import { enabled as turnstileEnabled, siteKey as turnstileSiteKey } from './turnstile.js'
 import { ORIGINS, APP_ENV, isProduction, isAllowedOrigin, trustProxySetting } from './env.js'
 
 // The second import that crosses into the frontend tree, after `boardSchema.js`
@@ -389,6 +390,23 @@ app.get('/api/health', (_req, res) =>
       ? { ok: true, ...(LABELLED ? { instance: INSTANCE_LABEL } : {}) }
       : { ok: true, instance: INSTANCE_LABEL, pid: process.pid },
   ),
+)
+
+/**
+ * Which Turnstile widget the browser should render, if any.
+ *
+ * The sitekey is public — it ships in the page and names the widget, not the
+ * account — so serving it costs nothing. It is served rather than baked in at
+ * build time so that **one setting on this process turns the whole feature on
+ * and off**. Split across two places they can disagree, and both ways of
+ * disagreeing are bad: a sitekey with no secret puts a widget on the form that
+ * nobody checks, which is decoration wearing the shape of a control, and a
+ * secret with no sitekey refuses every submission for want of a token the
+ * browser was never told to collect. `enabled()` reads the secret, so this
+ * answers `null` until both halves are present.
+ */
+app.get('/api/turnstile', (_req, res) =>
+  res.json({ siteKey: turnstileEnabled() ? turnstileSiteKey() : null }),
 )
 
 app.use('/api/auth', authRouter)

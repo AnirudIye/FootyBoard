@@ -40,6 +40,7 @@ import {
   addressKey,
   clearAllowance,
 } from '../rateLimit.js'
+import { assertHuman, TOKEN_FIELD } from '../turnstile.js'
 import { createResetToken, consumeResetToken, RESET_TTL_MINUTES } from '../passwordReset.js'
 import {
   beginEnrollment,
@@ -138,6 +139,11 @@ authRouter.post('/signup', async (req, res) => {
     windowMs: 60 * 60 * 1000,
     message: 'Too many accounts created from this network. Try again later.',
   })
+
+  // After the allowance, not before it: the limiter is a local counter and
+  // this is a round trip to Cloudflare, so an abusive caller should be
+  // turned away by the cheap one. Does nothing unless a secret is set.
+  await assertHuman(req.body?.[TOKEN_FIELD])
 
   const { hash, salt } = await hashPassword(cleanPassword)
   const answerDigest = await hashAnswer(answer)

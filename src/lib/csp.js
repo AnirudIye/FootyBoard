@@ -31,7 +31,12 @@
  */
 export const DOCUMENT_CSP_DIRECTIVES = [
   "default-src 'self'",
-  "script-src 'self'",
+  // `challenges.cloudflare.com` is Turnstile, on the signup, contact and join
+  // forms. The host and not the path: `/turnstile/v0/api.js` 302s to a
+  // build-hashed path that rotates, so a path-scoped source breaks on
+  // Cloudflare's next deploy. No `'unsafe-inline'` is needed here and none is
+  // added — the snippets circulating that include it are cargo cult.
+  "script-src 'self' https://challenges.cloudflare.com",
   // Framer Motion and React write inline `style` attributes on nearly every
   // animated element, and an attribute cannot carry a nonce. This is the one
   // relaxation the app genuinely needs.
@@ -47,6 +52,24 @@ export const DOCUMENT_CSP_DIRECTIVES = [
   // WebM and MP4 sequence export, same object-URL route as the images.
   "media-src 'self' blob:",
   "worker-src 'self' blob:",
+  /**
+   * The Turnstile widget is an iframe, and this directive did not exist.
+   *
+   * **Adding the host to `script-src` alone is the silent outage.** With only
+   * that, `api.js` loads, `window.turnstile` exists, and the hidden
+   * `cf-turnstile-response` input is even created — and then stays empty
+   * forever, because framing falls through to `default-src 'self'` and is
+   * refused. Nothing throws for about thirty-eight seconds, after which the
+   * error callback fires `300030`, a code Cloudflare documents under
+   * "bot behaviour detected". So a policy mistake here does not look like a
+   * policy mistake; it looks like an attack, in a form that hangs the button
+   * rather than failing it.
+   *
+   * `frame-src` rather than `child-src`: the deprecated fallback happens to
+   * work through the CSP3 chain and would pass a smoke test, which is exactly
+   * what makes it the wrong one to write down.
+   */
+  'frame-src https://challenges.cloudflare.com',
   "object-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
