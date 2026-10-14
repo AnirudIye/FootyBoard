@@ -22,6 +22,72 @@ export interface PanZoom {
   fitPitch: () => void
   /** True while space is held, so callers can suppress token interactions. */
   spaceHeldRef: React.MutableRefObject<boolean>
+  /**
+   * The same fact as state, for what has to *render* differently while Space is
+   * the pan modifier: the cursor, and which layers answer a press. The ref is
+   * what a pointer handler reads, because it cannot be a render behind.
+   */
+  spaceHeld: boolean
+}
+
+/** Inputs that are not somebody typing, and so do not want Space for themselves. */
+const NOT_TEXT_INPUT = new Set([
+  'button', 'checkbox', 'radio', 'range', 'color', 'file', 'image', 'reset', 'submit',
+])
+
+/**
+ * Whether Space, in this element, is a character.
+ *
+ * Not `isTypingTarget`, which answers a different question for the shortcut
+ * keys and gets this one backwards in both directions: it counts a `<select>`
+ * as typing, which is how a formation dropdown that had just been used could
+ * swallow Space, and it counts a button as not, which is how the next
+ * paragraph happened. It also trusts `isContentEditable`, which jsdom does not
+ * implement, so the attribute is read as well.
+ */
+export function isTextEntry(t: EventTarget | null): boolean {
+  if (!(t instanceof HTMLElement)) return false
+  if (t instanceof HTMLTextAreaElement) return true
+  if (t instanceof HTMLInputElement) return !NOT_TEXT_INPUT.has(t.type)
+  return (
+    t.isContentEditable === true ||
+    t.closest('[contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]') !== null
+  )
+}
+
+/** Things Space presses: the browser's idea of what it means is "activate". */
+const CONTROL =
+  'button, select, summary, a[href], input, textarea, ' +
+  '[role="button"], [role="switch"], [role="checkbox"], [role="radio"], ' +
+  '[role="menuitem"], [role="tab"], [role="option"], [role="slider"]'
+
+/**
+ * Whether a Space press is the board's to take, and not the focused control's.
+ *
+ * **Space is how somebody looks around the board, and the browser's default
+ * for it is to press whatever has focus.** After a mouse click that is the
+ * button just clicked, because Chrome leaves focus where a click puts it. So
+ * every pan ended with the last toolbar button being pressed again on release:
+ * Fit snapped the view back to where it started, `+ Frame` added a frame per
+ * pan, Apply put every player back in the formation. That is "moving around
+ * the board is broken", and it is the whole of it.
+ *
+ * The board takes Space unless somebody is typing, or the keyboard is the thing
+ * operating a control. A control gets Space from the keyboard when it was
+ * reached by it, and the only honest evidence of that is that the last thing
+ * which moved focus was a Tab rather than a pointer: `:focus-visible` cannot
+ * say, because Chrome reports a `<select>` as keyboard-focused after a mouse
+ * click on it, which is the other half of the defect.
+ *
+ * `viaKeyboard` starts true. A control can only hold focus before any pointer
+ * has been used by way of the keyboard or assistive technology, and neither is
+ * to lose Space to a pan.
+ */
+export function spaceBelongsToBoard(target: EventTarget | null, viaKeyboard: boolean): boolean {
+  if (!(target instanceof HTMLElement)) return true
+  if (isTextEntry(target)) return false
+  if (target.closest(CONTROL) === null) return true
+  return !viaKeyboard
 }
 
 export function usePanZoom(): PanZoom {
@@ -29,8 +95,17 @@ export function usePanZoom(): PanZoom {
   const [scale, setScale] = useState(1)
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [panning, setPanning] = useState(false)
+  const [spaceHeld, setSpaceHeld] = useState(false)
 
   const spaceHeldRef = useRef(false)
+  /**
+   * Whether this Space is one the board took, so its release can be taken too.
+   * Firefox presses a button on the keyup, so cancelling only the keydown is not
+   * enough there.
+   */
+  const spaceClaimedRef = useRef(false)
+  /** Where focus last came from. See `spaceBelongsToBoard` for why it starts true. */
+  const viaKeyboardRef = useRef(true)
   const panLast = useRef<{ x: number; y: number } | null>(null)
   const scaleRef = useRef(1)
   const posRef = useRef({ x: 0, y: 0 })
@@ -74,22 +149,66 @@ export function usePanZoom(): PanZoom {
     })
   }, [reduced, stopTweens])
 
+  const releaseSpace = useCallback(() => {
+    spaceClaimedRef.current = false
+    spaceHeldRef.current = false
+    setSpaceHeld(false)
+  }, [])
+
   useEffect(() => {
+    // Capture, so a press that a toolbar button or a Konva shape goes on to stop
+    // is still seen: this is bookkeeping about where focus came from, not a
+    // gesture, and it must not depend on who handled the press.
+    const pointer = () => {
+      viaKeyboardRef.current = false
+    }
+    // A modifier means the browser or the OS is being asked something: Ctrl+F
+    // is a search, Alt+Space is the window menu. Neither is the board's.
+    const modified = (e: KeyboardEvent) => e.ctrlKey || e.metaKey || e.altKey
+
     const down = (e: KeyboardEvent) => {
+      if (e.code === 'Tab') viaKeyboardRef.current = true
+      if (e.code === 'Space') {
+        if (modified(e) || !spaceBelongsToBoard(e.target, viaKeyboardRef.current)) return
+        // The browser's own Space is "press the focused control" and "scroll the
+        // page"; the board has this one. Cancelled on every repeat, too.
+        e.preventDefault()
+        spaceClaimedRef.current = true
+        if (!spaceHeldRef.current) {
+          spaceHeldRef.current = true
+          setSpaceHeld(true)
+        }
+        return
+      }
       if (isTypingTarget(e.target)) return
-      if (e.code === 'Space') spaceHeldRef.current = true
-      if (e.code === 'KeyF') fitPitch()
+      if (e.code === 'KeyF' && !modified(e)) fitPitch()
     }
     const up = (e: KeyboardEvent) => {
-      if (e.code === 'Space') spaceHeldRef.current = false
+      if (e.code !== 'Space') return
+      if (spaceClaimedRef.current) e.preventDefault()
+      releaseSpace()
     }
+    // A key that goes up while another window has focus is never seen here.
+    // Without these, Space held across an Alt-Tab stayed held for good, and
+    // every press after it was a pan: nothing could be selected, dragged or
+    // drawn until Space was pressed and released again.
+    const hidden = () => {
+      if (document.visibilityState === 'hidden') releaseSpace()
+    }
+
+    window.addEventListener('pointerdown', pointer, true)
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
+    window.addEventListener('blur', releaseSpace)
+    document.addEventListener('visibilitychange', hidden)
     return () => {
+      window.removeEventListener('pointerdown', pointer, true)
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', releaseSpace)
+      document.removeEventListener('visibilitychange', hidden)
     }
-  }, [fitPitch])
+  }, [fitPitch, releaseSpace])
 
   useEffect(() => stopTweens, [stopTweens])
 
@@ -154,5 +273,6 @@ export function usePanZoom(): PanZoom {
     onPointerUp,
     fitPitch,
     spaceHeldRef,
+    spaceHeld,
   }
 }

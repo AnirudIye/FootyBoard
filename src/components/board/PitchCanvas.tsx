@@ -216,7 +216,30 @@ export default function PitchCanvas() {
   })
 
   const ready = size.w > 0 && size.h > 0
-  const cursor = pz.panning ? 'grabbing' : draw.armed ? 'crosshair' : 'default'
+  // `grab` from the moment Space goes down, not only once the drag starts: it is
+  // the one sign that the board has taken the key, and its absence is how a
+  // Space that was never released used to go unnoticed.
+  const cursor = pz.panning
+    ? 'grabbing'
+    : pz.spaceHeld
+      ? 'grab'
+      : draw.armed
+        ? 'crosshair'
+        : 'default'
+
+  /**
+   * Whether the things on the board answer a press at all, apart from the lock.
+   *
+   * While Space is held a press is a pan, and nothing under it should hear it.
+   * Konva hands a press to the shape under the pointer *before* the stage sees
+   * it, so grabbing the board over a player used to pan and also select that
+   * player, popping their inspector and the bench's Sub off button, and over an
+   * arrow it raised the arrow's handles. `usePanZoom` has promised its callers
+   * could suppress exactly this since the day it was written and none did.
+   * `listening` is the switch an armed draw tool and the editing lock already
+   * use, for the same reason: the press belongs to something else.
+   */
+  const answersPress = !pz.spaceHeld
 
   /**
    * Present only while `select` is the armed tool, and handed to both bands
@@ -314,7 +337,7 @@ export default function PitchCanvas() {
           {/* One switch rather than a `draggable` prop on every token and
               shape: while locked, nothing on the board responds to a pointer,
               so there is no drag to start and no inspector to open. */}
-          <Layer listening={!locked}>
+          <Layer listening={!locked && answersPress}>
             {/* The zone band carries `onEditText` for its second meaning only:
                 it is how a selected triangle or shape knows it may show corner
                 handles. No zone has words to edit. */}
@@ -338,7 +361,7 @@ export default function PitchCanvas() {
            * same switch the lock already uses, and it says the one thing that is
            * true: with a tool armed the press belongs to the tool.
            */}
-          <Layer listening={!locked && !draw.armed}>
+          <Layer listening={!locked && !draw.armed && answersPress}>
             <TokenLayer mapping={mapping} />
           </Layer>
           {/**
@@ -352,7 +375,7 @@ export default function PitchCanvas() {
            * defect of the two. What frees the chip instead is the mark's own hit
            * band stopping short of its ends; see `strokeHit` in `DrawingShape`.
            */}
-          <Layer listening={!locked}>
+          <Layer listening={!locked && answersPress}>
             <DrawingLayer mapping={mapping} test={isMark} />
             {/* Double-click a label to fix its words — only while `select` is
                 the tool, for the reason `onEditText` is computed above. */}
