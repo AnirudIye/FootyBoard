@@ -68,7 +68,7 @@ export function useAnimatedMapping(target: PitchMapping): PitchMapping {
     return () => controls.stop()
     // Restart the morph whenever the shape changes; force-updates during the
     // morph keep shapeKey stable so this does not re-fire mid-animation.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [shapeKey])
 
   return s.current
